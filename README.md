@@ -9,4 +9,6 @@
 | [AGENTS.md](AGENTS.md) | 作業のルール |
 | [docs/00-concept.md](docs/00-concept.md) | 構想（何か・なぜ・層・取り込みの流れ・段階・危険） |
 | [docs/01-privacy-and-rules.md](docs/01-privacy-and-rules.md) | 情報の境界（持つもの・持たないもの・匿名化の網・保存の守り） |
+| [docs/03-architecture.md](docs/03-architecture.md) | 構成（core・worker・web）、入口、AI の呼び出し、作る順序（案） |
+| [docs/04-data-model.md](docs/04-data-model.md) | データモデル（表・約束・AI の答えの確かめ方・書き込みの一覧。案） |
 | [docs/11-decisions.md](docs/11-decisions.md) | 決めたこと（CA-xxx）と未決（CD-xxx） |
