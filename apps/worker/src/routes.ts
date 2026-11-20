@@ -18,6 +18,7 @@ import type { z } from 'zod';
 
 import type { Db } from './db.ts';
 import { intake } from './intake.ts';
+import { SELECT_PROMPT_VERSION } from './prompt.ts';
 import {
   createEncounter,
   createPatient,
@@ -37,6 +38,7 @@ import {
   type Source,
 } from './records.ts';
 import type { Runtime } from './runtime.ts';
+import { runSelfCheck, selfCheckCases, SelfCheckRequest } from './selfcheck.ts';
 import type { Selector } from './selector.ts';
 import { callsOn, countCall } from './usage.ts';
 
@@ -47,6 +49,8 @@ export interface RecordDeps {
   readonly selector: Selector | null;
   /** AI を呼べる回数（1日。日本の日）。0 は、上限なし */
   readonly dailyAiLimit: number;
+  /** 使っているモデルの名前（評価の画面に出すだけ） */
+  readonly model: string;
 }
 
 export interface Reply {
@@ -178,6 +182,21 @@ export async function recordApi(request: Request, path: string, deps: RecordDeps
     const id = oneSource[1] ?? '';
     if (!isUlid(id)) return bad();
     return (await deleteSource(db, id)) === 0 ? missing() : reply(200, { removed: id });
+  }
+
+  // 選別の評価（selfcheck.ts）：架空の文だけを、本番と同じ鍵・指示・モデルで AI に送り、漏れを数える
+  if (path === '/api/selfcheck') {
+    if (method === 'GET') return reply(200, { cases: selfCheckCases(), promptVersion: SELECT_PROMPT_VERSION, model: deps.model, ready: deps.selector !== null });
+    if (method === 'POST') {
+      const body = await readBody(request, SelfCheckRequest);
+      if (body === null) return bad();
+      if (deps.selector === null) return reply(503, { error: 'no_ai' });
+      if (deps.dailyAiLimit > 0 && (await callsOn(db, today)) >= deps.dailyAiLimit) return reply(429, { error: 'ai_limit' });
+      await countCall(db, today);
+      const result = await runSelfCheck(body.id, body.seed, deps.selector);
+      return result === null ? missing() : reply(200, { result });
+    }
+    return null;
   }
 
   return null;

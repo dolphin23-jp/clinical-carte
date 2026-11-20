@@ -24,6 +24,8 @@ export interface HandlerDeps {
   readonly selector: Selector | null;
   /** AI を呼べる回数（1日）。0 は、上限なし */
   readonly dailyAiLimit: number;
+  /** 使っているモデルの名前（評価の画面に出すだけ） */
+  readonly model: string;
 }
 
 /** 登録の要求の本文の上限（文字）。合鍵と端末の種類だけなので、小さくてよい */
@@ -119,7 +121,7 @@ async function api(request: Request, url: URL, deps: HandlerDeps): Promise<Respo
     return json(200, { removed: id }, id === me.id ? clearCookie(deps.secureCookies) : entered.renew);
   }
 
-  const record = await recordApi(request, path, { db: deps.db, runtime: deps.runtime, selector: deps.selector, dailyAiLimit: deps.dailyAiLimit });
+  const record = await recordApi(request, path, { db: deps.db, runtime: deps.runtime, selector: deps.selector, dailyAiLimit: deps.dailyAiLimit, model: deps.model });
   if (record !== null) return json(record.status, record.body, entered.renew);
 
   return json(404, { error: 'not_found' }, entered.renew);

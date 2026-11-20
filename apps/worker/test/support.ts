@@ -99,6 +99,7 @@ export function world(overrides: Partial<HandlerDeps> = {}): World {
     assets: () => Promise.resolve(new Response('画面', { status: 200 })),
     selector: fakeSelector(),
     dailyAiLimit: 0,
+    model: 'test-model',
     ...overrides,
   };
   return {

@@ -39,6 +39,7 @@ export default {
   fetch(request: Request, env: Env): Promise<Response> {
     database = env.DB;
     const apiKey = env.ANTHROPIC_API_KEY?.trim() ?? '';
+    const model = env.MODEL?.trim() || DEFAULT_MODEL;
     return handle(request, {
       db: env.DB,
       key: env.CARTE_KEY,
@@ -46,7 +47,8 @@ export default {
       secureCookies: true,
       assets: (r) => env.ASSETS.fetch(r),
       ready,
-      selector: apiKey === '' ? null : createAnthropicSelector({ apiKey, model: env.MODEL?.trim() || DEFAULT_MODEL }),
+      selector: apiKey === '' ? null : createAnthropicSelector({ apiKey, model }),
+      model,
       dailyAiLimit: dailyLimitOf(env.DAILY_AI_LIMIT),
     });
   },
