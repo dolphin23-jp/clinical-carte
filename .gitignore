@@ -1,0 +1,29 @@
+# 実データは、そもそも作業ツリーに置かない（AGENTS.md の絶対ルール）。
+# この .gitignore は、誤って置いたときに git add されにくくする補助にすぎない。
+# ローカルのエージェントは無視対象のファイルも読めるので、ここに頼らない。
+# 本体の防御は scripts/phi-guard.mjs（フック）。
+data/
+exports/
+.env
+.env.*
+!.env.example
+.dev.vars
+*.sqlite
+*.db
+
+# 依存とビルド成果物
+node_modules/
+dist/
+coverage/
+.vite/
+.wrangler/
+*.tsbuildinfo
+.eslintcache
+
+# ログと OS・エディタのファイル
+*.log
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/*
+!.vscode/extensions.json

@@ -1,0 +1,9 @@
+{
+  // src だけの型検査。DOM と Node の型を入れないので、window、fetch、setTimeout、process などは型エラーになる。
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "lib": ["ES2023"],
+    "types": []
+  },
+  "include": ["src"]
+}

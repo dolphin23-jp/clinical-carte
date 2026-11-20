@@ -1,0 +1,8 @@
+{
+  // テストと設定ファイルを含む型検査（エディタと ESLint もこれを使う）。src の制約は tsconfig.src.json で確かめる。
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "types": ["node"]
+  },
+  "include": ["src", "test", "vitest.config.ts"]
+}

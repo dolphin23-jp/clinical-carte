@@ -1,0 +1,9 @@
+{
+  // src だけの型検査。Cloudflare Workers で動くので、Web の標準（Request・Response・crypto）の型だけを使い、Node の型を入れない。
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "lib": ["ES2023", "WebWorker"],
+    "types": []
+  },
+  "include": ["src"]
+}

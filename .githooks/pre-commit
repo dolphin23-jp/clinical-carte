@@ -1,0 +1,13 @@
+#!/bin/sh
+# 実在の患者に由来するデータがコミットに入るのを止める。
+# 有効にする：git config core.hooksPath .githooks
+# 検査の中身：scripts/phi-guard.mjs（外部依存なし）
+
+root=$(git rev-parse --show-toplevel) || exit 1
+
+if ! command -v node >/dev/null 2>&1; then
+  echo "phi-guard: node が見つからないため、コミットを中止しました。" >&2
+  exit 1
+fi
+
+exec node "$root/scripts/phi-guard.mjs" --staged

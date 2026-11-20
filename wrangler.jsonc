@@ -1,0 +1,29 @@
+// Cloudflare Workers の設定。docs/03-architecture.md の 1、docs/05-deploy.md。
+// 画面（ビルドした apps/web/dist。_headers の CSP なども、そこに入っている）と、API（apps/worker）を、1つのオリジンで配る。
+{
+  "name": "clinical-carte",
+  "main": "./apps/worker/src/index.ts",
+  "compatibility_date": "2026-09-01",
+  "assets": {
+    "directory": "./apps/web/dist",
+    "binding": "ASSETS",
+    // /api の下だけ、先に Worker を通す。ほかは、静的ファイルを直接返す（_headers が効く）
+    "run_worker_first": ["/api", "/api/*"],
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "clinical-carte",
+      // 【要設定】`npx wrangler d1 create clinical-carte` が出した id に置き換える（docs/05-deploy.md の 1）。置き換えるまで、デプロイできない
+      "database_id": "00000000-0000-0000-0000-000000000000", // phi-guard: allow D1 の id（患者の番号ではない）
+      "migrations_dir": "./apps/worker/migrations",
+    },
+  ],
+  // 合鍵は、ここに書かない（`npx wrangler secret put CARTE_KEY`。docs/05-deploy.md の 3）。ない・短いときは、すべての API を断る
+  // 要求の記録（ログ）を残さない
+  "observability": { "enabled": false },
+  // 作業ブランチの版を、別の URL で公開しない
+  "preview_urls": false,
+  // ビルドのときに wrangler の利用統計を送らない
+  "send_metrics": false,
+}
