@@ -45,7 +45,7 @@ import { callsOn, countCall } from './usage.ts';
 export interface RecordDeps {
   readonly db: Db;
   readonly runtime: Runtime;
-  /** AI の選別。鍵（ANTHROPIC_API_KEY）がなければ null：文は入れられない（選別を通っていない文を、保存しない） */
+  /** AI の選別。鍵（ANTHROPIC_API_KEY か CARTE_api_key）がなければ null：文は入れられない（選別を通っていない文を、保存しない） */
   readonly selector: Selector | null;
   /** AI を呼べる回数（1日。日本の日）。0 は、上限なし */
   readonly dailyAiLimit: number;
