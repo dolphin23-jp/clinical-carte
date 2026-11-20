@@ -20,3 +20,9 @@ export function isDay(value: unknown): value is string {
   const d = new Date(Date.UTC(year, month - 1, day));
   return d.getUTCFullYear() === year && d.getUTCMonth() === month - 1 && d.getUTCDate() === day;
 }
+
+/** その時刻（UNIX のミリ秒）の、日本の日時（YYYY-MM-DDTHH:mm）。 */
+export function japanDateTime(timeMs: number): string {
+  if (!Number.isFinite(timeMs)) throw new RangeError('時刻は有限の数（ミリ秒）');
+  return new Date(timeMs + JST_OFFSET_MS).toISOString().slice(0, 16);
+}

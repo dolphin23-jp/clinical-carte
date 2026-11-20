@@ -57,6 +57,13 @@ async function register(page: Page, key = TEST_KEY): Promise<void> {
   await page.getByTestId('register').click();
 }
 
+/** 登録した端末の一覧は、患者の一覧の下のボタンで開く */
+async function showDevices(page: Page): Promise<void> {
+  await page.getByTestId('home').waitFor();
+  await page.getByTestId('show-devices').click();
+  await page.getByTestId('device').first().waitFor();
+}
+
 async function bannerShown(page: Page): Promise<void> {
   const banner = page.getByTestId('banner');
   await banner.waitFor({ state: 'visible' });
@@ -100,7 +107,7 @@ describe('登録した端末', () => {
   test('登録は1回。読み込み直しても、ログインの画面は出ない', async () => {
     const page = await open();
     await register(page);
-    await page.getByTestId('home').waitFor();
+    await showDevices(page);
     await bannerShown(page);
     const rows = page.getByTestId('device');
     expect(await rows.count()).toBe(1);
@@ -140,7 +147,7 @@ describe('登録した端末', () => {
 
     const pc = await open('Desktop Chrome');
     await register(pc);
-    await pc.getByTestId('home').waitFor();
+    await showDevices(pc);
     const rows = pc.getByTestId('device');
     expect(await rows.count()).toBe(2);
     const lost = rows.filter({ hasText: 'iPhone' });
@@ -157,7 +164,7 @@ describe('登録した端末', () => {
   test('「外す」は、確かめてから。やめられる。この端末を外すと、登録の画面に戻る', async () => {
     const page = await open('Desktop Chrome');
     await register(page);
-    await page.getByTestId('home').waitFor();
+    await showDevices(page);
     await page.getByTestId('remove').click();
     await page.getByRole('button', { name: 'やめる' }).click();
     expect(await page.getByTestId('device').count()).toBe(1);

@@ -5,6 +5,7 @@ packages:
 # 複数のパッケージで使う依存の版は、ここでそろえる（package.json では "catalog:" と書く）。
 # 版は clinical-casebook・clinical-atlas に合わせた。
 catalog:
+  "@anthropic-ai/sdk": ^1.12.0
   "@cloudflare/workers-types": ^5.20261019.1
   "@eslint/js": ^10.0.1
   "@types/node": ^22.20.4
@@ -21,4 +22,5 @@ catalog:
   typescript-eslint: ^8.70.1
   vite: ^8.3.1
   vitest: ^5.0.2
+  yaml: ^2.9.1
   zod: ^4.6.5

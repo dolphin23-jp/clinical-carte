@@ -5,6 +5,8 @@ import { Banner } from './Banner.tsx';
 import { Devices } from './Devices.tsx';
 import { errorMessage } from './messages.ts';
 import { type ApiError, type DeviceView, getSession } from './net/api.ts';
+import { PatientPage } from './PatientPage.tsx';
+import { Patients } from './Patients.tsx';
 import { Register } from './Register.tsx';
 
 type State =
@@ -15,6 +17,12 @@ type State =
 
 export function App() {
   const [state, setState] = useState<State>({ at: 'loading' });
+  /** 開いている患者（一覧なら null）。画面のメモリだけに持つ（読み込み直すと、一覧に戻る） */
+  const [patientId, setPatientId] = useState<string | null>(null);
+  const [showDevices, setShowDevices] = useState(false);
+  const toList = useCallback(() => {
+    setPatientId(null);
+  }, []);
 
   const check = useCallback(() => {
     setState({ at: 'loading' });
@@ -59,13 +67,24 @@ export function App() {
           }}
         />
       )}
-      {state.at === 'in' && (
+      {state.at === 'in' && patientId !== null && <PatientPage key={patientId} patientId={patientId} onBack={toList} onLeft={toRegister} />}
+      {state.at === 'in' && patientId === null && (
         <main className="page" data-testid="home">
-          <section className="card" aria-labelledby="patients-title">
-            <h2 id="patients-title">患者</h2>
-            <p className="note">まだ入れられません。いまあるのは、入口（端末の登録）だけです。患者・受診・取り込みは、次の段で作ります。</p>
-          </section>
-          <Devices onLeft={toRegister} />
+          <Patients onOpen={setPatientId} onLeft={toRegister} />
+          {showDevices ? (
+            <Devices onLeft={toRegister} />
+          ) : (
+            <button
+              className="button link"
+              type="button"
+              onClick={() => {
+                setShowDevices(true);
+              }}
+              data-testid="show-devices"
+            >
+              登録した端末を見る
+            </button>
+          )}
         </main>
       )}
     </div>

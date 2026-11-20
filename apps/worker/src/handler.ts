@@ -1,12 +1,14 @@
 // API の入口。/api/ の下だけを受け、ほかは画面の静的ファイルへ渡す。
-// 順序：合鍵の設定の確かめ（なければ、すべてを断る）→ health → 書き込みの出どころの確かめ → 端末の登録 → 印の照合 → それぞれの API。
+// 順序：合鍵の設定の確かめ（なければ、すべてを断る）→ health → 書き込みの出どころの確かめ → 端末の登録 → 印の照合 → それぞれの API（端末は、ここ。記録は routes.ts）。
 // 記録の中身・合鍵・印を、ログにも、誤りの答えにも出さない（AGENTS.md の 1）。
 import { type DeviceKind, isDeviceKind, isUlid, keyProblem, MAX_KEY_LENGTH } from '@clinical-carte/core';
 import { z } from 'zod';
 
 import type { Db } from './db.ts';
 import { clearCookie, type Device, enter, type EntranceDeps, listDevices, register, removeDevice } from './entrance.ts';
+import { recordApi } from './routes.ts';
 import type { Runtime } from './runtime.ts';
+import type { Selector } from './selector.ts';
 
 export interface HandlerDeps {
   readonly db: Db;
@@ -16,6 +18,10 @@ export interface HandlerDeps {
   readonly secureCookies: boolean;
   /** 画面の静的ファイル */
   readonly assets: (request: Request) => Promise<Response>;
+  /** AI の選別（Anthropic の API）。鍵がなければ null：文は入れられない */
+  readonly selector: Selector | null;
+  /** AI を呼べる回数（1日）。0 は、上限なし */
+  readonly dailyAiLimit: number;
 }
 
 /** 登録の要求の本文の上限（文字）。合鍵と端末の種類だけなので、小さくてよい */
@@ -107,6 +113,9 @@ async function api(request: Request, url: URL, deps: HandlerDeps): Promise<Respo
     // この端末を外したら、印も消す
     return json(200, { removed: id }, id === me.id ? clearCookie(deps.secureCookies) : entered.renew);
   }
+
+  const record = await recordApi(request, path, { db: deps.db, runtime: deps.runtime, selector: deps.selector, dailyAiLimit: deps.dailyAiLimit });
+  if (record !== null) return json(record.status, record.body, entered.renew);
 
   return json(404, { error: 'not_found' }, entered.renew);
 }

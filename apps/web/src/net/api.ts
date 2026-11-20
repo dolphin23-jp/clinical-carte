@@ -1,6 +1,6 @@
 // サーバーの API を呼ぶ、ただ1つの場所（ESLint と試験が見張る）。宛先は、自分のオリジンの /api/ だけ。
 // 印（Cookie）は、ブラウザが付ける。画面のプログラムからは読めない（HttpOnly）。
-import type { DeviceKind } from '@clinical-carte/core';
+import type { AuthorRole, Comparator, DeviceKind, EncounterKind, NewEncounter, NewPatient, NewSource, PatientPatch, Sex, SourceKind } from '@clinical-carte/core';
 
 export interface DeviceView {
   readonly id: string;
@@ -11,17 +11,47 @@ export interface DeviceView {
 }
 
 /** サーバーが返す、誤りの名前。network は、つながらない・答えが読めない */
-export type ApiError = 'network' | 'no_key' | 'unregistered' | 'wrong_key' | 'locked' | 'too_many_devices' | 'not_found' | 'server';
+export type ApiError =
+  | 'network'
+  | 'no_key'
+  | 'unregistered'
+  | 'wrong_key'
+  | 'locked'
+  | 'too_many_devices'
+  | 'not_found'
+  | 'server'
+  | 'bad_request'
+  | 'no_ai'
+  | 'ai_limit'
+  | 'ai_refused'
+  | 'ai_unavailable'
+  | 'ai_bad_answer'
+  | 'selection_failed';
 
 export type Result<T> = { readonly ok: true; readonly value: T } | { readonly ok: false; readonly error: ApiError; readonly left?: number };
 
-const KNOWN: readonly ApiError[] = ['no_key', 'unregistered', 'wrong_key', 'locked', 'too_many_devices', 'not_found', 'server'];
+const KNOWN: readonly ApiError[] = [
+  'no_key',
+  'unregistered',
+  'wrong_key',
+  'locked',
+  'too_many_devices',
+  'not_found',
+  'server',
+  'bad_request',
+  'no_ai',
+  'ai_limit',
+  'ai_refused',
+  'ai_unavailable',
+  'ai_bad_answer',
+  'selection_failed',
+];
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-async function call(method: 'GET' | 'POST' | 'DELETE', path: string, body?: unknown): Promise<Result<Record<string, unknown>>> {
+async function call(method: 'GET' | 'POST' | 'PATCH' | 'DELETE', path: string, body?: unknown): Promise<Result<Record<string, unknown>>> {
   let response: Response;
   let data: unknown;
   try {
@@ -78,5 +108,119 @@ export async function listDevices(): Promise<Result<DeviceView[]>> {
 
 export async function removeDevice(id: string): Promise<Result<null>> {
   const result = await call('DELETE', `devices/${encodeURIComponent(id)}`);
+  return result.ok ? { ok: true, value: null } : result;
+}
+
+// --- 記録（段1：患者・受診・取り込み）。サーバーが返した形を、そのまま使う（形の確かめは、サーバーと同じ core の型の側にある）
+
+export interface Patient {
+  readonly id: string;
+  readonly age: number;
+  readonly ageOn: string;
+  readonly sex: Sex;
+  readonly createdOn: string;
+}
+
+export interface Encounter {
+  readonly id: string;
+  readonly patientId: string;
+  readonly kind: EncounterKind;
+  readonly start: string;
+  readonly end: string | null;
+}
+
+export interface Source {
+  readonly id: string;
+  readonly encounterId: string;
+  readonly kind: SourceKind;
+  readonly authorRole: AuthorRole;
+  readonly at: string | null;
+  readonly enteredAt: string;
+  readonly text: string;
+  readonly replaced: Readonly<Record<string, number>>;
+}
+
+export interface Observation {
+  readonly id: string;
+  readonly sourceId: string;
+  readonly encounterId: string;
+  readonly at: string | null;
+  readonly name: string | null;
+  readonly nameRaw: string;
+  readonly kind: 'lab' | 'vital' | null;
+  readonly value: number | null;
+  readonly comparator: Comparator | null;
+  readonly valueText: string;
+  readonly unit: string | null;
+}
+
+export interface PatientSummary {
+  readonly patient: Patient;
+  readonly latest: Encounter | null;
+  readonly sources: number;
+}
+
+export interface PatientRecord {
+  readonly patient: Patient;
+  readonly encounters: readonly Encounter[];
+  readonly sources: readonly Source[];
+  readonly observations: readonly Observation[];
+  /** サーバーの、今日（日本の日） */
+  readonly today: string;
+}
+
+/** 答えの中の欄を、決めた型として読む（欄がなければ、つながらないのと同じ扱い） */
+function field<T>(result: Result<Record<string, unknown>>, name: string): Result<T> {
+  if (!result.ok) return result;
+  const value = result.value[name];
+  return value === undefined || value === null ? { ok: false, error: 'network' } : { ok: true, value: value as T };
+}
+
+export async function listPatients(): Promise<Result<{ patients: readonly PatientSummary[]; today: string }>> {
+  const result = await call('GET', 'patients');
+  if (!result.ok) return result;
+  const { patients, today } = result.value;
+  return Array.isArray(patients) && typeof today === 'string' ? { ok: true, value: { patients: patients as PatientSummary[], today } } : { ok: false, error: 'network' };
+}
+
+export async function createPatient(input: NewPatient): Promise<Result<Patient>> {
+  return field<Patient>(await call('POST', 'patients', input), 'patient');
+}
+
+export async function getRecord(patientId: string): Promise<Result<PatientRecord>> {
+  const result = await call('GET', `patients/${encodeURIComponent(patientId)}`);
+  if (!result.ok) return result;
+  const { patient, encounters, sources, observations, today } = result.value;
+  if (!isRecord(patient) || !Array.isArray(encounters) || !Array.isArray(sources) || !Array.isArray(observations) || typeof today !== 'string') return { ok: false, error: 'network' };
+  return { ok: true, value: { patient: patient as unknown as Patient, encounters: encounters as Encounter[], sources: sources as Source[], observations: observations as Observation[], today } };
+}
+
+export async function patchPatient(patientId: string, patch: PatientPatch): Promise<Result<Patient>> {
+  return field<Patient>(await call('PATCH', `patients/${encodeURIComponent(patientId)}`, patch), 'patient');
+}
+
+export async function deletePatient(patientId: string): Promise<Result<null>> {
+  const result = await call('DELETE', `patients/${encodeURIComponent(patientId)}`);
+  return result.ok ? { ok: true, value: null } : result;
+}
+
+export async function createEncounter(patientId: string, input: NewEncounter): Promise<Result<Encounter>> {
+  return field<Encounter>(await call('POST', `patients/${encodeURIComponent(patientId)}/encounters`, input), 'encounter');
+}
+
+export async function setEncounterEnd(encounterId: string, end: string | null): Promise<Result<Encounter>> {
+  return field<Encounter>(await call('PATCH', `encounters/${encodeURIComponent(encounterId)}`, { end }), 'encounter');
+}
+
+/** 文を入れる。サーバーで、AI の選別と置き換えを通ったものだけが保存され、保存された形が返る。 */
+export async function addSource(encounterId: string, input: NewSource): Promise<Result<{ source: Source; observations: readonly Observation[] }>> {
+  const result = await call('POST', `encounters/${encodeURIComponent(encounterId)}/sources`, input);
+  if (!result.ok) return result;
+  const { source, observations } = result.value;
+  return isRecord(source) && Array.isArray(observations) ? { ok: true, value: { source: source as unknown as Source, observations: observations as Observation[] } } : { ok: false, error: 'network' };
+}
+
+export async function deleteSource(sourceId: string): Promise<Result<null>> {
+  const result = await call('DELETE', `sources/${encodeURIComponent(sourceId)}`);
   return result.ok ? { ok: true, value: null } : result;
 }

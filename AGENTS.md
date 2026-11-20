@@ -2,7 +2,7 @@
 
 このリポジトリで作業するエージェント（と人）へのルールです。clinical-carte は、自分用のカルテです。病院のカルテにある患者の情報を、本人が自分の手で写して持ち、AI が整理します。メインは記録で、本人専用です。
 
-状態：段0（骨組み・入口の鍵・常時の帯）まで実装した。患者・受診・取り込みは、まだない（[docs/03-architecture.md](docs/03-architecture.md) の 5）。
+状態：段1（患者・受診・取り込み・AI の選別・検査値の読み取り）まで実装した。AI の整理（事実の取り出し・文の区切り）は、まだない（[docs/03-architecture.md](docs/03-architecture.md) の 5）。
 
 作業の前に、次の順で読んでください。
 
@@ -45,6 +45,11 @@
 - **検査・確かめの関数は core に1つだけ**置き、画面とサーバーが同じ関数を使う（別々に書いて揃える「双子」を作らない）。
 - **サーバー**：時計・乱数・暗号に触れるのは `apps/worker/src/runtime.ts` だけ。**ログを出さない**（`console` を使わない）。誤りの答えは名前だけで、何が起きたかの文を返さない。**書き込む表は、[docs/04-data-model.md](docs/04-data-model.md) の 6 の一覧だけ**（表を足すときは、先に一覧を直す。`apps/worker/test/writes.test.ts` が見張る）。表を作る SQL は `apps/worker/migrations/` にだけ置く。
 - **入口**（`apps/worker/src/entrance.ts`・`handler.ts`）：合鍵の設定がない・弱いときは、`/api/health` も含めて、すべてを断る。登録していない端末に答えるのは、`/api/health` と端末の登録だけ。合鍵・端末の秘密そのものを、保存先・答え・ログに置かない。変えるときは、同じ変更で `apps/worker/test/entrance.test.ts` を直す。
+- **取り込み**（`apps/worker/src/intake.ts`）：打った文 → 整え → AI の選別 → 決定論の置き換え（core の `applySelection`）→ 形の検査（`replaceShapes`）→ 測定値の読み取り（`readLabText`。種類が検査結果・バイタルのときだけ）。**保存するのは、この流れが返した文だけ**。選別なしで保存する道を作らない（AI の鍵がないときは、文を入れられない）。変えるときは、同じ変更で `apps/worker/test/records.test.ts` と、core の `selection.test.ts`・`shapes.test.ts` を直す。
+- **AI**：呼ぶのは `apps/worker/src/anthropic.ts` の1か所。指示は `apps/worker/src/prompt.ts` の1か所で、変えるときは版（`SELECT_PROMPT_VERSION`）を上げ、`apps/worker/test/prompt.test.ts` を同じ変更で直し、変更の前後で評価（`apps/worker/eval/`。本物の API で動かすのは本人）を見る。AI に文を書かせない（返させるのは、場所と種類だけ）。
+- **評価の道具**（`apps/worker/eval/`）：架空の文だけ。名前・番号・連絡先は、実行時に組み立てる（ファイルに置かない）。実在の文を入れない。エージェントは、本物の API では動かさない（`--dry-run`・`--oracle` と試験だけ）。
+- **検査項目の名前**（`packages/core/src/labs/catalog.gen.ts`）は、`node scripts/import_lab_names.mjs <clinical-playbook の作業ツリー>` が作る。**手で直さない**（`--check` で古さを確かめる）。基準範囲・ありうる範囲・換算の倍率を取り込まない。carte で足す名前は `labs/extra-names.ts`。
+- **測定値は、書かれたとおりに持つ**：補わない・換算しない・判定しない。読めなかった部分は、黙って捨てず、理由つきで出す（`packages/core/test/labs.test.ts` の性質の試験）。
 - **画面**：通信は `apps/web/src/net/api.ts` だけで、宛先は自分のオリジンの `/api/` だけ（Anthropic の API を呼ぶのはサーバー）。**端末の保存先（localStorage・sessionStorage・IndexedDB・Cookie・Cache Storage・Service Worker）を使わない**。インラインの style・script を使わない（CSP）。`apps/web/test/boundary.test.ts` が見張る。
 - **常時表示の帯**（`packages/core/src/banner.ts`・`apps/web/src/Banner.tsx`）：どの画面でも出す。消すボタンは作らない。
 - 検証は zod。ID は ULID。試験は Vitest と fast-check。画面の E2E は playwright-core（`apps/web/e2e/`。手元のサーバー `apps/worker/test/devserver.ts` が、ビルドした画面と本物の API の処理を、メモリの中の保存先で動かす）。

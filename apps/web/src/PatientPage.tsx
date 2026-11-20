@@ -1,0 +1,440 @@
+// 患者の画面：自動の見出し、受診、入れる欄、記録（時系列）、検査・バイタルの表。
+import {
+  AUTHOR_ROLE_LABELS,
+  ENCOUNTER_KIND_LABELS,
+  ENCOUNTER_KINDS,
+  type EncounterKind,
+  headline,
+  hospitalDay,
+  READ_VALUES_KINDS,
+  readLabText,
+  SOURCE_KIND_LABELS,
+  UNREAD_LABELS,
+} from '@clinical-carte/core';
+import { type SyntheticEvent, useCallback, useEffect, useState } from 'react';
+
+import { Composer } from './Composer.tsx';
+import { joinDateTime, nowLocal, replacedSummary, showDateTime } from './format.ts';
+import { LabTable } from './LabTable.tsx';
+import { errorMessage } from './messages.ts';
+import { createEncounter, deletePatient, deleteSource, type Encounter, getRecord, type PatientRecord, setEncounterEnd, type Source } from './net/api.ts';
+
+const encounterLabel = (e: Encounter): string => {
+  const start = e.start.slice(0, 10);
+  return `${ENCOUNTER_KIND_LABELS[e.kind]} ${e.kind === 'inpatient' ? `${start}〜${e.end === null ? '' : e.end.slice(0, 10)}` : start}`;
+};
+
+/** 新しい順（日時のないものは、最後） */
+const newestFirst = (a: Source, b: Source): number => {
+  if (a.at === b.at) return b.id.localeCompare(a.id);
+  if (a.at === null) return 1;
+  if (b.at === null) return -1;
+  return a.at < b.at ? 1 : -1;
+};
+
+export function PatientPage({ patientId, onBack, onLeft }: { patientId: string; onBack: () => void; onLeft: () => void }) {
+  const [record, setRecord] = useState<PatientRecord | null>(null);
+  const [message, setMessage] = useState<string | null>(null);
+  const [encounterId, setEncounterId] = useState<string | null>(null);
+  const [tab, setTab] = useState<'notes' | 'values'>('notes');
+  const [panel, setPanel] = useState<'none' | 'encounter' | 'end' | 'delete'>('none');
+
+  const load = useCallback(() => {
+    void getRecord(patientId).then((result) => {
+      if (result.ok) {
+        setRecord(result.value);
+        setMessage(null);
+      } else if (result.error === 'unregistered') onLeft();
+      else if (result.error === 'not_found') onBack();
+      else setMessage(errorMessage(result.error));
+    });
+  }, [patientId, onLeft, onBack]);
+  useEffect(load, [load]);
+
+  if (record === null) {
+    return (
+      <main className="page">
+        <button className="button link" type="button" onClick={onBack}>
+          ← 患者の一覧
+        </button>
+        {message === null ? (
+          <p className="note">読み込んでいます…</p>
+        ) : (
+          <p className="alert" role="alert">
+            {message}
+          </p>
+        )}
+      </main>
+    );
+  }
+
+  const latest = record.encounters.at(-1) ?? null;
+  const current = record.encounters.find((e) => e.id === encounterId) ?? latest;
+  const title = headline({ ...record.patient, encounter: latest }, record.today);
+  const sources = record.sources.filter((s) => s.encounterId === current?.id).sort(newestFirst);
+  const observations = record.observations.filter((o) => o.encounterId === current?.id);
+
+  return (
+    <main className="page" data-testid="patient-page">
+      <button className="button link" type="button" onClick={onBack} data-testid="back">
+        ← 患者の一覧
+      </button>
+      <h1 data-testid="headline">{title}</h1>
+      {message !== null && (
+        <p className="alert" role="alert">
+          {message}
+        </p>
+      )}
+
+      <section className="card" aria-labelledby="encounters-title">
+        <h2 id="encounters-title">受診</h2>
+        <div className="choices" data-testid="encounters">
+          {record.encounters.map((e) => (
+            <button
+              key={e.id}
+              type="button"
+              className={e.id === current?.id ? 'chip on' : 'chip'}
+              aria-pressed={e.id === current?.id}
+              onClick={() => {
+                setEncounterId(e.id);
+              }}
+            >
+              {encounterLabel(e)}
+            </button>
+          ))}
+        </div>
+        <div className="actions">
+          <button
+            className="button"
+            type="button"
+            onClick={() => {
+              setPanel(panel === 'encounter' ? 'none' : 'encounter');
+            }}
+            data-testid="add-encounter"
+          >
+            受診を足す
+          </button>
+          {current !== null && (
+            <button
+              className="button"
+              type="button"
+              onClick={() => {
+                setPanel(panel === 'end' ? 'none' : 'end');
+              }}
+              data-testid="set-end"
+            >
+              {current.end === null ? '終わり（退院・帰宅）を入れる' : '終わりを直す'}
+            </button>
+          )}
+        </div>
+        {panel === 'encounter' && (
+          <EncounterForm
+            patientId={patientId}
+            onDone={(e) => {
+              setPanel('none');
+              setEncounterId(e.id);
+              load();
+            }}
+            onLeft={onLeft}
+          />
+        )}
+        {panel === 'end' && current !== null && (
+          <EndForm
+            encounter={current}
+            onDone={() => {
+              setPanel('none');
+              load();
+            }}
+            onLeft={onLeft}
+          />
+        )}
+      </section>
+
+      {current !== null && (
+        <section className="card" aria-labelledby="composer-title">
+          <h2 id="composer-title">入れる</h2>
+          <Composer key={current.id} encounterId={current.id} target={`${title.split(' ｜ ')[0] ?? title} ｜ ${encounterLabel(current)}`} onSaved={load} onLeft={onLeft} />
+        </section>
+      )}
+
+      <section className="card" aria-labelledby="record-title">
+        <div className="card-head">
+          <h2 id="record-title">{current === null ? '記録' : encounterLabel(current)}</h2>
+          <div className="tabs" role="tablist">
+            <button type="button" role="tab" aria-selected={tab === 'notes'} className={tab === 'notes' ? 'chip on' : 'chip'} onClick={() => { setTab('notes'); }} data-testid="tab-notes">
+              記録 {String(sources.length)}
+            </button>
+            <button type="button" role="tab" aria-selected={tab === 'values'} className={tab === 'values' ? 'chip on' : 'chip'} onClick={() => { setTab('values'); }} data-testid="tab-values">
+              検査・バイタル
+            </button>
+          </div>
+        </div>
+        {tab === 'values' ? (
+          <LabTable observations={observations} />
+        ) : sources.length === 0 ? (
+          <p className="note">この受診には、まだ、記録がありません。</p>
+        ) : (
+          <ul className="sources" data-testid="sources">
+            {sources.map((s) => (
+              <SourceCard key={s.id} source={s} encounter={current} onDeleted={load} onLeft={onLeft} />
+            ))}
+          </ul>
+        )}
+      </section>
+
+      <section className="card" aria-labelledby="danger-title">
+        <h2 id="danger-title">この患者を消す</h2>
+        <p className="note">この患者の受診・記録・検査の値を、すべて消します。戻せません。</p>
+        {panel === 'delete' ? (
+          <div className="actions">
+            <button
+              className="button danger"
+              type="button"
+              onClick={() => {
+                void deletePatient(patientId).then((result) => {
+                  if (result.ok || result.error === 'not_found') onBack();
+                  else if (result.error === 'unregistered') onLeft();
+                  else setMessage(errorMessage(result.error));
+                });
+              }}
+              data-testid="confirm-delete-patient"
+            >
+              すべて消す（戻せません）
+            </button>
+            <button
+              className="button"
+              type="button"
+              onClick={() => {
+                setPanel('none');
+              }}
+            >
+              やめる
+            </button>
+          </div>
+        ) : (
+          <div className="actions">
+            <button
+              className="button"
+              type="button"
+              onClick={() => {
+                setPanel('delete');
+              }}
+              data-testid="delete-patient"
+            >
+              消す
+            </button>
+          </div>
+        )}
+      </section>
+    </main>
+  );
+}
+
+function SourceCard({ source, encounter, onDeleted, onLeft }: { source: Source; encounter: Encounter | null; onDeleted: () => void; onLeft: () => void }) {
+  const [asking, setAsking] = useState(false);
+  const [message, setMessage] = useState<string | null>(null);
+  const day = source.at !== null && encounter?.kind === 'inpatient' ? hospitalDay(encounter.start, source.at) : null;
+  const replaced = replacedSummary(source.replaced);
+  // 読めなかった部分は、保存した文から、同じ決まりで読み直して出す（保存していない）
+  const unread = READ_VALUES_KINDS.includes(source.kind) ? readLabText(source.text).unread : [];
+
+  return (
+    <li className="source" data-testid="source">
+      <div className="source-head">
+        <span className="source-when">
+          {showDateTime(source.at)}
+          {day !== null && <span className="tag">第{String(day)}病日</span>}
+        </span>
+        <span className="source-kind">
+          {SOURCE_KIND_LABELS[source.kind]}・{AUTHOR_ROLE_LABELS[source.authorRole]}
+        </span>
+      </div>
+      <p className="source-text" data-testid="source-text">
+        {source.text}
+      </p>
+      {unread.length > 0 && (
+        <div className="unread" data-testid="unread">
+          <span className="unread-title">値として読めなかった部分（文には残っています）</span>
+          <ul>
+            {unread.map((u) => (
+              <li key={`${String(u.start)}-${String(u.end)}`}>
+                「{source.text.slice(u.start, u.end)}」— {UNREAD_LABELS[u.reason]}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+      <div className="source-foot">
+        <span className="row-sub">
+          入れた日時 {showDateTime(source.enteredAt)}
+          {replaced !== null && `・置き換えた場所：${replaced}`}
+        </span>
+        {asking ? (
+          <span className="row-actions">
+            <button
+              className="button danger"
+              type="button"
+              onClick={() => {
+                void deleteSource(source.id).then((result) => {
+                  if (result.ok || result.error === 'not_found') onDeleted();
+                  else if (result.error === 'unregistered') onLeft();
+                  else setMessage(errorMessage(result.error));
+                });
+              }}
+              data-testid="confirm-delete-source"
+            >
+              消す（戻せません）
+            </button>
+            <button
+              className="button"
+              type="button"
+              onClick={() => {
+                setAsking(false);
+              }}
+            >
+              やめる
+            </button>
+          </span>
+        ) : (
+          <button
+            className="button small"
+            type="button"
+            onClick={() => {
+              setAsking(true);
+            }}
+            data-testid="delete-source"
+          >
+            消す
+          </button>
+        )}
+      </div>
+      {message !== null && (
+        <p className="alert" role="alert">
+          {message}
+        </p>
+      )}
+    </li>
+  );
+}
+
+function EncounterForm({ patientId, onDone, onLeft }: { patientId: string; onDone: (encounter: Encounter) => void; onLeft: () => void }) {
+  const [kind, setKind] = useState<EncounterKind>('outpatient');
+  const [day, setDay] = useState(() => nowLocal().day);
+  const [time, setTime] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState<string | null>(null);
+
+  const submit = (event: SyntheticEvent) => {
+    event.preventDefault();
+    if (busy || day === '') return;
+    setBusy(true);
+    void createEncounter(patientId, { kind, start: joinDateTime(day, time) }).then((result) => {
+      setBusy(false);
+      if (result.ok) onDone(result.value);
+      else if (result.error === 'unregistered') onLeft();
+      else setMessage(errorMessage(result.error));
+    });
+  };
+
+  return (
+    <form className="form" onSubmit={submit} data-testid="encounter-form">
+      <div className="choices">
+        {ENCOUNTER_KINDS.map((k) => (
+          <label key={k} className="choice">
+            <input
+              type="radio"
+              name="new-encounter-kind"
+              checked={kind === k}
+              onChange={() => {
+                setKind(k);
+              }}
+              disabled={busy}
+            />
+            <span>{ENCOUNTER_KIND_LABELS[k]}</span>
+          </label>
+        ))}
+      </div>
+      <div className="field-row">
+        <label className="field">
+          <span className="field-label">開始の日</span>
+          <input className="input" type="date" value={day} onChange={(e) => { setDay(e.target.value); }} disabled={busy} />
+        </label>
+        <label className="field">
+          <span className="field-label">時刻（分かれば）</span>
+          <input className="input" type="time" value={time} onChange={(e) => { setTime(e.target.value); }} disabled={busy} />
+        </label>
+      </div>
+      {message !== null && (
+        <p className="alert" role="alert">
+          {message}
+        </p>
+      )}
+      <div className="actions">
+        <button className="button primary" type="submit" disabled={busy || day === ''} data-testid="create-encounter">
+          足す
+        </button>
+      </div>
+    </form>
+  );
+}
+
+function EndForm({ encounter, onDone, onLeft }: { encounter: Encounter; onDone: () => void; onLeft: () => void }) {
+  const [day, setDay] = useState(() => encounter.end?.slice(0, 10) ?? nowLocal().day);
+  const [time, setTime] = useState(() => (encounter.end !== null && encounter.end.length === 16 ? encounter.end.slice(11) : ''));
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState<string | null>(null);
+
+  const save = (end: string | null) => {
+    setBusy(true);
+    void setEncounterEnd(encounter.id, end).then((result) => {
+      setBusy(false);
+      if (result.ok) onDone();
+      else if (result.error === 'unregistered') onLeft();
+      else setMessage(result.error === 'bad_request' ? '終わりの日は、始まりの日より前にできません。' : errorMessage(result.error));
+    });
+  };
+
+  return (
+    <form
+      className="form"
+      onSubmit={(event) => {
+        event.preventDefault();
+        if (!busy && day !== '') save(joinDateTime(day, time));
+      }}
+      data-testid="end-form"
+    >
+      <div className="field-row">
+        <label className="field">
+          <span className="field-label">終わりの日</span>
+          <input className="input" type="date" value={day} onChange={(e) => { setDay(e.target.value); }} disabled={busy} data-testid="end-day" />
+        </label>
+        <label className="field">
+          <span className="field-label">時刻（分かれば）</span>
+          <input className="input" type="time" value={time} onChange={(e) => { setTime(e.target.value); }} disabled={busy} />
+        </label>
+      </div>
+      {message !== null && (
+        <p className="alert" role="alert">
+          {message}
+        </p>
+      )}
+      <div className="actions">
+        <button className="button primary" type="submit" disabled={busy || day === ''} data-testid="save-end">
+          入れる
+        </button>
+        {encounter.end !== null && (
+          <button
+            className="button"
+            type="button"
+            disabled={busy}
+            onClick={() => {
+              save(null);
+            }}
+          >
+            終わりを消す
+          </button>
+        )}
+      </div>
+    </form>
+  );
+}

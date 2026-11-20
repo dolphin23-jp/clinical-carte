@@ -1,6 +1,6 @@
 # 04 データモデル
 
-状態：下書き（案）。実装はまだない。表と列の名前は、実装のときに変わりうる。変えてはいけないのは、2 の約束と、6 の書き込みの一覧の考え方。
+状態：段1 まで実装した（患者・受診・取り込んだ文・測定値）。3.5 より後の表は、まだ案。**実装した分と、案との違いは 7**。変えてはいけないのは、2 の約束と、6 の書き込みの一覧の考え方。
 
 ## 1. 実体の一覧
 
@@ -187,4 +187,23 @@ AI が返すのは、次の3つだけ（構造化した出力）。
 
 - 打った原文・AI へ送った文・AI の答えそのものは、どの表にも書かない。ログにも出さない。
 - 表を足すときは、先にこの一覧を直す。
-- いまある表（段0）は `devices` と `entrance_daily` だけ。`apps/worker/test/writes.test.ts` が、migrations が作る表と、ソースの SQL が書く表を、この一覧と突き合わせる。
+- いまある表（段0・段1）は `devices`・`entrance_daily`・`patients`・`encounters`・`sources`・`observations`・`usage_daily`。`apps/worker/test/writes.test.ts` が、migrations が作る表と、ソースの SQL が書く表を、この一覧と突き合わせる。
+
+## 7. 段1 で作ったものと、案との違い
+
+作った表は、`apps/worker/migrations/0002_records.sql`。型と選べる値は、`packages/core/src/record/schema.ts`。
+
+| 表 | 作った列 | 案（3）との違い |
+|---|---|---|
+| `patients` | id・age・age_on・sex・created_on | `background`（既往・常用薬など）は、まだない |
+| `encounters` | id・patient_id・kind・started・ended | 列の名前は `started`・`ended`（`end` は SQL の語のため）。`from_encounter`・`outcome` は、まだない |
+| `sources` | id・patient_id・encounter_id・kind・author_role・at・entered_at・text・replaced | `in_chart` は列にせず、種類（「自分のメモ」だけが、carte だけの記録）から決める。`organized` は、段2 で足す |
+| `observations` | id・patient_id・encounter_id・source_id・at・name・name_raw・kind・value・comparator・value_text・unit・span_start・span_end・ord・origin | `value_text` は、定性だけでなく、**書かれた値をいつも持つ**（数は `value` にも持つ）。`ord` は、文の中での順 |
+| `usage_daily` | day・calls | — |
+
+- **まだない表**：`segments`・`medications`・`events`・`problems`・`problem_links`・`history`。
+- **読めなかった部分は、保存していない**：検査結果・バイタルの文の「読めなかった部分」は、保存した文から、同じ決まり（core の `readLabText`）で読み直して出す。文そのものが残っているので、失うものはない。カタログを足すと、読み直したときに、読める部分が増える（保存した測定値は、入れたときの読み取りのまま）。
+- **文の短い欄を、まだ作っていない**（患者の背景、受診の転帰、主な問題）：打った文は、すべて選別を通す決まり（docs/01 の 2）なので、欄を足すときは、同じ流れを通す（CD-014）。
+- **版（`rev`）と、訂正の履歴（`history`）は、まだない**：段1 では、文と測定値は「入れる」と「消す」だけで、直す操作がない。消したものは、残らない（入れ間違い・別の患者に入れた文を、残さないため）。直す操作は、段3 で、履歴と一緒に足す。
+- **測定値を読むのは、種類が「検査結果」「バイタル」の文だけ**：ほかの種類の文（経過の記載など）の中の数は、段1 では測定値にしない（「K 3.5 を目標に」のような、測定でない数を、測定値にしないため）。段2 で、AI が場所を指し、数が引用の数字そのものであることを確かめて、測定値にする。
+- **検査項目の名前**は、clinical-playbook のカタログから、`scripts/import_lab_names.mjs` で取り込む（`packages/core/src/labs/catalog.gen.ts`。名前・別名・単位の書き方・群だけ。基準範囲・ありうる範囲・換算の倍率は取り込まない）。定性だけの項目（尿潜血・便潜血・迅速の抗原など）は、carte で足した（`labs/extra-names.ts`。【案。本人は未確認】）。

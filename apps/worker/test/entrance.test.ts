@@ -222,7 +222,8 @@ describe('登録した端末', () => {
   test('まだない API は 404（登録した端末にだけ、そう答える）', async () => {
     const w = world();
     const { cookie } = await registered(w);
-    expect((await w.call('GET', '/api/patients', { cookie })).status).toBe(404);
+    expect((await w.call('GET', '/api/nothing-here', { cookie })).status).toBe(404);
+    expect((await w.call('PUT', '/api/patients', { cookie, body: {} })).status).toBe(404);
   });
 });
 
@@ -270,6 +271,7 @@ describe('答えの形', () => {
         prepare: () => {
           throw new Error('合鍵や記録の中身が混ざりうる文');
         },
+        batch: () => Promise.reject(new Error('合鍵や記録の中身が混ざりうる文')),
       },
     });
     const r = await w.call('POST', '/api/devices', { body: { key: TEST_KEY, kind: 'pc' } });

@@ -19,6 +19,13 @@
       "migrations_dir": "./apps/worker/migrations",
     },
   ],
+  "vars": {
+    // AI の選別に使うモデル（CA-022）
+    "MODEL": "claude-opus-5-5",
+    // AI を呼べる回数（1日。日本の日）。【仮の値】"0" は、上限なし。数は、D1 の usage_daily にある
+    "DAILY_AI_LIMIT": "300",
+  },
+  // Anthropic の API の鍵も、ここに書かない（`npx wrangler secret put ANTHROPIC_API_KEY`）。ないときは、文を入れられない
   // 合鍵は、ここに書かない（`npx wrangler secret put CARTE_KEY`。docs/05-deploy.md の 3）。ない・短いときは、すべての API を断る
   // 要求の記録（ログ）を残さない
   "observability": { "enabled": false },

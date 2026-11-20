@@ -5,9 +5,12 @@ import { DatabaseSync, type SQLInputValue } from 'node:sqlite';
 
 import { toHex } from '@clinical-carte/core';
 
+import type { SelectionAnswer } from '@clinical-carte/core';
+
 import type { Db, Statement } from '../src/db.ts';
 import { handle, type HandlerDeps } from '../src/handler.ts';
 import { type Runtime, webRuntime } from '../src/runtime.ts';
+import type { Selector, SelectorResult } from '../src/selector.ts';
 
 export const MIGRATIONS = resolve(import.meta.dirname, '..', 'migrations');
 
@@ -37,7 +40,22 @@ export function openDb(): TestDb {
       return Promise.resolve({ meta: { changes: Number(r.changes) } });
     },
   });
-  return { raw, log, prepare: (sql) => statement(sql, []) };
+  return {
+    raw,
+    log,
+    prepare: (sql) => statement(sql, []),
+    // 本番（D1）の batch と同じく、全部できるか、全部できないか
+    batch: async (statements) => {
+      raw.exec('BEGIN');
+      try {
+        for (const s of statements) await s.run();
+        raw.exec('COMMIT');
+      } catch (error) {
+        raw.exec('ROLLBACK');
+        throw error;
+      }
+    },
+  };
 }
 
 /** 試験用の合鍵（実行時に組み立てる。長くて、字の種類が多い）。 */
@@ -78,6 +96,8 @@ export function world(overrides: Partial<HandlerDeps> = {}): World {
     runtime: testRuntime(clock),
     secureCookies: true,
     assets: () => Promise.resolve(new Response('画面', { status: 200 })),
+    selector: fakeSelector(),
+    dailyAiLimit: 0,
     ...overrides,
   };
   return {
@@ -108,4 +128,28 @@ export async function registered(w: World, kind = 'iphone'): Promise<{ cookie: s
   if (response.status !== 200) throw new Error(`登録できない: ${String(response.status)}`);
   const body = (await response.json()) as { device: { id: string } };
   return { cookie: cookieOf(response), id: body.device.id };
+}
+
+type Identifier = SelectionAnswer['identifiers'][number];
+
+export interface FakeSelector extends Selector {
+  /** 選別に渡された文（何が AI に届くかを、試験が確かめる） */
+  readonly seen: string[];
+}
+
+/**
+ * AI の選別の代役：渡した語が文にあれば、その場所を指す（文にない語は、指さない）。
+ * 本物の AI の賢さは、ここでは試さない（評価の道具 eval/ が受け持つ）。試すのは、指された後の、決定論の流れ。
+ */
+export function fakeSelector(known: readonly Omit<Identifier, 'facility'>[] = [], override?: (text: string) => SelectorResult): FakeSelector {
+  const seen: string[] = [];
+  return {
+    seen,
+    select: (text) => {
+      seen.push(text);
+      if (override !== undefined) return Promise.resolve(override(text));
+      const identifiers: Identifier[] = known.filter((k) => text.includes(k.quote)).map((k) => ({ ...k, facility: null }));
+      return Promise.resolve({ ok: true, answer: { identifiers } });
+    },
+  };
 }
