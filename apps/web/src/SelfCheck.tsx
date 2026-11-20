@@ -37,7 +37,7 @@ export function noteOf(r: SelfCheckResult): string | null {
     r.leaked > 0 ? `漏れ ${String(r.leaked)} か所` : null,
     r.failed !== null ? `通らず（${r.failed}）` : null,
     r.lost > 0 ? `残すべき語が消えた ${String(r.lost)}` : null,
-    r.exact === false ? '混ぜた場所のほかも置き換えた' : null,
+    r.exact === false ? `混ぜた場所のほかも置き換えた（変わった部分：${r.altered.map((a) => `「${a}」`).join('')}）` : null,
   ].filter((n): n is string => n !== null);
   return notes.length === 0 ? null : notes.join('、');
 }

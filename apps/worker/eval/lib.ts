@@ -1,7 +1,7 @@
 // 選別の評価の道具（docs/03 の 5）：新しく書いた架空の文に、名前・番号・連絡先を**実行時に組み立てて**混ぜ、
 // 選別 → 置き換え → 形の検査（本番と同じ流れ）を通して、落とし漏れを数える。目標は、漏れ 0。
 // 実在の患者の文は、入れない。ここにある名前・施設・番号は、部品から組み立てた架空のもの。
-import { applySelection, cleanText, IDENTIFIER_KINDS, type IdentifierKind, IDENTIFIER_TOKENS, FACILITY_TOKENS, replaceShapes, SHAPE_TOKENS } from '@clinical-carte/core';
+import { applySelection, cleanText, IDENTIFIER_KINDS, type IdentifierKind, replaceShapes } from '@clinical-carte/core';
 import { z } from 'zod';
 
 import type { Selector } from '../src/selector.ts';
@@ -119,8 +119,6 @@ export function build(c: EvalCase, seed: number): BuiltCase {
   return { id: c.id, text, planted, keep: c.keep, loose: c.loose === true, skeleton };
 }
 
-const ALL_TOKENS = [...Object.values(IDENTIFIER_TOKENS), ...Object.values(FACILITY_TOKENS), ...Object.values(SHAPE_TOKENS)];
-
 export interface CaseScore {
   readonly id: string;
   /** 選別が通らなかった（その文は保存されない） */
@@ -131,27 +129,53 @@ export interface CaseScore {
   readonly lost: readonly string[];
   /** 混ぜた場所だけが置き換わったか（loose の文は、確かめない） */
   readonly exact: boolean | null;
+  /** 混ぜた場所の外で、変わった部分（架空の文のひな形の字。空なら、なし）。名前など、混ぜたものは入らない */
+  readonly altered: readonly string[];
+}
+
+/** 本番と同じ流れ（整え → 選別 → 置き換え → 形の検査）を通して、1つの文を採点する。 */
+/** 変わった部分として出す長さの上限（字） */
+const ALTERED_MAX = 16;
+
+/**
+ * 混ぜた場所の外（ひな形の、{…} のあいだの文字）が、置き換えの後の文に、そのままの順で残っているかを見る。
+ * 残っていない部分を返す。混ぜた場所の中がどう置き換わったか（1つの語か、2つに分けたか、どの語か）は問わない：
+ *  - 氏名・住所を2つに分けて指す → 混ぜた場所の中だけが変わる（問題ではない）
+ *  - 施設を「当院」と読む → 文にもとからある「当院」と同じ語になるが、混ぜた場所の中（問題ではない）
+ *  - 「様」「生」まで指す → 混ぜた場所の外の字が消える（数える）
+ * 空白だけの部分（隣り合う2つの識別情報のあいだ）は見ない（2つをまとめて1つに指しても、消えるのは空白だけ）。
+ */
+export function alteredParts(final: string, skeleton: string): string[] {
+  const parts = skeleton.split('\u0001');
+  const altered: string[] = [];
+  let cursor = 0;
+  parts.forEach((part, index) => {
+    if (part.trim() === '') return;
+    const at = final.indexOf(part, cursor);
+    const first = index === 0;
+    const last = index === parts.length - 1;
+    if (at < 0 || (first && at !== 0) || (last && at + part.length !== final.length)) {
+      altered.push(part.trim().slice(0, ALTERED_MAX));
+      return;
+    }
+    cursor = at + part.length;
+  });
+  return altered;
 }
 
 /** 本番と同じ流れ（整え → 選別 → 置き換え → 形の検査）を通して、1つの文を採点する。 */
 export async function score(built: BuiltCase, selector: Selector): Promise<CaseScore> {
   const clean = cleanText(built.text);
   const selected = await selector.select(clean);
-  if (!selected.ok) return { id: built.id, failed: `ai:${selected.reason}`, leaked: [], lost: [], exact: null };
+  if (!selected.ok) return { id: built.id, failed: `ai:${selected.reason}`, leaked: [], lost: [], exact: null, altered: [] };
   const applied = applySelection(clean, selected.answer);
-  if (!applied.ok) return { id: built.id, failed: `selection:${applied.problems.join(',')}`, leaked: [], lost: [], exact: null };
+  if (!applied.ok) return { id: built.id, failed: `selection:${applied.problems.join(',')}`, leaked: [], lost: [], exact: null, altered: [] };
   const final = replaceShapes(applied.text).text;
   const leaked = built.planted.filter((p) => final.includes(p.value)).map((p) => p.slot);
   const lost = built.keep.filter((k) => !final.includes(k));
-  let marked = final;
-  // 「当院」などは、もとの文にもある語なので、もとの文に同じ数だけあった分は、印にしない
-  for (const token of ALL_TOKENS) {
-    const before = built.skeleton.split(token).length - 1;
-    const parts = marked.split(token);
-    if (parts.length - 1 > before) marked = parts.slice(0, parts.length - before).join('\u0001') + (before > 0 ? token + parts.slice(parts.length - before).join(token) : '');
-  }
-  const exact = built.loose ? null : marked === built.skeleton;
-  return { id: built.id, failed: null, leaked, lost, exact };
+  // loose の文（1字の姓は、敬称と合わせて指す決まり）は、混ぜた場所の外の字が消えてよいので、確かめない
+  const altered = built.loose ? [] : alteredParts(final, built.skeleton);
+  return { id: built.id, failed: null, leaked, lost, exact: built.loose ? null : altered.length === 0, altered };
 }
 
 export interface Summary {

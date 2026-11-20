@@ -3,7 +3,8 @@ import { findShapes } from '@clinical-carte/core';
 import { describe, expect, test } from 'vitest';
 
 import { CASES } from '../eval/cases.ts';
-import { build, checkCases, fill, oracleSelector, POOLS, score, seeded, summarize } from '../eval/lib.ts';
+import { alteredParts, build, checkCases, fill, oracleSelector, POOLS, score, seeded, summarize } from '../eval/lib.ts';
+import type { Selector } from '../src/selector.ts';
 
 const cases = checkCases(CASES);
 const raw = JSON.stringify(CASES);
@@ -88,5 +89,56 @@ describe('採点', () => {
     const first = built[0];
     if (first === undefined) throw new Error('文がない');
     expect(await score(first, down)).toMatchObject({ failed: 'ai:unavailable', leaked: [] });
+  });
+});
+
+describe('混ぜた場所のほかも置き換えたか（2026-11-21 の本番の評価で、害のない答え方まで数えていたのを直した）', () => {
+  type Planted = ReturnType<typeof build>['planted'][number];
+  type Quote = { kind: Planted['kind']; quote: string; facility: 'own' | 'local' | 'previous' | 'other' | null };
+  const plain = (p: Planted): Quote => ({ kind: p.kind, quote: p.value, facility: null });
+  const answering = (f: (planted: readonly Planted[]) => Quote[]) => (b: ReturnType<typeof build>): Selector => ({
+    select: () => Promise.resolve({ ok: true, answer: { identifiers: f(b.planted) } }),
+  });
+  const caseOf = (id: string) => {
+    const c = cases.find((x) => x.id === id);
+    if (c === undefined) throw new Error(id);
+    return c;
+  };
+
+  test.each<[string, string, (planted: readonly Planted[]) => Quote[]]>([
+    ['施設を「当院」と読む（文にもとからある「当院」と同じ語になる）', 'ref-01', (ps) => ps.map((p) => (p.slot === 'F2' ? { ...plain(p), facility: 'own' } : plain(p)))],
+    ['住所を2つに分けて指す', 'adm-01', (ps) => ps.flatMap((p) => (p.slot === 'A1' ? p.value.split(' ').map((quote) => ({ ...plain(p), quote })) : [plain(p)]))],
+    ['氏名の姓と名を別々に指す', 'adm-01', (ps) => ps.flatMap((p) => (p.slot === 'P1' ? p.value.split(/[ \u3000]/).filter((q) => q !== '').map((quote) => ({ ...plain(p), quote })) : [plain(p)]))],
+    ['隣り合う施設と医療者を、まとめて1つに指す', 'ref-01', (ps) => {
+      const f1 = ps.find((p) => p.slot === 'F1');
+      const s1 = ps.find((p) => p.slot === 'S1');
+      if (f1 === undefined || s1 === undefined) throw new Error('slot');
+      return [{ kind: 'facility', quote: `${f1.value} ${s1.value}`, facility: null }, ...ps.filter((p) => p !== f1 && p !== s1).map(plain)];
+    }],
+  ])('害のない答え方は、数えない：%s', async (_name, id, f) => {
+    for (const seed of [1, 2, 3, 5, 8]) {
+      const b = build(caseOf(id), seed);
+      const s = await score(b, answering(f)(b));
+      expect([seed, s.leaked, s.exact, s.altered]).toEqual([seed, [], true, []]);
+    }
+  });
+
+  test.each<[string, string, (planted: readonly Planted[]) => Quote[], string]>([
+    ['敬称「様」まで置き換えた', 'adm-01', (ps) => ps.map((p) => (p.slot === 'P1' ? { ...plain(p), quote: `${p.value} 様` } : plain(p))), '様（'],
+    ['「生」まで置き換えた', 'adm-01', (ps) => ps.map((p) => (p.slot === 'B1' ? { ...plain(p), quote: `${p.value}生` } : plain(p))), '生）'],
+  ])('本当に余計な字まで置き換えたときは、数え、変わった部分を出す：%s', async (_name, id, f, part) => {
+    const b = build(caseOf(id), 3);
+    const s = await score(b, answering(f)(b));
+    expect(s.exact).toBe(false);
+    expect(s.altered).toHaveLength(1);
+    expect(s.altered[0]).toContain(part);
+    // 出すのは、ひな形の字だけ（混ぜた架空の名前は入らない）
+    for (const p of b.planted) expect(s.altered.join('')).not.toContain(p.value);
+  });
+
+  test('文の頭・終わりの字が消えたときも、数える', () => {
+    expect(alteredParts('〔氏名〕です', '【見出し】\u0001です')).toEqual(['【見出し】']);
+    expect(alteredParts('【見出し】〔氏名〕', '【見出し】\u0001です')).toEqual(['です']);
+    expect(alteredParts('【見出し】〔氏名〕〔氏名〕です', '【見出し】\u0001です')).toEqual([]);
   });
 });

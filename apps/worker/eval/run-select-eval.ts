@@ -63,7 +63,7 @@ out(`  選別が通らなかった（保存されない）：${String(s.failed)}
 out(`  指しすぎ（残すべき語が消えた）：${String(s.lostCases)} 件`);
 out(`  混ぜた場所のほかも置き換えた：${String(s.inexact)} 件`);
 for (const x of scores) {
-  const notes = [x.failed === null ? null : `通らず(${x.failed})`, x.leaked.length > 0 ? `漏れ[${x.leaked.join(',')}]` : null, x.lost.length > 0 ? `消えた語 ${String(x.lost.length)}` : null, x.exact === false ? 'ほかも置き換え' : null].filter((n) => n !== null);
+  const notes = [x.failed === null ? null : `通らず(${x.failed})`, x.leaked.length > 0 ? `漏れ[${x.leaked.join(',')}]` : null, x.lost.length > 0 ? `消えた語 ${String(x.lost.length)}` : null, x.exact === false ? `ほかも置き換え［${x.altered.join('｜')}］` : null].filter((n) => n !== null);
   if (notes.length > 0) out(`  - ${x.id}：${notes.join('、')}`);
 }
 process.exit(s.leakedSlots > 0 ? 1 : 0);

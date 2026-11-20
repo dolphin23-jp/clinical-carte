@@ -50,7 +50,7 @@ describe('1つの文を採点する', () => {
     for (const c of cases) {
       const r = await w.call('POST', '/api/selfcheck', { cookie, body: { id: c.id, seed: 4242 } });
       const text = await r.clone().text();
-      expect(await r.json(), c.id).toEqual({ result: { id: c.id, failed: null, leaked: 0, lost: 0, exact: c.loose === true ? null : true } });
+      expect(await r.json(), c.id).toEqual({ result: { id: c.id, failed: null, leaked: 0, lost: 0, exact: c.loose === true ? null : true, altered: [] } });
       for (const p of build(c, 4242).planted) expect(text, c.id).not.toContain(p.value);
     }
   });
@@ -66,7 +66,7 @@ describe('1つの文を採点する', () => {
   test('AI が失敗したら、「通らなかった」として返す', async () => {
     const { w, cookie } = await setup({ selector: fakeSelector([], () => ({ ok: false, reason: 'unavailable' })) });
     const r = await w.call('POST', '/api/selfcheck', { cookie, body: { id: 'er-01', seed: 7 } });
-    expect(await r.json()).toEqual({ result: { id: 'er-01', failed: 'ai:unavailable', leaked: 0, lost: 0, exact: null } });
+    expect(await r.json()).toEqual({ result: { id: 'er-01', failed: 'ai:unavailable', leaked: 0, lost: 0, exact: null, altered: [] } });
   });
 
   test('ない id は 404。形の違う要求は 400', async () => {
