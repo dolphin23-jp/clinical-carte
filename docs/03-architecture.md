@@ -41,7 +41,7 @@
 
 ## 3. AI の呼び出し（CA-012・CA-022。段1 で実装）
 
-- 呼ぶのはサーバーだけ（`apps/worker/src/anthropic.ts` の1か所）。キーはサーバーの秘密（`ANTHROPIC_API_KEY`）。画面には出さない。
+- 呼ぶのはサーバーだけ（`apps/worker/src/anthropic.ts` の1か所）。キーはサーバーの秘密（`ANTHROPIC_API_KEY`。`CARTE_api_key` の名前でも読む。両方あれば `ANTHROPIC_API_KEY`。`index.ts` の `anthropicKeyOf`）。画面には出さない。
 - **段1 で AI がするのは、選別だけ**（docs/01 の 2）：識別情報の場所（種類と、文の中の引用）を返す。文を書かせない。答えは、構造化した出力で受け、core の `applySelection` が確かめて、決まった語に置き換える。
 - **送るもの**：指示（`apps/worker/src/prompt.ts`）と、その1回に打った文だけ。患者の年齢・性別・ほかの記録は、送らない。
 - 指示は `prompt.ts` の1か所。必須の部分と、版（`SELECT_PROMPT_VERSION`）と中身の組を、`apps/worker/test/prompt.test.ts` が固定する。変えるときは、版を上げ、変更の前後で評価を見る。

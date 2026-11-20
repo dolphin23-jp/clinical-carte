@@ -13,12 +13,26 @@ export interface Env {
   readonly ASSETS: { fetch(request: Request): Promise<Response> };
   /** 合鍵（wrangler secret put CARTE_KEY）。ない・短いときは、すべての API を断る */
   readonly CARTE_KEY?: string;
-  /** Anthropic の API の鍵（wrangler secret put ANTHROPIC_API_KEY）。ないときは、文を入れられない */
+  /** Anthropic の API の鍵（Cloudflare の画面の Secret）。ないときは、文を入れられない。名前は ANTHROPIC_API_KEY か CARTE_api_key（anthropicKeyOf） */
   readonly ANTHROPIC_API_KEY?: string;
+  /** 同じ鍵の、もう1つの名前（本番で、この名前で置いた。2026-11-21） */
+  readonly CARTE_api_key?: string;
   /** モデル（wrangler.jsonc の vars。なければ DEFAULT_MODEL） */
   readonly MODEL?: string;
   /** AI を呼べる回数（1日）。"0" は、上限なし。なければ DEFAULT_DAILY_AI_LIMIT */
   readonly DAILY_AI_LIMIT?: string;
+}
+
+/** Anthropic の API の鍵の名前（先にあるほうを使う）。ANTHROPIC_API_KEY が手順書の名前、CARTE_api_key は本番で置いた名前 */
+export const ANTHROPIC_KEY_NAMES = ['ANTHROPIC_API_KEY', 'CARTE_api_key'] as const;
+
+/** Anthropic の API の鍵を読む。空・空白だけの値は、ないものとして、次の名前を見る。どれもなければ '' */
+export function anthropicKeyOf(env: Partial<Record<(typeof ANTHROPIC_KEY_NAMES)[number], string>>): string {
+  for (const name of ANTHROPIC_KEY_NAMES) {
+    const value = env[name]?.trim() ?? '';
+    if (value !== '') return value;
+  }
+  return '';
 }
 
 /** 上限の設定を読む。数でない・負のときは、既定の値（上限を、設定の間違いで外さない） */
@@ -38,7 +52,7 @@ const ready = schemaGate(() => {
 export default {
   fetch(request: Request, env: Env): Promise<Response> {
     database = env.DB;
-    const apiKey = env.ANTHROPIC_API_KEY?.trim() ?? '';
+    const apiKey = anthropicKeyOf(env);
     const model = env.MODEL?.trim() || DEFAULT_MODEL;
     return handle(request, {
       db: env.DB,
