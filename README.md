@@ -11,7 +11,7 @@
 | [docs/01-privacy-and-rules.md](docs/01-privacy-and-rules.md) | 情報の境界（持つもの・持たないもの・匿名化の網・保存の守り） |
 | [docs/03-architecture.md](docs/03-architecture.md) | 構成（core・worker・web）、入口、AI の呼び出し、作る順序 |
 | [docs/04-data-model.md](docs/04-data-model.md) | データモデル（表・約束・AI の答えの確かめ方・書き込みの一覧。案） |
-| [docs/05-deploy.md](docs/05-deploy.md) | 配る手順（Cloudflare。D1・合鍵・端末の登録） |
+| [docs/05-deploy.md](docs/05-deploy.md) | 配る手順（iPhone の画面だけで。D1・Worker・合鍵・端末の登録・AI の鍵・評価） |
 | [docs/11-decisions.md](docs/11-decisions.md) | 決めたこと（CA-xxx）と未決（CD-xxx） |
 
 ## セットアップ

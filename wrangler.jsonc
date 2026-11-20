@@ -14,9 +14,9 @@
     {
       "binding": "DB",
       "database_name": "clinical-carte",
-      // 【要設定】`npx wrangler d1 create clinical-carte` が出した id に置き換える（docs/05-deploy.md の 1）。置き換えるまで、デプロイできない
+      // 【要設定】Cloudflare の画面で作った D1 の Database ID に置き換える（docs/05-deploy.md の作業 1・2）。置き換えるまで、デプロイできない
       "database_id": "00000000-0000-0000-0000-000000000000", // phi-guard: allow D1 の id（患者の番号ではない）
-      "migrations_dir": "./apps/worker/migrations",
+      // 表は、Worker が、最初に動いたときに自分で作る（apps/worker/src/schema.ts。正本は apps/worker/migrations/*.sql）。wrangler の migrations は使わない
     },
   ],
   "vars": {
@@ -25,8 +25,8 @@
     // AI を呼べる回数（1日。日本の日）。【仮の値】"0" は、上限なし。数は、D1 の usage_daily にある
     "DAILY_AI_LIMIT": "300",
   },
-  // Anthropic の API の鍵も、ここに書かない（`npx wrangler secret put ANTHROPIC_API_KEY`）。ないときは、文を入れられない
-  // 合鍵は、ここに書かない（`npx wrangler secret put CARTE_KEY`。docs/05-deploy.md の 3）。ない・短いときは、すべての API を断る
+  // Anthropic の API の鍵は、ここに書かない（Cloudflare の画面の Secret `ANTHROPIC_API_KEY`。docs/05-deploy.md の作業 7）。ないときは、文を入れられない
+  // 合鍵は、ここに書かない（Cloudflare の画面の Secret `CARTE_KEY`。docs/05-deploy.md の作業 5）。ない・短いときは、すべての API を断る
   // 要求の記録（ログ）を残さない
   "observability": { "enabled": false },
   // 作業ブランチの版を、別の URL で公開しない

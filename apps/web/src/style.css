@@ -512,3 +512,27 @@ select.input {
 .grid tbody tr:last-child td {
   border-bottom: 0;
 }
+
+/* --- 合鍵を作る（サーバーに合鍵がないときだけ） */
+
+.key {
+  margin: 0;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--bg);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 14px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+  user-select: all;
+  -webkit-user-select: all;
+}
+
+.steps {
+  margin: 0;
+  padding-left: 22px;
+  display: grid;
+  gap: 6px;
+  font-size: 14.5px;
+}

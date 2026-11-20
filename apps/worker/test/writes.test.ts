@@ -7,8 +7,9 @@ import { describe, expect, test } from 'vitest';
 import { MIGRATIONS, openDb, registered, TEST_KEY, world } from './support.ts';
 
 const SRC = resolve(import.meta.dirname, '..', 'src');
+// migrations.gen.ts は、migrations/*.sql の写し（表を作る文そのもの）なので、ここでは見ない。写しが正本と同じことは、schema.test.ts が確かめる
 const sources = readdirSync(SRC)
-  .filter((name) => name.endsWith('.ts'))
+  .filter((name) => name.endsWith('.ts') && !name.endsWith('.gen.ts'))
   .map((name) => ({ name, text: readFileSync(join(SRC, name), 'utf8') }));
 const code = (text: string): string =>
   text
@@ -17,7 +18,7 @@ const code = (text: string): string =>
     .join('\n');
 
 /** いまある表（段0・段1）。docs/04 の 6 の一覧のうち、作った分 */
-const TABLES = ['devices', 'entrance_daily', 'patients', 'encounters', 'sources', 'observations', 'usage_daily'];
+const TABLES = ['devices', 'entrance_daily', 'patients', 'encounters', 'sources', 'observations', 'usage_daily', 'schema_migrations'];
 
 describe('書き込みの一覧', () => {
   test('migrations が作る表は、一覧のとおり', () => {
@@ -29,7 +30,7 @@ describe('書き込みの一覧', () => {
   test('ソースの SQL が書く表は、一覧の表だけ', () => {
     const written = new Set<string>();
     for (const { text } of sources) {
-      for (const m of code(text).matchAll(/\b(?:INSERT\s+INTO|(?<!\bDO\s+)UPDATE|DELETE\s+FROM)\s+([a-z_]+)/gi)) written.add((m[1] ?? '').toLowerCase());
+      for (const m of code(text).matchAll(/\b(?:INSERT\s+(?:OR\s+IGNORE\s+)?INTO|(?<!\bDO\s+)UPDATE|DELETE\s+FROM)\s+([a-z_]+)/gi)) written.add((m[1] ?? '').toLowerCase());
     }
     expect([...written].sort()).toEqual([...TABLES].sort());
   });

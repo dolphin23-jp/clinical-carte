@@ -1,6 +1,6 @@
 // 入口の E2E（CA-016・CA-019）：登録していない端末には登録の画面だけ。登録は1回で、以後はログインの画面が出ない。
 // 帯は、どの画面でも出る。画面は、端末の保存先を使わず、自分のオリジンにだけ通信する。
-import { BANNER_LINES, MAX_FAILED_PER_DAY } from '@clinical-carte/core';
+import { BANNER_LINES, keyProblem, MAX_FAILED_PER_DAY } from '@clinical-carte/core';
 import type { Browser, BrowserContext, Page } from 'playwright-core';
 import { devices as presets } from 'playwright-core';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from 'vitest';
@@ -100,6 +100,29 @@ describe('登録していない端末', () => {
     expect(await problem.textContent()).toContain('合鍵が設定されていません');
     expect(await page.getByTestId('key').count()).toBe(0);
     await bannerShown(page);
+  });
+
+  test('合鍵がないときだけ、合鍵を作れる：この端末の中で作り、どこにも送らない。作った合鍵は、サーバーが受け付ける形', async () => {
+    await server.close();
+    server = await startDevServer({ dist: app.dir, key: undefined });
+    const page = await open();
+    await page.getByTestId('keymaker').waitFor();
+    const requests: string[] = [];
+    page.on('request', (r) => requests.push(r.url()));
+    await page.getByTestId('make-key').click();
+    const made = (await page.getByTestId('made-key').textContent()) ?? '';
+    expect(made).toMatch(/^[0-9a-f]{64}$/);
+    expect(keyProblem(made)).toBeNull();
+    expect(requests).toEqual([]); // 作っても、通信しない
+    expect(await page.evaluate(() => window.localStorage.length + window.sessionStorage.length)).toBe(0);
+
+    // その合鍵をサーバーに置くと、登録できる
+    await server.close();
+    server = await startDevServer({ dist: app.dir, key: made });
+    const next = await open('iPhone 15', server.url);
+    await register(next, made);
+    await next.getByTestId('home').waitFor();
+    expect(await next.getByTestId('keymaker').count()).toBe(0);
   });
 });
 
