@@ -14,8 +14,8 @@
     {
       "binding": "DB",
       "database_name": "clinical-carte",
-      // 【要設定】`npx wrangler d1 create clinical-carte` が出した id に置き換える（docs/05-deploy.md の 1）。置き換えるまで、デプロイできない
-      "database_id": "00000000-0000-0000-0000-000000000000", // phi-guard: allow D1 の id（患者の番号ではない）
+      // 本番の D1（Cloudflare の画面で作った clinical-carte）の id。秘密ではない（docs/05-deploy.md の 2.2）
+      "database_id": "e2c8301a-8319-46ee-8522-8aa5f9a3637c", // phi-guard: allow D1 の id（患者の番号ではない）
       "migrations_dir": "./apps/worker/migrations",
     },
   ],
