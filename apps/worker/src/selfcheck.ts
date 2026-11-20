@@ -36,6 +36,8 @@ export interface SelfCheckResult {
   readonly lost: number;
   /** 混ぜた場所だけが置き換わったか（確かめない文は null） */
   readonly exact: boolean | null;
+  /** 混ぜた場所の外で、変わった部分（架空の文のひな形の字だけ。混ぜた名前などは入らない） */
+  readonly altered: readonly string[];
 }
 
 /** 架空の文を1つ組み立て、本番と同じ流れ（整え → 選別 → 置き換え → 形の検査）を通して、採点する。文そのものは返さない。 */
@@ -43,5 +45,5 @@ export async function runSelfCheck(id: string, seed: number, selector: Selector)
   const found = cases.find((c) => c.id === id);
   if (found === undefined) return null;
   const s = await score(build(found, seed), selector);
-  return { id: s.id, failed: s.failed, leaked: s.leaked.length, lost: s.lost.length, exact: s.exact };
+  return { id: s.id, failed: s.failed, leaked: s.leaked.length, lost: s.lost.length, exact: s.exact, altered: s.altered };
 }

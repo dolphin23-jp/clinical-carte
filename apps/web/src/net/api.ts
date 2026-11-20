@@ -241,6 +241,8 @@ export interface SelfCheckResult {
   readonly leaked: number;
   readonly lost: number;
   readonly exact: boolean | null;
+  /** 混ぜた場所の外で、変わった部分（架空の文のひな形の字だけ） */
+  readonly altered: readonly string[];
 }
 
 export async function getSelfCheck(): Promise<Result<SelfCheckInfo>> {
