@@ -224,3 +224,33 @@ export async function deleteSource(sourceId: string): Promise<Result<null>> {
   const result = await call('DELETE', `sources/${encodeURIComponent(sourceId)}`);
   return result.ok ? { ok: true, value: null } : result;
 }
+
+// --- 選別の評価（架空の文だけを、サーバーの鍵・指示・モデルで AI に送り、漏れを数える）
+
+export interface SelfCheckInfo {
+  readonly cases: readonly { readonly id: string; readonly note: string; readonly planted: number }[];
+  readonly promptVersion: string;
+  readonly model: string;
+  /** AI の鍵が置かれているか */
+  readonly ready: boolean;
+}
+
+export interface SelfCheckResult {
+  readonly id: string;
+  readonly failed: string | null;
+  readonly leaked: number;
+  readonly lost: number;
+  readonly exact: boolean | null;
+}
+
+export async function getSelfCheck(): Promise<Result<SelfCheckInfo>> {
+  const result = await call('GET', 'selfcheck');
+  if (!result.ok) return result;
+  const { cases, promptVersion, model, ready } = result.value;
+  if (!Array.isArray(cases) || typeof promptVersion !== 'string' || typeof model !== 'string' || typeof ready !== 'boolean') return { ok: false, error: 'network' };
+  return { ok: true, value: { cases: cases as SelfCheckInfo['cases'], promptVersion, model, ready } };
+}
+
+export async function runSelfCheck(id: string, seed: number): Promise<Result<SelfCheckResult>> {
+  return field<SelfCheckResult>(await call('POST', 'selfcheck', { id, seed }), 'result');
+}

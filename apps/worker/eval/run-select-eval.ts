@@ -1,4 +1,5 @@
-// 選別の評価を動かす（本人が、手元で動かす道具。架空の文だけを、Anthropic の API に送る）。
+// 選別の評価を、手元の計算機で動かす（開発用。架空の文だけを、Anthropic の API に送る）。
+// 本人は、carte の画面の「選別の評価」から、配ってあるサーバーの鍵・指示・モデルで動かす（src/selfcheck.ts）。
 //
 //   node eval/run-select-eval.ts --dry-run            … 何を送るかの数だけを出す（通信しない）
 //   node eval/run-select-eval.ts --oracle             … 答えを知っている代役で、道具そのものを確かめる（通信しない）
@@ -6,13 +7,11 @@
 //                                                     … 本物の API で測る（鍵は、環境変数だけ。画面・ファイル・リポジトリに出さない）
 //
 // 出すのは、数と、文の id だけ（文そのもの・AI の答えは出さない）。目標は、漏れ 0。
-import { readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
-
 import { createAnthropicSelector, DEFAULT_MODEL } from '../src/anthropic.ts';
 import { SELECT_PROMPT_VERSION } from '../src/prompt.ts';
 import type { Selector } from '../src/selector.ts';
-import { build, type BuiltCase, type CaseScore, oracleSelector, parseCases, score, summarize } from './lib.ts';
+import { CASES } from './cases.ts';
+import { build, type BuiltCase, type CaseScore, checkCases, oracleSelector, score, summarize } from './lib.ts';
 
 const args = process.argv.slice(2);
 const flag = (name: string): boolean => args.includes(name);
@@ -24,7 +23,7 @@ const out = (line: string): void => {
   process.stdout.write(`${line}\n`);
 };
 
-const cases = parseCases(readFileSync(resolve(import.meta.dirname, 'select.invented.jsonl'), 'utf8'));
+const cases = checkCases(CASES);
 const seeds = Math.max(1, Math.min(10, Number(option('--seeds') ?? '1') || 1));
 const built: BuiltCase[] = [];
 for (let seed = 1; seed <= seeds; seed++) for (const c of cases) built.push(build(c, seed * 1000 + cases.indexOf(c)));
@@ -38,7 +37,7 @@ if (flag('--dry-run')) {
 let selector: Selector;
 let label: string;
 if (flag('--oracle')) {
-  selector = oracleSelector(built);
+  selector = oracleSelector(cases);
   label = '答えを知っている代役（通信なし）';
 } else if (flag('--local')) {
   const apiKey = process.env['ANTHROPIC_API_KEY']?.trim() ?? '';

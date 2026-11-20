@@ -22,11 +22,9 @@ export const EvalCase = z.strictObject({
 });
 export type EvalCase = z.infer<typeof EvalCase>;
 
-export function parseCases(jsonl: string): EvalCase[] {
-  const cases = jsonl
-    .split('\n')
-    .filter((line) => line.trim() !== '')
-    .map((line) => EvalCase.parse(JSON.parse(line)));
+/** 架空の文の集まりの、形を確かめる（id の重なり、文の中の {…} と slots の食い違い）。 */
+export function checkCases(input: readonly unknown[]): EvalCase[] {
+  const cases = input.map((c) => EvalCase.parse(c));
   const ids = new Set(cases.map((c) => c.id));
   if (ids.size !== cases.length) throw new Error('id が重なっている');
   for (const c of cases) {
@@ -176,16 +174,40 @@ export function summarize(scores: readonly CaseScore[]): Summary {
   };
 }
 
-/** 答えを知っている代役（道具そのものの確かめ用）：混ぜた識別情報を、そのまま指す。 */
-export function oracleSelector(cases: readonly BuiltCase[]): Selector {
+const escapeRegExp = (text: string): string => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+/**
+ * 答えを知っている代役（道具そのものの確かめ用）：文のひな形から、混ぜた場所を見つけて、そのまま指す。
+ * どの種（名前の組み立て）で作った文でも、答えられる。
+ */
+export function oracleSelector(cases: readonly EvalCase[]): Selector {
+  const patterns = cases.map((c) => {
+    const slots: string[] = [];
+    const source = c.template
+      .split(/(\{[A-Z]+\d\})/)
+      .map((part) => {
+        const m = /^\{([A-Z]+\d)\}$/.exec(part);
+        if (m === null) return escapeRegExp(part);
+        slots.push(m[1] ?? '');
+        return '(.+?)';
+      })
+      .join('');
+    return { c, slots, re: new RegExp(`^${source}$`, 'su') };
+  });
   return {
     select: (text) => {
-      const built = cases.find((c) => cleanText(c.text) === text);
-      const seen = new Set<string>();
-      const identifiers = (built?.planted ?? [])
-        .filter((p) => (seen.has(p.value) ? false : (seen.add(p.value), true)))
-        .map((p) => ({ kind: p.kind, quote: p.value.length >= 2 ? p.value : `${p.value}さん`, facility: null }));
-      return Promise.resolve({ ok: true, answer: { identifiers } });
+      for (const { c, slots, re } of patterns) {
+        const m = re.exec(text);
+        if (m === null) continue;
+        const seen = new Set<string>();
+        const identifiers = slots
+          .map((slot, i) => ({ kind: c.slots[slot]?.kind ?? ('person' as const), value: m[i + 1] ?? '' }))
+          .filter((p) => (seen.has(p.value) ? false : (seen.add(p.value), true)))
+          // 1字の名前は、すぐ後ろの敬称と合わせて指す
+          .map((p) => ({ kind: p.kind, quote: p.value.length >= 2 ? p.value : `${p.value}さん`, facility: null }));
+        return Promise.resolve({ ok: true, answer: { identifiers } });
+      }
+      return Promise.resolve({ ok: true, answer: { identifiers: [] } });
     },
   };
 }

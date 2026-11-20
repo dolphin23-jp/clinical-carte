@@ -9,6 +9,7 @@ import { type ApiError, type DeviceView, getSession } from './net/api.ts';
 import { PatientPage } from './PatientPage.tsx';
 import { Patients } from './Patients.tsx';
 import { Register } from './Register.tsx';
+import { SelfCheck } from './SelfCheck.tsx';
 
 type State =
   | { readonly at: 'loading' }
@@ -21,6 +22,7 @@ export function App() {
   /** 開いている患者（一覧なら null）。画面のメモリだけに持つ（読み込み直すと、一覧に戻る） */
   const [patientId, setPatientId] = useState<string | null>(null);
   const [showDevices, setShowDevices] = useState(false);
+  const [showSelfCheck, setShowSelfCheck] = useState(false);
   const toList = useCallback(() => {
     setPatientId(null);
   }, []);
@@ -73,6 +75,20 @@ export function App() {
       {state.at === 'in' && patientId === null && (
         <main className="page" data-testid="home">
           <Patients onOpen={setPatientId} onLeft={toRegister} />
+          {showSelfCheck ? (
+            <SelfCheck onLeft={toRegister} />
+          ) : (
+            <button
+              className="button link"
+              type="button"
+              onClick={() => {
+                setShowSelfCheck(true);
+              }}
+              data-testid="show-selfcheck"
+            >
+              選別の評価（架空の文で、AI の落とし漏れを数える）
+            </button>
+          )}
           {showDevices ? (
             <Devices onLeft={toRegister} />
           ) : (

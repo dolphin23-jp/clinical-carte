@@ -83,7 +83,7 @@ export async function startDevServer(options: { dist: string; key: string | unde
       if (method !== 'GET' && method !== 'HEAD') init.body = new Uint8Array(Buffer.concat(chunks));
       const request = new Request(`http://${req.headers.host ?? '127.0.0.1'}${req.url ?? '/'}`, init);
       // 手元は http なので、印に Secure と __Host- を付けない
-      const response = await handle(request, { db, key: options.key, runtime, secureCookies: false, assets, selector, dailyAiLimit: options.dailyAiLimit ?? 0 });
+      const response = await handle(request, { db, key: options.key, runtime, secureCookies: false, assets, selector, dailyAiLimit: options.dailyAiLimit ?? 0, model: 'test-model' });
       res.statusCode = response.status;
       response.headers.forEach((value, name) => {
         if (name !== 'set-cookie') res.setHeader(name, value);

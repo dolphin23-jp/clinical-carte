@@ -1,20 +1,18 @@
 // 選別の評価の道具（eval/）そのものの確かめ。本物の AI は呼ばない。
-import { readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
-
 import { findShapes } from '@clinical-carte/core';
 import { describe, expect, test } from 'vitest';
 
-import { build, oracleSelector, parseCases, POOLS, score, summarize, fill, seeded } from '../eval/lib.ts';
+import { CASES } from '../eval/cases.ts';
+import { build, checkCases, fill, oracleSelector, POOLS, score, seeded, summarize } from '../eval/lib.ts';
 
-const FILE = resolve(import.meta.dirname, '..', 'eval', 'select.invented.jsonl');
-const raw = readFileSync(FILE, 'utf8');
-const cases = parseCases(raw);
+const cases = checkCases(CASES);
+const raw = JSON.stringify(CASES);
 
 describe('架空の文', () => {
-  test('どの文も synthetic: true。文の中の {…} と slots が合う（parseCases が確かめる）', () => {
+  test('どの文も synthetic: true。文の中の {…} と slots が合う（checkCases が確かめる）', () => {
     expect(cases.length).toBeGreaterThanOrEqual(10);
-    for (const line of raw.split('\n').filter((l) => l.trim() !== '')) expect(JSON.parse(line)).toMatchObject({ synthetic: true });
+    for (const c of CASES) expect(c).toMatchObject({ synthetic: true });
+    expect(() => checkCases([...CASES, CASES[0]])).toThrow('id が重なっている');
   });
 
   test('ファイルそのものには、識別情報の形がない（名前・番号は、実行時に組み立てる）', () => {
@@ -49,11 +47,21 @@ describe('採点', () => {
   const built = cases.map((c, i) => build(c, 100 + i));
 
   test('答えを知っている代役なら、漏れ 0・指しすぎ 0・混ぜた場所だけが置き換わる', async () => {
-    const selector = oracleSelector(built);
+    const selector = oracleSelector(cases);
     const scores = [];
     for (const b of built) scores.push(await score(b, selector));
     expect(scores.filter((s) => s.failed !== null || s.leaked.length > 0 || s.lost.length > 0 || s.exact === false)).toEqual([]);
     expect(summarize(scores)).toEqual({ cases: built.length, failed: 0, leakedCases: 0, leakedSlots: 0, lostCases: 0, inexact: 0 });
+  });
+
+  test('答えを知っている代役は、どの種で作った文でも答えられる', async () => {
+    const selector = oracleSelector(cases);
+    for (const seed of [1, 77, 4242]) {
+      for (const c of cases) {
+        const s = await score(build(c, seed), selector);
+        expect([s.id, s.failed, s.leaked, s.lost, s.exact]).toEqual([c.id, null, [], [], c.loose === true ? null : true]);
+      }
+    }
   });
 
   test('何も指さない AI なら、漏れを数える（形で分かる電話・メールだけは、最後の網が落とす）', async () => {
