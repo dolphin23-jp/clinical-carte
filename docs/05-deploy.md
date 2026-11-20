@@ -98,12 +98,14 @@ Casebook を配ったときと同じ画面。
 | Build command | `pnpm install --frozen-lockfile && pnpm build` |
 | Deploy command | `npx wrangler deploy`（初めから入っている。そのまま） |
 | Root directory | 空のまま |
-| Build variables（変数。2つ足す） | `NODE_VERSION` ＝ `22` と、`PNPM_VERSION` ＝ `10.33.0` |
+| Build variables（変数） | 足さない（Node は `.node-version`、pnpm は `package.json` の `packageManager` から、自動で選ばれる。2026-11-21 のビルドの記録で確かめた） |
+| Production branch（本番のブランチ）の欄があれば | `main` |
 
 6. **Save and Deploy** を押す。
 7. 2〜3 分待つ。**Success**（成功）と出れば、配れている。
 8. アドレスを控える：Worker の画面の **Settings** → **Domains & Routes** に、`clinical-carte.<自分の名前>.workers.dev` がある。**これが、carte のアドレス**。
-9. 作業ブランチを配らないようにする：**Settings** → **Build** → **Branch control** → **Enable Preview Builds**（本番以外のブランチのビルド）のチェックを外す。
+9. **本番のブランチが `main` かを確かめる**：**Settings** → **Build** → **Branch control** → **Production branch** が `main` でなければ、`main` に直して保存し、ビルドし直す。GitHub の既定のブランチ（Default branch）が `main` でないと、Cloudflare は、そちらを本番に選ぶことがある。
+10. 作業ブランチを配らないようにする：**Settings** → **Build** → **Branch control** → **Enable Preview Builds**（本番以外のブランチのビルド）のチェックを外す。
 
 確かめ：Safari で、`https://clinical-carte.<自分の名前>.workers.dev` を開く。
 
@@ -213,6 +215,8 @@ iPad・PC も、同じ（carte のアドレスを開く → 合鍵を貼る → 
 | 症状 | 原因と直し方 |
 |---|---|
 | 作業 4 のビルドが赤い | **Deployments** → **View build history** → 赤い行を、この会話に貼る。よくある原因：Project name が `clinical-carte` でない／作業 2・3 の前に作った（`main` に設定がない・D1 の ID が仮のまま） |
+| ビルドは通るのに、最後に `D1 binding 'DB' references database '00000000-0000-0000-0000-000000000000' which was not found`（code 10181） | `main` でないブランチ（D1 の ID が仮のまま）を配っている。作業 4 の 9 で、Production branch を `main` にして、ビルドし直す | <!-- phi-guard: allow D1 の仮の id（患者の番号ではない。wrangler の誤りの文） -->
+| 「This Worker does not exist on your account」（Secret を足すとき） | まだ、一度も配れていない（ビルドが成功していない）。先に、作業 4 のビルドを Success にする |
 | carte を開くと、白い画面・Cloudflare の誤りの画面 | アドレスの打ち間違い、または、配信がまだ終わっていない。**Deployments** で、成功しているかを見る |
 | 「サーバーに合鍵が設定されていません」のまま | 作業 5 の Variable name が `CARTE_KEY` でない（大文字・下線）／**Deploy** を押していない／貼った文字が途中で切れている。Secret を作り直す |
 | 登録で「サーバーで問題が起きました」 | D1 がつながっていない見込み。作業 1 の名前が `clinical-carte` か、作業 2 の ID が、その D1 のものかを見る。分からなければ、D1 の画面の名前と ID を知らせる |
