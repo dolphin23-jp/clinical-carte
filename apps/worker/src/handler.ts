@@ -18,6 +18,8 @@ export interface HandlerDeps {
   readonly secureCookies: boolean;
   /** 画面の静的ファイル */
   readonly assets: (request: Request) => Promise<Response>;
+  /** 表の用意（schema.ts）。保存先に触れる前に、1回待つ。本番だけが渡す（試験は、先に表を作ってある） */
+  readonly ready?: () => Promise<void>;
   /** AI の選別（Anthropic の API）。鍵がなければ null：文は入れられない */
   readonly selector: Selector | null;
   /** AI を呼べる回数（1日）。0 は、上限なし */
@@ -71,6 +73,9 @@ async function api(request: Request, url: URL, deps: HandlerDeps): Promise<Respo
 
   const problem = writeProblem(request, url);
   if (problem !== null) return json(403, { error: problem });
+
+  // ここから先は、保存先に触れる。表がまだなければ、先に用意する
+  if (deps.ready !== undefined) await deps.ready();
 
   const cookie = request.headers.get('cookie');
 

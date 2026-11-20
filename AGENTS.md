@@ -43,7 +43,7 @@
 - TypeScript（strict）。pnpm workspaces：`packages/core`（純関数）、`apps/worker`（Cloudflare Workers。API・保存・AI の呼び出し）、`apps/web`（React＋Vite の画面。iPhone・iPad・PC）。
 - **core は DOM、ストレージ、通信、時計、乱数、暗号に触れない**。時刻と乱数は引数で受け取る。同じ入力には同じ出力を返す。境界は `eslint.config.js` と `packages/core/tsconfig.src.json`（DOM・Node の型なし）で止める。
 - **検査・確かめの関数は core に1つだけ**置き、画面とサーバーが同じ関数を使う（別々に書いて揃える「双子」を作らない）。
-- **サーバー**：時計・乱数・暗号に触れるのは `apps/worker/src/runtime.ts` だけ。**ログを出さない**（`console` を使わない）。誤りの答えは名前だけで、何が起きたかの文を返さない。**書き込む表は、[docs/04-data-model.md](docs/04-data-model.md) の 6 の一覧だけ**（表を足すときは、先に一覧を直す。`apps/worker/test/writes.test.ts` が見張る）。表を作る SQL は `apps/worker/migrations/` にだけ置く。
+- **サーバー**：時計・乱数・暗号に触れるのは `apps/worker/src/runtime.ts` だけ。**ログを出さない**（`console` を使わない）。誤りの答えは名前だけで、何が起きたかの文を返さない。**書き込む表は、[docs/04-data-model.md](docs/04-data-model.md) の 6 の一覧だけ**（表を足すときは、先に一覧を直す。`apps/worker/test/writes.test.ts` が見張る）。表を作る SQL は `apps/worker/migrations/` にだけ置く（番号は `0000_` から続ける。**表や中身を消す文を書かない**）。足したら `node scripts/build_migrations.mjs` で写し（`apps/worker/src/migrations.gen.ts`。手で直さない）を作り直す。サーバーは、最初の要求のとき、まだ適用していない分を自分で適用する（`schema.ts`。`apps/worker/test/schema.test.ts`）。
 - **入口**（`apps/worker/src/entrance.ts`・`handler.ts`）：合鍵の設定がない・弱いときは、`/api/health` も含めて、すべてを断る。登録していない端末に答えるのは、`/api/health` と端末の登録だけ。合鍵・端末の秘密そのものを、保存先・答え・ログに置かない。変えるときは、同じ変更で `apps/worker/test/entrance.test.ts` を直す。
 - **取り込み**（`apps/worker/src/intake.ts`）：打った文 → 整え → AI の選別 → 決定論の置き換え（core の `applySelection`）→ 形の検査（`replaceShapes`）→ 測定値の読み取り（`readLabText`。種類が検査結果・バイタルのときだけ）。**保存するのは、この流れが返した文だけ**。選別なしで保存する道を作らない（AI の鍵がないときは、文を入れられない）。変えるときは、同じ変更で `apps/worker/test/records.test.ts` と、core の `selection.test.ts`・`shapes.test.ts` を直す。
 - **AI**：呼ぶのは `apps/worker/src/anthropic.ts` の1か所。指示は `apps/worker/src/prompt.ts` の1か所で、変えるときは版（`SELECT_PROMPT_VERSION`）を上げ、`apps/worker/test/prompt.test.ts` を同じ変更で直し、変更の前後で評価（`apps/worker/eval/`。本物の API で動かすのは本人）を見る。AI に文を書かせない（返させるのは、場所と種類だけ）。
@@ -79,4 +79,4 @@ PR を出す前に、次がすべてローカルで通ること。`pnpm check` �
 - フックは `git config core.hooksPath .githooks` で有効にする（pre-commit・pre-merge-commit・commit-msg・pre-push。Casebook から写した）。`--no-verify` で飛ばさない。
 - phi-guard の誤検知は、その行に `phi-guard: allow` と理由を書いて許可する。理由のない allow はエラーになる。見つけた文字列そのものは出力されない。規則は、Casebook の `AGENTS.md` の 5 と同じ（`scripts/phi-guard.mjs` は Casebook からの写し。直すときは、Casebook の側と合わせる）。
 - 画面を変えたときは、ビルドして、ブラウザ（電話の幅と PC の幅）で開いて確かめる。
-- 配る手順は [docs/05-deploy.md](docs/05-deploy.md)。
+- 配る手順は [docs/05-deploy.md](docs/05-deploy.md)。**本人は、コマンドを打たない**（iPhone の画面の操作だけ）。配るのに、本人の手作業（コマンド・SQL の貼り付けなど）が要る変更を足さない。要るときは、先に本人に確かめる。

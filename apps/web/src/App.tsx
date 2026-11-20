@@ -3,6 +3,7 @@ import { useCallback, useEffect, useState } from 'react';
 
 import { Banner } from './Banner.tsx';
 import { Devices } from './Devices.tsx';
+import { KeyMaker } from './KeyMaker.tsx';
 import { errorMessage } from './messages.ts';
 import { type ApiError, type DeviceView, getSession } from './net/api.ts';
 import { PatientPage } from './PatientPage.tsx';
@@ -58,6 +59,7 @@ export function App() {
           <button className="button" type="button" onClick={check}>
             もう一度
           </button>
+          {state.error === 'no_key' && <KeyMaker />}
         </main>
       )}
       {state.at === 'register' && (

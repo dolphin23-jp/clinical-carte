@@ -1,6 +1,5 @@
 // 試験の道具：D1 の代役（node:sqlite。本番と同じ SQL と、同じ migrations を使う）と、決まった時計・乱数。
-import { readdirSync, readFileSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { resolve } from 'node:path';
 import { DatabaseSync, type SQLInputValue } from 'node:sqlite';
 
 import { toHex } from '@clinical-carte/core';
@@ -9,6 +8,7 @@ import type { SelectionAnswer } from '@clinical-carte/core';
 
 import type { Db, Statement } from '../src/db.ts';
 import { handle, type HandlerDeps } from '../src/handler.ts';
+import { MIGRATIONS as MIGRATION_LIST } from '../src/migrations.gen.ts';
 import { type Runtime, webRuntime } from '../src/runtime.ts';
 import type { Selector, SelectorResult } from '../src/selector.ts';
 
@@ -20,9 +20,10 @@ export interface TestDb extends Db {
   readonly log: string[];
 }
 
-export function openDb(): TestDb {
+export function openDb(options: { empty?: boolean } = {}): TestDb {
   const raw = new DatabaseSync(':memory:');
-  for (const name of readdirSync(MIGRATIONS).sort()) raw.exec(readFileSync(join(MIGRATIONS, name), 'utf8'));
+  // 本番と同じ文（migrations.gen.ts。サーバーが自分で適用するもの）で、表を作る
+  if (options.empty !== true) for (const migration of MIGRATION_LIST) for (const sql of migration.statements) raw.exec(sql);
   const log: string[] = [];
   const statement = (sql: string, values: readonly unknown[]): Statement => ({
     bind: (...next) => statement(sql, next),

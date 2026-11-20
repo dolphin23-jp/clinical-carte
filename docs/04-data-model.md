@@ -184,10 +184,11 @@ AI が返すのは、次の3つだけ（構造化した出力）。
 | `devices` | 端末の登録・外すとき・その日はじめて使ったとき（1日に1回） |
 | `entrance_daily` | 合鍵を間違えたとき |
 | `usage_daily` | AI を呼んだとき |
+| `schema_migrations` | サーバーが、表を用意したとき（適用した migrations の名前だけ。docs/03 の 1） |
 
 - 打った原文・AI へ送った文・AI の答えそのものは、どの表にも書かない。ログにも出さない。
 - 表を足すときは、先にこの一覧を直す。
-- いまある表（段0・段1）は `devices`・`entrance_daily`・`patients`・`encounters`・`sources`・`observations`・`usage_daily`。`apps/worker/test/writes.test.ts` が、migrations が作る表と、ソースの SQL が書く表を、この一覧と突き合わせる。
+- いまある表（段0・段1）は `devices`・`entrance_daily`・`patients`・`encounters`・`sources`・`observations`・`usage_daily`・`schema_migrations`。`apps/worker/test/writes.test.ts` が、migrations が作る表と、ソースの SQL が書く表を、この一覧と突き合わせる。
 
 ## 7. 段1 で作ったものと、案との違い
 

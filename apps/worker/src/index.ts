@@ -3,6 +3,7 @@ import { createAnthropicSelector, DEFAULT_MODEL } from './anthropic.ts';
 import type { Db } from './db.ts';
 import { handle } from './handler.ts';
 import { webRuntime } from './runtime.ts';
+import { schemaGate } from './schema.ts';
 import { DEFAULT_DAILY_AI_LIMIT } from './usage.ts';
 
 export interface Env {
@@ -27,8 +28,16 @@ export function dailyLimitOf(value: string | undefined): number {
   return Number.isInteger(n) && n >= 0 ? n : DEFAULT_DAILY_AI_LIMIT;
 }
 
+// 表の用意は、同じ起動の中で1回だけ（保存先は、起動のあいだ変わらない）
+let database: Db | null = null;
+const ready = schemaGate(() => {
+  if (database === null) throw new Error('保存先がない');
+  return database;
+});
+
 export default {
   fetch(request: Request, env: Env): Promise<Response> {
+    database = env.DB;
     const apiKey = env.ANTHROPIC_API_KEY?.trim() ?? '';
     return handle(request, {
       db: env.DB,
@@ -36,6 +45,7 @@ export default {
       runtime: webRuntime,
       secureCookies: true,
       assets: (r) => env.ASSETS.fetch(r),
+      ready,
       selector: apiKey === '' ? null : createAnthropicSelector({ apiKey, model: env.MODEL?.trim() || DEFAULT_MODEL }),
       dailyAiLimit: dailyLimitOf(env.DAILY_AI_LIMIT),
     });

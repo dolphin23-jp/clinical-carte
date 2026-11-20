@@ -1,253 +1,259 @@
-# 05 配る手順（Cloudflare）
+# 05 配る手順（iPhone だけで）
 
-状態：段1 までの手順。
+状態：段1 までの手順。**コマンドは打たない**。iPhone の Safari と「パスワード」アプリだけで終わる。
 
-- **手元の試運転（1）は、実際に動かして確かめた**（登録・通過・拒否まで）。
-- **Cloudflare に配る手順（2〜4）は、まだ、本人が動かして確かめていない**（エージェントは Cloudflare のアカウントに触れない。`wrangler deploy --dry-run` で、画面と Worker を束ねられることだけを確かめた）。画面の名前・出力が違っていたら、ここを直す。
+- エージェントが確かめたこと：手元で本物の Worker を動かし、表が自動でできること、端末の登録、患者の作成、AI が使えないときに保存されないこと。
+- **確かめていないこと**：Cloudflare・GitHub・Anthropic の実際の画面（エージェントは、先生のアカウントに触れない）。画面の名前は、Cloudflare の資料（2026-11-20 に確かめた）の英語の表示。日本語の表示では、訳が違うことがある。**違っていたら、見えている画面の言葉を、そのまま知らせてほしい**（手順を直す）。
 
 ## まず：Cloudflare で何をするのか
 
-**なぜ要るか**：記録を、iPhone・iPad・PC のどれからでも同じように見る・書くため（CA-011）。どの端末も、記録を自分の中に持たない。記録は、インターネットの上の「1か所」にあり、端末は、そこへ読み書きしに行く。その「1か所」を、Cloudflare に置く。自分でサーバーの機械を買ったり、借りて見張ったりしなくてよい。
+**なぜ要るか**：記録を、iPhone・iPad・PC のどれからでも同じように見る・書くため（CA-011）。どの端末も、記録を自分の中に持たない。記録は、インターネットの上の「1か所」にあり、端末は、そこへ読み書きしに行く。その「1か所」を、Cloudflare に置く。
 
-**Cloudflare が受け持つ4つの役**（どれも、ひとつの Cloudflare のアカウントの中で動く）：
-
-| 役 | Cloudflare の名前 | このプロジェクトでの中身 |
+| 役 | Cloudflare の名前 | 中身 |
 |---|---|---|
-| 住所と暗号 | `workers.dev` の https のアドレス | `https://clinical-carte.<自分の名前>.workers.dev`。通信は暗号化される |
-| 画面を配る | Workers の静的ファイル（Assets） | `apps/web` をビルドした画面（開くと出る見た目）。患者の情報は入っていない |
-| 受付と処理 | Worker | `apps/worker` のプログラム。端末の印を確かめ、記録を読み書きし、（段2 から）AI に頼む。**入口の鍵の確認は、ここでする** |
-| 記録を置く | D1（データベース） | 患者・記録の本体。いまは、端末の登録の表だけ |
+| 住所と暗号 | `workers.dev` の https のアドレス | `https://clinical-carte.<自分の名前>.workers.dev` |
+| 画面を配る・受付と処理 | Worker | carte のプログラム。端末の印を確かめ、記録を読み書きし、AI に頼む |
+| 記録を置く | D1（データベース） | 患者・記録の本体 |
 
-**端末で開いたとき**：
+- Casebook・Playbook・Atlas を配ったときと、**同じやり方**（Cloudflare が、GitHub の `main` を見て、自動で配る）。違うのは、D1（記録の入れ物）と、2つの鍵（合鍵・AI の鍵）が増えること。
+- 記録は、Cloudflare の D1 にある。端末には、印（Cookie）が1つあるだけ。Cloudflare 社の側からは、技術的には見える立場にある（暗号化して、サーバーにも読めなくする方式は採っていない。CD-004）。
 
-```
-iPhone ──https──▶ Cloudflare ─┬─ 画面だけを返す（ログインなし）
-                              └─ /api/ への要求 ──▶ Worker ──▶ D1
-                                   └ 印がなければ断る     └ 記録の読み書き
-```
+## 全体の地図
 
-**先生が Cloudflare でやること**は、突き詰めると次の3つだけ（手順は 2）：
+| 作業 | 何をするか | どこで | 目安 |
+|---|---|---|---|
+| 0 | 2段階認証を確かめる | Cloudflare・GitHub | 済みなら 0 分 |
+| 1 | 記録の入れ物（D1）を作る | Cloudflare | 3 分 |
+| 2 | 入れ物の番号を、エージェントに伝える | この会話 | 1 分 |
+| 3 | PR をマージする | GitHub | 2 分 |
+| 4 | Worker を作る（GitHub とつなぐ） | Cloudflare | 10 分 |
+| 5 | 合鍵を作って、置く | carte の画面・「パスワード」アプリ・Cloudflare | 5 分 |
+| 6 | 端末を登録する | carte の画面 | 2 分 |
+| 7 | AI の鍵を置く | Anthropic・Cloudflare | 5 分 |
+| 8 | 選別の評価 | この会話（エージェントが動かす） | 5 分 |
+| 9 | 架空の文で試す | carte の画面 | 5 分 |
 
-1. **保存先の入れ物を作る**（D1 を1つ作る）
-2. **プログラムと画面を置く**（`wrangler deploy`。コマンド1つ）
-3. **合鍵を、サーバーの秘密として置く**（`wrangler secret put`。画面にも履歴にも残らない）
+**作業 8 が終わって、漏れ 0 を見るまで、実際の患者の文は入れない。**
 
-あとは、端末ごとに、画面で合鍵を入れて登録するだけ（Cloudflare の画面は、もう触らない）。
+表（テーブル）を作る作業は、ない。Worker が、最初に動いたときに、自分で作る（`apps/worker/src/schema.ts`）。
 
-**Cloudflare がやらないこと**：ログインの仕組み（Cloudflare Access は使わない。CA-016。入口の鍵は、carte 自身の仕組み）、AI の処理（Anthropic の API に、Worker が頼む。段2 から）、記録の中身の理解（Cloudflare は、置いているだけ）。
+---
 
-**記録が、どこにあるか**：Cloudflare の D1（Cloudflare が管理するデータセンター）。端末には、印（Cookie）が1つあるだけで、記録は残らない。Cloudflare 社の側からは、技術的には見える立場にある（このプロジェクトは、アカウントの守り〔2段階認証〕と、入口の鍵で守る。暗号化して、サーバーにも読めなくする方式は採っていない。CD-004）。
+## 作業 0：2段階認証を確かめる
 
-配るのは、1つの Worker（`clinical-carte`）：画面（`apps/web/dist`）と、API（`apps/worker`）と、保存先（D1）。設定は `wrangler.jsonc`。RAG（`medbook-rag`）も、同じ形（Worker＋D1）で、同じ Cloudflare のアカウントに置ける。
+記録は、Cloudflare のアカウントの中にある。アカウントを取られると、入口の鍵に関係なく、記録を読まれる。
 
-## 0. 用意するもの
+- Cloudflare：右上の人の印 → **My Profile** → **Authentication** → **Two-Factor Authentication** が有効か。
+- GitHub：右上の自分の印 → **Settings** → **Password and authentication** → **Two-factor authentication** が有効か。
 
-| もの | 内容 |
+## 作業 1：記録の入れ物（D1）を作る
+
+1. Safari で `https://dash.cloudflare.com` を開き、ログインする。
+2. 左上の **☰**（メニュー）を押す。
+3. **Storage & Databases** → **D1 SQL Database** を押す。
+4. **Create Database**（または **Create**）を押す。
+5. **Name**（名前）に、`clinical-carte` と入れる（この文字のとおり。半角・小文字・ハイフン）。
+6. 場所（Location）は、そのまま（自動）でよい。
+7. **Create** を押す。
+8. できたデータベースの画面に、**Database ID**（`xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx` の形。英数字とハイフン）が出ている。横のコピーの印を押す（なければ、長押しして、コピー）。
+
+- 見つからないとき：D1 の一覧で `clinical-carte` を押すと、上のほうに出る見込み【資料に、場所の明記がない】。見つからなければ、見えている画面の言葉を知らせてほしい。
+- 表は、作らなくてよい（空のままでよい）。
+
+## 作業 2：入れ物の番号を、エージェントに伝える
+
+この会話に、コピーした Database ID を貼る。
+
+> D1 の ID は xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
+
+- **この ID は、秘密ではない**（合鍵でも、患者の番号でもない）。会話に貼ってよい。
+- エージェントが、設定のファイル（`wrangler.jsonc`）に書いて、GitHub に送る。「書きました」と返ってきたら、作業 3 へ。
+
+## 作業 3：PR をマージする
+
+Cloudflare が配るのは、GitHub の `main` に入っているもの。いま、carte のプログラムは、PR（確認待ちの変更）の中にある。マージすると、`main` に入る。
+
+1. Safari で `https://github.com/dolphin23-jp/clinical-carte/pull/1` を開く（ログインする）。
+2. 下のほうへ動かす。**Ready for review** のボタンがあれば、押す。
+3. 緑の **Merge pull request** を押す。
+4. **Confirm merge** を押す。
+5. 紫の **Merged** の印が出れば、できている。
+
+- マージは、先生の判断（エージェントは、マージしない）。中身を見たいときは、PR の説明を読む。
+
+## 作業 4：Worker を作る（GitHub とつなぐ）
+
+Casebook を配ったときと同じ画面。
+
+1. `https://dash.cloudflare.com` → 左上の **☰** → **Workers & Pages**。
+2. **Create application**（作成）を押す。
+3. **GitHub**（**Import a repository**）を選ぶ。
+4. リポジトリの一覧に `clinical-carte` があれば、押す。
+   - **ないとき**：Cloudflare に、このリポジトリを見る許可がない。一覧の近くの、GitHub の設定を開く案内（**configure repository access** など）を押す → GitHub の画面で、**Repository access** の **Only select repositories** に `clinical-carte` を足す → **Save** → Cloudflare の画面に戻って、読み込み直す。
+5. 設定の欄に、次のとおり入れる（**文字は、ここからコピーして貼る**）。
+
+| 欄 | 入れるもの |
 |---|---|
-| Cloudflare のアカウント | 無料のプランで足りる見込み【未確認】。**2段階認証を付ける**（アカウントを取られると、入口の鍵に関係なく、記録を読まれる。CD-004） |
-| GitHub のアカウント | 同じく、2段階認証を付ける |
-| 手元の計算機 | Node 22.18 以上、pnpm 10、`openssl`（なければ 2.3 の別の方法）。このリポジトリを clone してある |
-| パスワード管理の道具 | 合鍵（2.3）を控える。iPhone・iPad で入れるとき、コピー＆貼り付けで入れられる道具（iCloud キーチェーンなど） |
+| Project name（Worker の名前） | `clinical-carte` |
+| Build command | `pnpm install --frozen-lockfile && pnpm build` |
+| Deploy command | `npx wrangler deploy`（初めから入っている。そのまま） |
+| Root directory | 空のまま |
+| Build variables（変数。2つ足す） | `NODE_VERSION` ＝ `22` と、`PNPM_VERSION` ＝ `10.33.0` |
 
-```sh
-git clone https://github.com/dolphin23-jp/clinical-carte
-cd clinical-carte
-pnpm install
-```
+6. **Save and Deploy** を押す。
+7. 2〜3 分待つ。**Success**（成功）と出れば、配れている。
+8. アドレスを控える：Worker の画面の **Settings** → **Domains & Routes** に、`clinical-carte.<自分の名前>.workers.dev` がある。**これが、carte のアドレス**。
+9. 作業ブランチを配らないようにする：**Settings** → **Build** → **Branch control** → **Enable Preview Builds**（本番以外のブランチのビルド）のチェックを外す。
 
-## 1. 手元で試運転する（Cloudflare に何も作らない。最初に1回）
+確かめ：Safari で、`https://clinical-carte.<自分の名前>.workers.dev` を開く。
 
-配る前に、本物の Worker と画面を手元で動かして、入口の動きを見る。保存先は、手元の `.wrangler/` の中（Git に入らない）。
+- 上に、緑の帯（「写しです。最新とは限りません…」）が出る。
+- 「**サーバーに合鍵が設定されていません。**…」と出る。**これで正しい**（まだ、合鍵を置いていない。鍵がないあいだ、サーバーは、すべてを断る）。
+- その下に、「**合鍵を作る**」がある。
 
-```sh
-pnpm build
-printf 'CARTE_KEY=%s\n' "$(openssl rand -hex 32)" > .dev.vars   # 試運転だけの合鍵（.dev.vars は Git に入らない）
-npx wrangler d1 migrations apply clinical-carte --local         # 手元の保存先に表を作る
-npx wrangler dev                                                 # http://localhost:8787 で動く
-```
+失敗（赤）のとき：Worker の画面の **Deployments** → **View build history** → 失敗したビルドを押す → いちばん下の赤い行を、この会話に貼る（患者の情報は入っていない）。
 
-- ブラウザで `http://localhost:8787` を開く → 「この端末を登録する」が出る。
-- 合鍵は、`.dev.vars` の `CARTE_KEY=` の右側（エディタで開いて、コピーする）。端末の種類を選んで「登録する」 → 「登録した端末」の一覧が出る。
-- 読み込み直しても、登録の画面は出ない。
-- **PC の Chrome で試す**。iPhone の Safari は、http の `localhost` では、Secure つきの印を受け付けない見込み【推論】。iPhone は、本番の https で試す。
-- 止めるときは、`Ctrl+C`。試運転が終わったら、`.dev.vars` と `.wrangler/` を消してよい。
-- **文を入れる試運転**（段1）には、Anthropic の API の鍵が要る：`.dev.vars` に、`ANTHROPIC_API_KEY=…` の行を足す（鍵は、リポジトリ・会話に書かない）。鍵がなければ、患者と受診は作れるが、文を入れると「AI の鍵が設定されていません」と出て、保存されない（これで正しい）。**試運転では、架空の文だけを入れる**。
+## 作業 5：合鍵を作って、置く
 
-curl で見るなら（`npx wrangler dev` を動かしたまま、別の窓で）：
+合鍵は、端末を登録するときに1回ずつ入れる、長い文字列。**作るのは、carte の画面**（iPhone の中で作る。どこにも送られない）。
 
-```sh
-curl -s http://localhost:8787/api/health      # {"ok":true}
-curl -s -w ' [%{http_code}]\n' http://localhost:8787/api/session   # {"error":"unregistered"} [401]
-```
+**このあいだ、carte のタブを閉じない**（閉じると、作った合鍵は消える。消えたら、作り直せばよい）。
 
-## 2. Cloudflare に配る：手元から（推奨）
+1. carte のアドレスを開いたタブで、「**合鍵を作る**」を押す。64 文字の英数字が出る。
+2. 「**コピーする**」を押す。
+3. **控える**：ホーム画面に戻り、「**パスワード**」アプリを開く → 右下（または右上）の **＋** → **新規パスワード**。
+   - Web サイト：carte のアドレス（`clinical-carte.<自分の名前>.workers.dev`）
+   - ユーザ名：`carte`
+   - パスワード：欄を長押し → **ペースト**
+   - **保存**（または **完了**）
+4. **置く**：Safari に戻り、新しいタブで `https://dash.cloudflare.com` → **☰** → **Workers & Pages** → `clinical-carte` を押す。
+5. **Settings** → **Variables and Secrets** の **Add**（追加）を押す。
+6. 次のとおり入れる。
 
-### 2.1 ログイン
-
-```sh
-npx wrangler login
-```
-
-ブラウザが開く → Cloudflare にログインして、許可する。確かめ：`npx wrangler whoami` に、自分のアカウントが出る。
-
-### 2.2 保存先（D1）を作る（最初の1回）
-
-```sh
-npx wrangler d1 create clinical-carte
-```
-
-- 出力に、`database_id`（UUID）が出る。**これを、`wrangler.jsonc` の `database_id`（いまは仮の値 `0000…`）に書き換えて、コミットする**。D1 の id は秘密ではない（患者の番号でもない）。
-- 「設定ファイルに足しますか」と聞かれたら、**足さない**（`wrangler.jsonc` に、すでに書いてある）。
-- 確かめ：`npx wrangler d1 list` に `clinical-carte` が出る。
-
-### 2.3 合鍵を作って、先に控える
-
-```sh
-openssl rand -hex 32
-```
-
-- 64文字が出る。**画面に出た時点で、パスワード管理の道具に控える**（名前は「carte の合鍵」など）。リポジトリ・会話・メモ・メッセージに書かない。
-- `openssl` がないときは：`node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"`
-- サーバーが受け付ける合鍵は、32文字以上で、字の種類が12以上。上の方法で作れば満たす。
-
-### 2.4 配る
-
-```sh
-pnpm build
-npx wrangler deploy
-```
-
-- 初めてのとき、`workers.dev` のアドレスの名前（アカウントごとの名前）を決めるよう聞かれることがある。決めると、`https://clinical-carte.<決めた名前>.workers.dev` になる。
-- 終わりに、そのアドレスが出る。**控える**（端末で開くアドレス）。
-- この時点では、合鍵も表もないので、サーバーは**すべてを断る**（これで正しい。鍵なしで動かさない）。確かめ：
-
-```sh
-curl -s https://clinical-carte.<決めた名前>.workers.dev/api/health   # {"error":"no_key"}
-```
-
-### 2.5 表を作る
-
-```sh
-npx wrangler d1 migrations apply clinical-carte --remote
-```
-
-- 「適用するか」と聞かれたら、`y`。`0001_entrance.sql` に ✅ が付く。
-- **`--remote` を付け忘れると、手元の保存先に作るだけ**で、本番には何も起きない（本番で `no such table` の誤りになる）。
-
-### 2.6 合鍵を置く
-
-```sh
-npx wrangler secret put CARTE_KEY
-```
-
-- 聞かれたら、2.3 の合鍵を貼る（画面には出ない）。
-- 確かめ：
-
-```sh
-curl -s https://clinical-carte.<決めた名前>.workers.dev/api/health   # {"ok":true}
-curl -s -w ' [%{http_code}]\n' https://clinical-carte.<決めた名前>.workers.dev/api/session   # {"error":"unregistered"} [401]
-```
-
-health が `ok`、session が 401 なら、入口は動いている。
-
-### 2.7 AI の鍵を置く（段1。文を入れるのに要る）
-
-Anthropic の API の鍵は、Anthropic のコンソール（platform.claude.com）で作る。carte 専用の鍵にする（ほかの用途と分けると、止めるとき・使った量を見るときに楽）。
-
-```sh
-npx wrangler secret put ANTHROPIC_API_KEY
-```
-
-- 聞かれたら、鍵を貼る（画面には出ない）。**鍵は、リポジトリ・会話・メモに書かない**。
-- 鍵がないあいだは、患者と受診は作れるが、文は入れられない（選別を通っていない文を、保存しない）。
-- モデルと、1日に AI を呼べる回数は、`wrangler.jsonc` の `vars`（`MODEL`・`DAILY_AI_LIMIT`）。変えたら、`npx wrangler deploy`。
-- Anthropic のコンソールで、月の上限（使ってよい金額）を決めておく。
-
-### 2.8 選別の評価を動かす（実データを入れる前に、1回）
-
-実際の記録を入れる前に、架空の文で、AI の選別の落とし漏れを数える（目標は、漏れ 0。docs/03 の 3）。
-
-```sh
-cd apps/worker
-node eval/run-select-eval.ts --dry-run                              # 何を送るかの数だけ（通信しない）
-ANTHROPIC_API_KEY=… node eval/run-select-eval.ts --local --seeds 3   # 本物の API で測る（架空の文だけを送る）
-```
-
-- 出るのは、数と、文の id だけ。「漏れ」が 0 でなければ、**実データを入れる前に、結果を知らせてほしい**（指示を直す）。
-- 鍵を、コマンドの履歴に残したくないときは、先に `read -s ANTHROPIC_API_KEY && export ANTHROPIC_API_KEY` としてから、`node eval/run-select-eval.ts --local`。
-
-### 2.9 端末を登録する（端末ごとに1回）
-
-端末ごとに、次のとおり。
-
-1. 2.4 のアドレスを開く → 「この端末を登録する」。
-2. 合鍵を**貼り付ける**（64文字は、打たない）。端末の種類を確かめて、「登録する」。
-3. 「登録した端末」に、この端末が「この端末」の印つきで出れば成功。以後、この端末では登録の画面は出ない。
-
-端末ごとの注意：
-
-| 端末 | 注意 |
+| 欄 | 入れるもの |
 |---|---|
-| iPhone・iPad | 合鍵は、Mac の「ユニバーサルクリップボード」や、パスワード管理の道具から貼る。**ホーム画面に足して使うなら、足したあと、ホーム画面のアイコンから開いた側で登録する**（Safari とホーム画面のアプリで、印の置き場が別になる見込み【推論。実機で確かめる】）。プライベートブラウズでは、閉じると印が消える |
-| PC | 通常のウィンドウで登録する（シークレットでは、閉じると印が消える） |
+| Type（種類） | **Secret**（必ず、これを選ぶ。Text にしない） |
+| Variable name | `CARTE_KEY` |
+| Value | 欄を長押し → **ペースト** |
 
-登録の間違いは、1日 20 回まで（日本の日。超えると、その日は新しい登録を受け付けない。登録済みの端末は使える）。
+7. **Deploy**（保存して反映）を押す。
+8. carte のタブに戻り、「**もう一度**」を押す（または、読み込み直す）。「**この端末を登録する**」に変われば、できている。
 
-## 3. Cloudflare に配る：GitHub とつなぐ（任意）
+- **Type を Text にすると**、合鍵が Cloudflare の画面に見えたままになり、次に配ったときに消える。必ず Secret。
+- 合鍵は、この会話・メモ・メッセージに貼らない。控えるのは、「パスワード」アプリだけ。
 
-push のたびに自動で配りたいときだけ。**2 の最初の1回（2.1〜2.2・2.5・2.6）は、手元で済ませてから**にする。
+## 作業 6：端末を登録する
 
-- Cloudflare の画面で、Workers & Pages → 新しく作る → Git のリポジトリを取り込む → `clinical-carte` を選ぶ。
-- Worker の名前は `clinical-carte`（`wrangler.jsonc` の `name` と同じ。違うと止まる）。
-- ビルドのコマンド：`pnpm build`。デプロイのコマンド：`npx wrangler deploy`（初期値のまま）。
-- 配る対象のブランチは、`main`（まだない。決まったら書く）。
-- 合鍵は、Worker の Settings → Variables and Secrets に、**種類を Secret にして** `CARTE_KEY` で足せる（`secret put` と同じ）。
-- 表（migrations）は、ここでは自動で動かない。足したときは、手元で `npx wrangler d1 migrations apply clinical-carte --remote` を動かす。デプロイのコマンドに足せるかは、確かめていない【未確認】。
-- 画面の名前は変わりうる。違っていたら、Cloudflare の案内に従う。
+**先に決める**：iPhone では、Safari で使うか、ホーム画面のアイコンから使うか。**どちらか片方で使う**（Safari と、ホーム画面のアイコンとで、登録が別になる見込み【推論。実機で確かめる】）。アイコンから使うなら、先に、Safari の共有の印（□に↑）→ **ホーム画面に追加** をして、**アイコンから開いてから**、下を行う。
 
-## 4. 運用
+1. 「この端末を登録する」の画面で、**合鍵**の欄を長押し → **ペースト**（コピーが残っていなければ、「パスワード」アプリ → `carte` → パスワードを長押し → コピー）。
+2. **端末の種類**が「iPhone」になっているのを確かめる。
+3. 「**登録する**」を押す。
+4. 「患者」の一覧（まだ空）が出れば、できている。**以後、この端末では、登録の画面は出ない**。
+
+iPad・PC も、同じ（carte のアドレスを開く → 合鍵を貼る → 登録する）。「パスワード」アプリは、同じ Apple のアカウントの iPad・Mac と、自動でそろう。
+
+## 作業 7：AI の鍵を置く
+
+文を入れるには、Anthropic の API の鍵が要る（識別情報の選別に使う）。
+
+1. Safari で `https://platform.claude.com` を開き、ログインする（RAG で使っているアカウント）。
+2. **API keys** を開く → **Create key**（鍵を作る）を押す。
+3. 名前に `carte` と入れて、作る。
+4. 出てきた鍵（`sk-ant-` で始まる長い文字）を、**コピー**する。**この画面を閉じると、二度と見られない**。
+5. Cloudflare：**Workers & Pages** → `clinical-carte` → **Settings** → **Variables and Secrets** → **Add**。
+
+| 欄 | 入れるもの |
+|---|---|
+| Type | **Secret** |
+| Variable name | `ANTHROPIC_API_KEY` |
+| Value | ペースト |
+
+6. **Deploy** を押す。
+7. Anthropic の画面で、月に使ってよい金額の上限を決めておく（**Settings** → **Limits** など【画面の名前は、確かめていない】）。
+
+- 鍵は、この会話に貼らない。
+- 使う量の目安：文を1つ入れるごとに、AI を1回呼ぶ。1日の上限は、仮に 300 回（`wrangler.jsonc` の `DAILY_AI_LIMIT`）。
+
+## 作業 8：選別の評価（エージェントが動かす）
+
+実際の文を入れる前に、架空の文で、AI が氏名・番号・施設名をどれだけ落とせるかを数える（目標は、漏れ 0）。**先生は、コマンドを打たない**。
+
+1. この会話に、「**評価を動かして**」と書く。
+2. 鍵を入れる欄（安全な入力の画面）が出る。そこに、Anthropic の API の鍵を貼る（作業 7 と同じ鍵でも、評価用に別に作った鍵でもよい）。**会話の欄には貼らない**。
+3. エージェントが、架空の文（`apps/worker/eval/select.invented.jsonl`。12 種）に、その場で組み立てた架空の氏名・番号を混ぜて、API に送り、結果の数を知らせる。
+
+- 送るのは、架空の文だけ。エージェントは、鍵の中身を見ない（鍵は、通信の途中で付けられる）。
+- 入れた鍵は、この作業の環境に残る。評価が終わって不要なら、Anthropic の画面で、その鍵を消せばよい。
+- **漏れが 0 でなければ、エージェントが、AI への指示を直して、もう一度測る**。0 になるまで、実際の文は入れない。
+
+## 作業 9：架空の文で試す
+
+1. carte を開く → 「**新しい患者**」→ 年齢・性別・受診・開始の日を入れて、「**作る**」。
+2. 「入れる」で、種類を「経過（プログレスノート）」にして、**作りものの文**を入れる（例：`架空太郎さん、発熱3日目。解熱傾向。`）→「**この患者に入れる**」。 <!-- phi-guard: allow 作りものの名前の例 -->
+3. 数秒で、「保存しました。置き換えた場所：氏名 1。」と出て、下の記録に「〔氏名〕さん、発熱3日目。解熱傾向。」と出れば、選別が動いている。
+4. 種類を「検査結果」にして、`WBC 12.3 CRP <0.1 BP 120/80` と入れる → 「検査・バイタル」の表に並ぶ。
+5. 試した患者は、いちばん下の「この患者を消す」で消す。
+
+---
+
+## 配ったあと
 
 | こと | やり方 |
 |---|---|
-| 新しい版を配る | `git pull` → `pnpm install` → `pnpm build` → `npx wrangler deploy`。migrations が増えたときは、`deploy` の前に、`d1 migrations apply … --remote`（段1 で `0002_records.sql` が増えた） |
-| AI の指示・モデルを変えた | 2.8 の評価を、もう一度動かす |
-| 端末をなくした | 登録済みの別の端末で開く → 「登録した端末」→ なくした端末の「外す」→ 「外す」で確定。外された端末は、合鍵を入れ直すまで、記録を開けない |
-| 全部の端末を失った・合鍵を忘れた | 合鍵は、`npx wrangler secret put CARTE_KEY` で、いつでも置き直せる。新しい合鍵で、端末を登録し直す。古い端末の登録は、残ったままなので、使わない端末は、新しい端末から外す |
-| 合鍵が漏れたかもしれない | `secret put` で新しい合鍵に置き換える。**登録済みの端末は、そのまま通る**ので、知らない端末が登録されていないか、「登録した端末」を見る。知らない端末があれば、外す |
-| 合鍵を変えたい | `secret put`。端末の印は、合鍵とは別なので、登録済みの端末は、入れ直さなくてよい |
-| 記録を消したい | 段1 以降で、患者ごとに消せるようにする（CA-020）。D1 ごと消すなら、`npx wrangler d1 delete clinical-carte`（全部の記録が消える。戻せない） |
+| 新しい版を配る | **何もしない**。PR をマージすると（作業 3 と同じ）、Cloudflare が自動で配る。表が増えたときも、Worker が自分で足す |
+| 端末をなくした | 登録済みの別の端末で carte を開く → 「登録した端末を見る」→ なくした端末の「外す」→「外す」で確定 |
+| 合鍵を忘れた・「パスワード」アプリから消した | Cloudflare → `clinical-carte` → **Settings** → **Variables and Secrets** → `CARTE_KEY` を消す（**Delete**）→ **Deploy** → carte を開くと、「合鍵が設定されていません」と「合鍵を作る」が出る（このあいだ、どの端末からも使えない）→ 作業 5 をやり直す。新しい合鍵を置けば、**登録済みの端末は、登録し直さなくても、そのまま使える**（端末の印は、合鍵とは別） |
+| 合鍵が漏れたかもしれない | 上と同じに、新しい合鍵に置き換える。そのうえで、「登録した端末を見る」に、知らない端末がないかを見る。あれば、外す |
+| AI の鍵を止めたい | Anthropic の画面で、その鍵を消す。文は入れられなくなる（記録は、読める） |
+| 全部の記録を消す | Cloudflare → D1 → `clinical-carte` → 削除（戻せない）。患者1人ずつは、carte の画面の「この患者を消す」 |
 
-## 5. うまくいかないとき
+## うまくいかないとき
 
 | 症状 | 原因と直し方 |
 |---|---|
-| 画面に「サーバーに合鍵が設定されていません」 | `CARTE_KEY` が、置かれていない・32文字未満・字の種類が少ない。2.6 をやり直す |
-| `wrangler deploy` が、`database_id` で止まる | 仮の値（`0000…`）のまま。2.2 の id を書く |
-| 登録で、画面に「サーバーで問題が起きました」 | 表がない見込み。2.5 を、`--remote` つきでやり直す |
-| 文を入れると「AI の鍵が設定されていません」 | `ANTHROPIC_API_KEY` が置かれていない。2.7 |
-| 文を入れると「AI につながりませんでした」 | 鍵が違う・止めてある・残高がない・Anthropic の側の障害。コンソールで、鍵と使った量を見る |
-| 文を入れると「識別情報の場所を確かめられませんでした」 | AI の答えの引用が、文と合わなかった（文は保存していない）。もう一度送る。続くなら、氏名・番号を消して送り、どんな書き方の文だったかを知らせる（文そのものは、貼らない） |
-| 「今日は、AI を呼べる回数の上限に達しました」 | `DAILY_AI_LIMIT`（仮に 300）。上げるなら、`wrangler.jsonc` を直して配る |
-| 「合鍵が違います」 | 貼り付けた合鍵に、前後の空白・改行が入っていないか。`secret put` で置いたものと、同じか。1日 20 回で、その日は止まる |
-| 「今日は…登録を受け付けません」 | 合鍵の間違いが 20 回になった。日本の日が変わるまで待つ。登録済みの端末は使える |
-| 「登録できる端末は 10 台までです」 | 使わない端末を、登録済みの端末から外す |
-| 登録したのに、次に開くとまた登録の画面 | iPhone・iPad で、Safari とホーム画面のアプリを、行き来していないか。プライベートブラウズ・閲覧データの消去・ブラウザを変えた、でも起きる |
-| 書き込み（外す・登録）が、403 になる | 自分のオリジンの画面からだけ、書き込める。別のアドレス・中継のサービスを経由していないか |
-| curl の `/api/session` が、印を付けても 401 | 本番の印は `__Host-carte`（https のときの名前）。`-H 'cookie: __Host-carte=…'` と、名前ごと付ける。印は、登録の応答の `Set-Cookie` にある（`curl -D -`） |
+| 作業 4 のビルドが赤い | **Deployments** → **View build history** → 赤い行を、この会話に貼る。よくある原因：Project name が `clinical-carte` でない／作業 2・3 の前に作った（`main` に設定がない・D1 の ID が仮のまま） |
+| carte を開くと、白い画面・Cloudflare の誤りの画面 | アドレスの打ち間違い、または、配信がまだ終わっていない。**Deployments** で、成功しているかを見る |
+| 「サーバーに合鍵が設定されていません」のまま | 作業 5 の Variable name が `CARTE_KEY` でない（大文字・下線）／**Deploy** を押していない／貼った文字が途中で切れている。Secret を作り直す |
+| 登録で「サーバーで問題が起きました」 | D1 がつながっていない見込み。作業 1 の名前が `clinical-carte` か、作業 2 の ID が、その D1 のものかを見る。分からなければ、D1 の画面の名前と ID を知らせる |
+| 「合鍵が違います」 | 貼った合鍵が、Cloudflare に置いたものと違う。「パスワード」アプリからコピーし直す。1日 20 回で、その日は止まる（登録済みの端末は使える） |
+| 登録したのに、次に開くとまた登録の画面 | Safari と、ホーム画面のアイコンを、行き来していないか。プライベートブラウズ、「履歴と Web サイトデータを消去」でも起きる。使う側で、もう一度登録する |
+| 文を入れると「AI の鍵が設定されていません」 | 作業 7 がまだ、または Variable name が `ANTHROPIC_API_KEY` でない |
+| 文を入れると「AI につながりませんでした」 | 鍵が違う・消した・残高がない・Anthropic の側の障害。Anthropic の画面で、鍵と使った量を見る |
+| 文を入れると「識別情報の場所を確かめられませんでした」 | AI の答えの引用が、文と合わなかった（保存していない）。もう一度送る。続くなら、どんな書き方の文だったかを知らせる（**文そのものは、貼らない**） |
+| 「今日は、AI を呼べる回数の上限に達しました」 | 1日 300 回（仮）。上げたいときは、知らせる（設定を直して配る） |
 
-## 6. 守りの確認（配ったあと）
+## 守りの確認（配ったあと）
 
 - [ ] Cloudflare と GitHub に、2段階認証を付けた
-- [ ] 合鍵を、パスワード管理の道具にだけ控えた（リポジトリ・会話・メモにない）
-- [ ] 選別の評価（2.8）で、漏れが 0
-- [ ] Anthropic のコンソールで、月の上限を決めた
-- [ ] `/api/health` が `ok`、`/api/session` が、登録していない端末で 401
-- [ ] 「登録した端末」に、自分の端末だけがある
-- [ ] `wrangler.jsonc` で、要求の記録（ログ）と、作業ブランチの公開を止めてある（`observability` が `false`、`preview_urls` が `false`）
+- [ ] 合鍵は、「パスワード」アプリにだけある（会話・メモにない）
+- [ ] `CARTE_KEY` と `ANTHROPIC_API_KEY` は、Type が Secret
+- [ ] 「登録した端末を見る」に、自分の端末だけがある
+- [ ] 選別の評価（作業 8）で、漏れが 0
+- [ ] Anthropic の画面で、月の上限を決めた
+- [ ] Preview Builds（本番以外のブランチのビルド）を切った
 
-## 7. わからないこと・確かめていないこと
+## わからないこと・確かめていないこと
 
-- Cloudflare の無料のプランで、D1 と Workers の上限に収まるか【未確認】。段1 以降で記録が増えたら見る。
-- 記録（D1）が、どの国のデータセンターに置かれるか。`d1 create` に、地域の希望（`--location`。`apac` など）を付けられる見込みだが、日本に限る指定ができるかは、確かめていない【未確認】。AI の API（Anthropic）は国外なので、段2 からは、打った文が国外に届く（docs/01 の 2）。
-- `workers.dev` のアドレスは、誰でも開ける（入口の鍵が守る）。独自のドメインにするかは、決めていない。
-- Cloudflare の画面の名前、`wrangler` の聞き方・出力は、版で変わる。違っていたら、この文書を直す。
+- Cloudflare・GitHub・Anthropic・「パスワード」アプリの、実際の画面の言葉と並び。
+- iPhone・iPad で、Safari とホーム画面のアイコンとで、登録が別になるか【推論】。
+- 記録（D1）が、どの国のデータセンターに置かれるか。作るときに、場所の希望を選べる見込みだが、日本に限れるかは、確かめていない。AI の API（Anthropic）は国外なので、打った文は国外に届く（docs/01 の 2）。
+- 無料のプランの上限（資料の値。2026-11-20）：Worker は 1日 10 万回の要求、D1 は 1日 10 万行の書き込み・500 万行の読み取り・1つのデータベース 500 MB。個人の記録の量なら、足りる見込み。
+
+---
+
+## 付録：手元の計算機で動かす（任意。エージェント・開発用）
+
+先生の作業には要らない。手元で、本物の Worker を動かして確かめるときの手順。
+
+```sh
+pnpm install
+pnpm build
+printf 'CARTE_KEY=%s\n' "$(openssl rand -hex 32)" > .dev.vars   # 試運転だけの合鍵（Git に入らない）
+npx wrangler dev                                                 # http://localhost:8787
+```
+
+- 表は、最初の要求で、自動でできる（`.wrangler/` の中の、手元の保存先）。
+- 文を入れる試運転には、`.dev.vars` に `ANTHROPIC_API_KEY=…` を足す。**架空の文だけ**を入れる。
+- 選別の評価：`cd apps/worker && node eval/run-select-eval.ts --dry-run`（通信しない）／`--oracle`（道具の確かめ）／`ANTHROPIC_API_KEY=… node eval/run-select-eval.ts --local --seeds 3`（本物の API）。
+- 手元から配る（Cloudflare の自動の配信を使わないとき）：`npx wrangler login` → `npx wrangler deploy`。鍵は `npx wrangler secret put CARTE_KEY`・`ANTHROPIC_API_KEY`。
