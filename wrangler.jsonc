@@ -14,8 +14,8 @@
     {
       "binding": "DB",
       "database_name": "clinical-carte",
-      // 【要設定】Cloudflare の画面で作った D1 の Database ID に置き換える（docs/05-deploy.md の作業 1・2）。置き換えるまで、デプロイできない
-      "database_id": "00000000-0000-0000-0000-000000000000", // phi-guard: allow D1 の id（患者の番号ではない）
+      // 本番の D1（Cloudflare の画面で作った clinical-carte）の Database ID。秘密ではない（docs/05-deploy.md の作業 1・2）
+      "database_id": "e2c8301a-8319-46ee-8522-8aa5f9a3637c", // phi-guard: allow D1 の id（患者の番号ではない）
       // 表は、Worker が、最初に動いたときに自分で作る（apps/worker/src/schema.ts。正本は apps/worker/migrations/*.sql）。wrangler の migrations は使わない
     },
   ],
