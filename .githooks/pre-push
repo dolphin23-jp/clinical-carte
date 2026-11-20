@@ -1,0 +1,13 @@
+#!/bin/sh
+# 送るコミットのすべて（途中のコミットを含む）を、送る前に検査する。早送りのマージ・フックのない clone で作ったコミット・
+# --no-verify で作ったコミットも、ここで止まる。標準入力は git が渡す行（<local ref> <local sha> <remote ref> <remote sha>）。
+# 有効にする：git config core.hooksPath .githooks
+
+root=$(git rev-parse --show-toplevel) || exit 1
+
+if ! command -v node >/dev/null 2>&1; then
+  echo "phi-guard: node が見つからないため、push を中止しました。" >&2
+  exit 1
+fi
+
+exec node "$root/scripts/phi-guard.mjs" --push

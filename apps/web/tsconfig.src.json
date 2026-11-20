@@ -1,0 +1,10 @@
+{
+  // アプリのコード（src）の型検査。ブラウザで動くので DOM の型だけを使い、Node の型を入れない。
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "lib": ["ES2023", "DOM", "DOM.Iterable"],
+    "types": ["vite/client"],
+    "jsx": "react-jsx"
+  },
+  "include": ["src"]
+}

@@ -1,0 +1,11 @@
+{
+  // 試験、E2E、Vite の設定とプラグインを含む型検査（エディタと ESLint もこれを使う）。
+  // アプリのコード（src）の制約は tsconfig.src.json で確かめる。
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "lib": ["ES2023", "DOM", "DOM.Iterable"],
+    "types": ["node", "vite/client"],
+    "jsx": "react-jsx"
+  },
+  "include": ["src", "test", "e2e", "scripts", "vite-plugins", "vite.config.ts", "vitest.unit.config.ts", "vitest.e2e.config.ts"]
+}

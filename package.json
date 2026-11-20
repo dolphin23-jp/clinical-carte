@@ -1,0 +1,25 @@
+{
+  "name": "clinical-carte",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@10.33.0",
+  "engines": {
+    "node": ">=22.18"
+  },
+  "scripts": {
+    "typecheck": "pnpm -r typecheck",
+    "lint": "eslint .",
+    "build": "pnpm -r --if-present build",
+    "test": "pnpm -r test && node --test \"scripts/*.test.mjs\"",
+    "phi-guard": "node scripts/phi-guard.mjs --all",
+    "check": "pnpm typecheck && pnpm lint && pnpm build && pnpm test && pnpm phi-guard"
+  },
+  "devDependencies": {
+    "@eslint/js": "catalog:",
+    "eslint": "catalog:",
+    "globals": "catalog:",
+    "typescript": "catalog:",
+    "typescript-eslint": "catalog:",
+    "yaml": "catalog:"
+  }
+}

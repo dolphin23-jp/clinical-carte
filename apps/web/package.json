@@ -1,0 +1,27 @@
+{
+  "name": "@clinical-carte/web",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "typecheck": "tsc -p tsconfig.src.json && tsc -p tsconfig.json",
+    "test": "vitest run -c vitest.unit.config.ts && vitest run -c vitest.e2e.config.ts"
+  },
+  "dependencies": {
+    "@clinical-carte/core": "workspace:*",
+    "react": "catalog:",
+    "react-dom": "catalog:"
+  },
+  "devDependencies": {
+    "@clinical-carte/worker": "workspace:*",
+    "@types/node": "catalog:",
+    "@types/react": "catalog:",
+    "@types/react-dom": "catalog:",
+    "playwright-core": "catalog:",
+    "typescript": "catalog:",
+    "vite": "catalog:",
+    "vitest": "catalog:"
+  }
+}

@@ -1,0 +1,36 @@
+// Cloudflare Workers の設定。docs/03-architecture.md の 1、docs/05-deploy.md。
+// 画面（ビルドした apps/web/dist。_headers の CSP なども、そこに入っている）と、API（apps/worker）を、1つのオリジンで配る。
+{
+  "name": "clinical-carte",
+  "main": "./apps/worker/src/index.ts",
+  "compatibility_date": "2026-09-01",
+  "assets": {
+    "directory": "./apps/web/dist",
+    "binding": "ASSETS",
+    // /api の下だけ、先に Worker を通す。ほかは、静的ファイルを直接返す（_headers が効く）
+    "run_worker_first": ["/api", "/api/*"],
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "clinical-carte",
+      // 【要設定】Cloudflare の画面で作った D1 の Database ID に置き換える（docs/05-deploy.md の作業 1・2）。置き換えるまで、デプロイできない
+      "database_id": "00000000-0000-0000-0000-000000000000", // phi-guard: allow D1 の id（患者の番号ではない）
+      // 表は、Worker が、最初に動いたときに自分で作る（apps/worker/src/schema.ts。正本は apps/worker/migrations/*.sql）。wrangler の migrations は使わない
+    },
+  ],
+  "vars": {
+    // AI の選別に使うモデル（CA-022）
+    "MODEL": "claude-opus-5-5",
+    // AI を呼べる回数（1日。日本の日）。【仮の値】"0" は、上限なし。数は、D1 の usage_daily にある
+    "DAILY_AI_LIMIT": "300",
+  },
+  // Anthropic の API の鍵は、ここに書かない（Cloudflare の画面の Secret `ANTHROPIC_API_KEY`。docs/05-deploy.md の作業 7）。ないときは、文を入れられない
+  // 合鍵は、ここに書かない（Cloudflare の画面の Secret `CARTE_KEY`。docs/05-deploy.md の作業 5）。ない・短いときは、すべての API を断る
+  // 要求の記録（ログ）を残さない
+  "observability": { "enabled": false },
+  // 作業ブランチの版を、別の URL で公開しない
+  "preview_urls": false,
+  // ビルドのときに wrangler の利用統計を送らない
+  "send_metrics": false,
+}
