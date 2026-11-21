@@ -2,10 +2,17 @@
 // 並べるだけ（判定しない）：確からしさと、解決・非活動は、いちばん新しい記載に書かれたとおり。問題ごとの A・P は、保存した文の、その区切りの字そのもの。
 // 直す（つなぎ直す・分ける・統合・表示の名前）は本人の操作で、履歴が残る。名前は打たず、書かれた名前から選ぶ。
 import {
+  compareDateTime,
+  EVENT_KIND_NAMES,
+  labTrends,
+  MEDICATION_ACTION_NAMES,
+  medicationTimeline,
+  nameKey,
   PROBLEM_ACTIVITY_NAMES,
   PROBLEM_STATUS_NAMES,
   type ProblemNote,
   problemNotes,
+  relatedFacts,
   SEGMENT_LABEL_NAMES,
   SOURCE_KIND_LABELS,
   THREAD_GROUP_NAMES,
@@ -15,9 +22,10 @@ import {
 } from '@clinical-carte/core';
 import { useState } from 'react';
 
+import { TrendGrid } from './charts/TrendGrid.tsx';
 import { showDateTime } from './format.ts';
 import { errorMessage } from './messages.ts';
-import { type HistoryEntry, linkProblems, mergeThread, moveProblem, nameThread, type Problem, type ProblemThread, type Result, type Segment, type Source } from './net/api.ts';
+import { type ClinicalEvent, type HistoryEntry, linkProblems, mergeThread, moveProblem, nameThread, type Medication, type Observation, type Problem, type ProblemThread, type Result, type Segment, type Source } from './net/api.ts';
 
 const GROUPS: readonly ThreadGroup[] = ['current', 'closed', 'ruled_out'];
 const ORIGIN_NAMES = { rule: '名前が同じ', ai: 'AI がつないだ', self: '本人が直した' } as const;
@@ -29,11 +37,15 @@ interface Props {
   readonly segments: readonly Segment[];
   readonly sources: readonly Source[];
   readonly history: readonly HistoryEntry[];
+  /** 患者のすべての測定値・投薬・できごと（問題の記載に書かれたものを結ぶ。段3c） */
+  readonly observations: readonly Observation[];
+  readonly medications: readonly Medication[];
+  readonly events: readonly ClinicalEvent[];
   readonly onChanged: () => void;
   readonly onLeft: () => void;
 }
 
-export function ProblemThreads({ patientId, problems, threads, segments, sources, history, onChanged, onLeft }: Props) {
+export function ProblemThreads({ patientId, problems, threads, segments, sources, history, observations, medications, events, onChanged, onLeft }: Props) {
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const views = threadViews(threads, problems);
@@ -106,6 +118,7 @@ export function ProblemThreads({ patientId, problems, threads, segments, sources
                   key={t.id}
                   view={t}
                   segments={segments}
+                  facts={{ observations, medications, events }}
                   sourceOf={sourceOf}
                   others={others(t.id)}
                   busy={busy}
@@ -139,6 +152,7 @@ export function ProblemThreads({ patientId, problems, threads, segments, sources
 function ThreadCard({
   view,
   segments,
+  facts,
   sourceOf,
   others,
   busy,
@@ -148,6 +162,7 @@ function ThreadCard({
 }: {
   view: ThreadView;
   segments: readonly Segment[];
+  facts: { observations: readonly Observation[]; medications: readonly Medication[]; events: readonly ClinicalEvent[] };
   sourceOf: (id: string) => Source | undefined;
   others: readonly ThreadView[];
   busy: boolean;
@@ -198,6 +213,8 @@ function ThreadCard({
           ))}
         </details>
       )}
+
+      <Related view={view} segments={segments} facts={facts} />
 
       <details className="thread-edit" data-testid="thread-edit">
         <summary>直す</summary>
@@ -278,6 +295,71 @@ function ThreadCard({
         </div>
       </details>
     </li>
+  );
+}
+
+/**
+ * その問題の記載の中に書かれた、検査値・薬・できごと（段3c）。推し量らない：その問題の記載の範囲に書かれたものだけ。
+ * 検査値は、書かれた名前の推移（この患者のすべての値）。薬は、薬ごとの最後の記載。
+ */
+function Related({ view, segments, facts }: { view: ThreadView; segments: readonly Segment[]; facts: { observations: readonly Observation[]; medications: readonly Medication[]; events: readonly ClinicalEvent[] } }) {
+  const related = relatedFacts(view.mentions, segments, facts);
+  if (related.valueNames.length === 0 && related.medicationNames.length === 0 && related.events.length === 0) return null;
+  const names = new Set(related.valueNames);
+  const trends = labTrends(facts.observations.filter((o) => names.has(o.name ?? o.nameRaw)));
+  const vitals = related.valueNames.filter((n) => !trends.some((t) => t.name === n));
+  const latestOf = (name: string) =>
+    [...facts.observations].filter((o) => (o.name ?? o.nameRaw) === name && o.at !== null).sort((a, b) => compareDateTime(a.at, b.at)).at(-1);
+  const meds = medicationTimeline(facts.medications).filter((line) => related.medicationNames.some((n) => nameKey(n) === nameKey(line.name)));
+  return (
+    <details className="thread-more" data-testid="thread-related">
+      <summary>
+        この問題の記載に書かれた値・薬（{[related.valueNames.length > 0 && `値 ${String(related.valueNames.length)}`, meds.length > 0 && `薬 ${String(meds.length)}`, related.events.length > 0 && `できごと ${String(related.events.length)}`].filter(Boolean).join('・')}）
+      </summary>
+      {trends.length > 0 && <TrendGrid trends={trends} />}
+      {vitals.length > 0 && (
+        <p className="thread-sub">
+          {vitals
+            .map((n) => {
+              const o = latestOf(n);
+              return o === undefined ? n : `${n} ${o.valueText}${o.unit === null ? '' : ` ${o.unit}`}（${showDateTime(o.at)}）`;
+            })
+            .join('・')}
+        </p>
+      )}
+      {meds.length > 0 && (
+        <ul className="fact-list" data-testid="thread-related-meds">
+          {meds.map((line) => {
+            const dated = line.entries.filter((e) => e.at !== null);
+            const last = dated.at(-1) ?? line.entries.at(-1);
+            return (
+              <li key={line.name} className="fact-row">
+                <span className="fact-when">{showDateTime(last?.at ?? null)}</span>
+                <span className="fact-main">
+                  {line.name}
+                  <span className="tag">{last?.action == null ? '動きの記載なし' : MEDICATION_ACTION_NAMES[last.action]}</span>
+                  {last?.doseText != null && <span className="fact-dose">{last.doseText}</span>}
+                </span>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+      {related.events.length > 0 && (
+        <ul className="fact-list">
+          {related.events.map((e) => (
+            <li key={e.id} className="fact-row">
+              <span className="fact-when">{showDateTime(e.at)}</span>
+              <span className="fact-main">
+                <span className="tag">{EVENT_KIND_NAMES[e.kind]}</span>
+                {e.title}
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
+      <p className="note">その問題の記載（#問題の見出しの下や、問題名のある A・P）の中に書かれたものだけです。関係を推し量って足してはいません。値の推移は、書かれた名前の、この患者のすべての値です。</p>
+    </details>
   );
 }
 

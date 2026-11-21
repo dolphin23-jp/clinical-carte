@@ -1,8 +1,9 @@
-// 患者の一覧と、新しい患者（CA-014：自動の見出しで見分ける。氏名・ID・呼び名・病室の欄はない）。
-import { AGE_MAX, ENCOUNTER_KIND_LABELS, ENCOUNTER_KINDS, type EncounterKind, headline, SEX_LABELS, SEXES, type Sex } from '@clinical-carte/core';
+// 患者の一覧（回診リスト。段3d・CA-028）と、新しい患者（CA-014：自動の見出しで見分ける。氏名・ID・呼び名・病室の欄はない）。
+// 回診リストの行は、自動の見出し・記録の上での病日・いまの問題の名前・記録の上で最後の日時だけ（作文しない。判定しない）。
+import { AGE_MAX, dayOnRecord, ENCOUNTER_KIND_LABELS, ENCOUNTER_KINDS, type EncounterKind, headline, SEX_LABELS, SEXES, type Sex } from '@clinical-carte/core';
 import { type SyntheticEvent, useCallback, useEffect, useState } from 'react';
 
-import { joinDateTime, nowLocal } from './format.ts';
+import { joinDateTime, nowLocal, showDateTime } from './format.ts';
 import { errorMessage } from './messages.ts';
 import { createPatient, listPatients, type PatientSummary } from './net/api.ts';
 
@@ -56,25 +57,54 @@ export function Patients({ onOpen, onLeft }: { onOpen: (patientId: string) => vo
       ) : list.patients.length === 0 ? (
         <p className="note">まだ、患者はいません。</p>
       ) : (
-        <ul className="rows" data-testid="patients">
-          {list.patients.map(({ patient, latest, sources }) => (
-            <li key={patient.id} className="row">
-              <button
-                className="row-button"
-                type="button"
-                onClick={() => {
-                  onOpen(patient.id);
-                }}
-                data-testid="patient"
-              >
-                <span className="row-title">{headline({ ...patient, encounter: latest }, list.today)}</span>
-                <span className="row-sub">記録 {String(sources)} 件</span>
-              </button>
-            </li>
-          ))}
-        </ul>
+        <>
+          {(['active', 'ended'] as const).map((which) => {
+            const rows = list.patients.filter((p) => (which === 'active') === (p.latest !== null && p.latest.end === null));
+            if (rows.length === 0) return null;
+            return (
+              <section key={which} className="round-group" data-testid={`round-${which}`}>
+                <h3 className="sub-title">
+                  {which === 'active' ? '受け持ち中（受診の終わりが入っていない）' : '受診が終わった患者'}（{String(rows.length)}）
+                </h3>
+                <ul className="rows" data-testid="patients">
+                  {rows.map((summary) => (
+                    <RoundRow key={summary.patient.id} summary={summary} today={list.today} onOpen={onOpen} />
+                  ))}
+                </ul>
+              </section>
+            );
+          })}
+        </>
       )}
     </section>
+  );
+}
+
+function RoundRow({ summary, today, onOpen }: { summary: PatientSummary; today: string; onOpen: (patientId: string) => void }) {
+  const { patient, latest, sources, round } = summary;
+  const day = latest === null ? null : dayOnRecord(latest, round.asOf);
+  return (
+    <li className="row">
+      <button
+        className="row-button"
+        type="button"
+        onClick={() => {
+          onOpen(patient.id);
+        }}
+        data-testid="patient"
+      >
+        <span className="row-title">{headline({ ...patient, encounter: latest }, today)}</span>
+        <span className="round-problems" data-testid="round-problems">
+          {day !== null && <span className="tag">{`${String(day)}病日（記録の上で）`}</span>}
+          {round.problems.length === 0 ? 'いまの問題の記載なし' : round.problems.join('、')}
+        </span>
+        <span className="row-sub">
+          {round.asOf === null ? '記録の上の日時なし' : `記録の上で最後：${showDateTime(round.asOf)}`}・記録 {String(sources)} 件
+          {round.otherProblems > 0 && `・解決などと書かれた問題 ${String(round.otherProblems)}`}
+          {round.unlinked > 0 && `・つないでいない問題の記載 ${String(round.unlinked)}`}
+        </span>
+      </button>
+    </li>
   );
 }
 

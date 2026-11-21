@@ -450,3 +450,92 @@ export function problemNotes(mentions: readonly ThreadMention[], segments: reado
   }
   return out;
 }
+
+// ---------------------------------------------------------------------------
+// 問題の記載の範囲と、その中に書かれた事実（段3c）
+
+export interface Block {
+  readonly sourceId: string;
+  readonly start: number;
+  readonly end: number;
+}
+
+/**
+ * 問題の記載の範囲：その問題の記載が
+ *  - 「#問題」の見出しの区切りにあれば、見出しから、続く S・O・A・P・A/P の区切りの終わりまで
+ *  - S・O・A・P・A/P の区切りの中にあれば、その区切り
+ * （ほかの区切り・区切りのない文の中の記載は、範囲を持たない。推し量らない）
+ */
+export function problemBlocks(mentions: readonly ThreadMention[], segments: readonly NoteSegment[]): Block[] {
+  const bySource = new Map<string, NoteSegment[]>();
+  for (const s of segments) {
+    const list = bySource.get(s.sourceId) ?? [];
+    list.push(s);
+    bySource.set(s.sourceId, list);
+  }
+  for (const list of bySource.values()) list.sort((a, b) => a.start - b.start);
+  const out: Block[] = [];
+  const seen = new Set<string>();
+  for (const m of mentions) {
+    const list = bySource.get(m.sourceId) ?? [];
+    const i = list.findIndex((s) => s.start <= m.start && m.start < s.end);
+    const seg = list[i];
+    if (seg === undefined) continue;
+    let block: Block | null = null;
+    if (seg.label === 'problem_heading') {
+      let end = seg.end;
+      for (let j = i + 1; j < list.length; j += 1) {
+        const next = list[j];
+        if (next === undefined || !SOAP.includes(next.label)) break;
+        end = next.end;
+      }
+      block = { sourceId: seg.sourceId, start: seg.start, end };
+    } else if (SOAP.includes(seg.label)) block = { sourceId: seg.sourceId, start: seg.start, end: seg.end };
+    if (block === null) continue;
+    const key = `${block.sourceId}:${String(block.start)}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(block);
+  }
+  return out;
+}
+
+/** 範囲の中に書かれたもの（文の中の場所が、範囲の中にあるもの） */
+export function withinBlocks<T extends { readonly sourceId: string; readonly start: number; readonly end: number }>(items: readonly T[], blocks: readonly Block[]): T[] {
+  return items.filter((item) => blocks.some((b) => b.sourceId === item.sourceId && item.start >= b.start && item.end <= b.end));
+}
+
+export interface RelatedFacts<O, M, E> {
+  /** 問題の記載の中に書かれた検査・バイタルの名前（書かれた順。同じ名前は1回） */
+  readonly valueNames: readonly string[];
+  readonly observations: readonly O[];
+  /** 問題の記載の中に書かれた薬の名前（同じ名前は1回） */
+  readonly medicationNames: readonly string[];
+  readonly medications: readonly M[];
+  readonly events: readonly E[];
+}
+
+/** 問題の記載の中に書かれた、値・薬・できごと（段3c。推し量らない：その問題の記載の範囲に書かれたものだけ） */
+export function relatedFacts<
+  O extends { readonly sourceId: string; readonly start: number; readonly end: number; readonly name: string | null; readonly nameRaw: string },
+  M extends { readonly sourceId: string; readonly start: number; readonly end: number; readonly name: string },
+  E extends { readonly sourceId: string; readonly start: number; readonly end: number },
+>(mentions: readonly ThreadMention[], segments: readonly NoteSegment[], facts: { observations: readonly O[]; medications: readonly M[]; events: readonly E[] }): RelatedFacts<O, M, E> {
+  const blocks = problemBlocks(mentions, segments);
+  const observations = withinBlocks(facts.observations, blocks);
+  const medications = withinBlocks(facts.medications, blocks);
+  const valueNames: string[] = [];
+  for (const o of observations) {
+    const name = o.name ?? o.nameRaw;
+    if (!valueNames.includes(name)) valueNames.push(name);
+  }
+  const medicationNames: string[] = [];
+  const seen = new Set<string>();
+  for (const m of medications) {
+    const k = nameKey(m.name);
+    if (seen.has(k)) continue;
+    seen.add(k);
+    medicationNames.push(m.name);
+  }
+  return { valueNames, observations, medicationNames, medications, events: withinBlocks(facts.events, blocks) };
+}

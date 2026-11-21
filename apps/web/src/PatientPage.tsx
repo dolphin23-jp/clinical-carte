@@ -248,6 +248,9 @@ export function PatientPage({ patientId, onBack, onLeft }: { patientId: string; 
             segments={record.segments}
             sources={record.sources}
             history={record.history}
+            observations={record.observations}
+            medications={record.medications}
+            events={record.events}
             onChanged={load}
             onLeft={onLeft}
           />

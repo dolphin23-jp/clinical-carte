@@ -15,6 +15,7 @@ import type {
   PatientPatch,
   ProblemActivity,
   ProblemStatus,
+  RoundSummary,
   SegmentLabel,
   Sex,
   SourceKind,
@@ -180,6 +181,8 @@ export interface Medication {
   readonly doseText: string | null;
   readonly action: MedicationAction | null;
   readonly at: string | null;
+  readonly start: number;
+  readonly end: number;
 }
 
 export interface ClinicalEvent {
@@ -189,6 +192,8 @@ export interface ClinicalEvent {
   readonly kind: EventKind;
   readonly title: string;
   readonly at: string | null;
+  readonly start: number;
+  readonly end: number;
 }
 
 export interface Problem {
@@ -232,12 +237,16 @@ export interface Observation {
   readonly comparator: Comparator | null;
   readonly valueText: string;
   readonly unit: string | null;
+  readonly start: number;
+  readonly end: number;
 }
 
 export interface PatientSummary {
   readonly patient: Patient;
   readonly latest: Encounter | null;
   readonly sources: number;
+  /** 回診リストの材料（段3d） */
+  readonly round: RoundSummary;
 }
 
 export interface PatientRecord {

@@ -89,15 +89,15 @@ describe('最後の記録までの24時間', () => {
           mention({ threadId: 'T3', name: '#3 低K血症', at: '2026-11-20T09:00', activity: 'resolved' }),
         ],
         medications: [
-          { id: 'd1', sourceId: 's1', name: 'セフトリアキソン', doseText: '2g', action: 'start', at: '2026-11-17T23:00' },
-          { id: 'd2', sourceId: 's1', name: 'セフトリアキソン', doseText: null, action: 'stop', at: '2026-11-20' },
-          { id: 'd3', sourceId: 's1', name: 'アモキシシリン', doseText: null, action: null, at: '2026-11-20T08:00' },
+          { id: 'd1', sourceId: 's1', name: 'セフトリアキソン', doseText: '2g', action: 'start', at: '2026-11-17T23:00', start: 0, end: 1 },
+          { id: 'd2', sourceId: 's1', name: 'セフトリアキソン', doseText: null, action: 'stop', at: '2026-11-20', start: 0, end: 1 },
+          { id: 'd3', sourceId: 's1', name: 'アモキシシリン', doseText: null, action: null, at: '2026-11-20T08:00', start: 0, end: 1 },
         ],
-        events: [{ id: 'e1', sourceId: 's1', kind: 'test', title: '胸部X線を撮影', at: '2026-11-19T10:00' }],
+        events: [{ id: 'e1', sourceId: 's1', kind: 'test', title: '胸部X線を撮影', at: '2026-11-19T10:00', start: 0, end: 1 }],
         observations: [
-          { id: 'o1', sourceId: 's1', at: '2026-11-20T06:00', name: 'CRP', nameRaw: 'CRP', kind: 'lab', valueText: '2.1', unit: null },
-          { id: 'o2', sourceId: 's1', at: '2026-11-20T06:00', name: '体温', nameRaw: 'BT', kind: 'vital', valueText: '36.9', unit: null },
-          { id: 'o3', sourceId: 's1', at: '2026-11-18T06:00', name: 'CRP', nameRaw: 'CRP', kind: 'lab', valueText: '12.4', unit: null },
+          { id: 'o1', sourceId: 's1', at: '2026-11-20T06:00', name: 'CRP', nameRaw: 'CRP', kind: 'lab', valueText: '2.1', unit: null, start: 0, end: 1 },
+          { id: 'o2', sourceId: 's1', at: '2026-11-20T06:00', name: '体温', nameRaw: 'BT', kind: 'vital', valueText: '36.9', unit: null, start: 0, end: 1 },
+          { id: 'o3', sourceId: 's1', at: '2026-11-18T06:00', name: 'CRP', nameRaw: 'CRP', kind: 'lab', valueText: '12.4', unit: null, start: 0, end: 1 },
         ],
       }),
     );
@@ -114,9 +114,9 @@ describe('投薬と背景', () => {
     const s = patientState(
       base({
         medications: [
-          { id: 'd1', sourceId: 's1', name: 'セフトリアキソン', doseText: '2g', action: 'start', at: '2026-11-17T23:00' },
-          { id: 'd2', sourceId: 's1', name: 'セフトリアキソン', doseText: null, action: 'stop', at: '2026-11-20' },
-          { id: 'd3', sourceId: 's1', name: 'アモキシシリン', doseText: '500mg', action: 'start', at: '2026-11-20T08:00' },
+          { id: 'd1', sourceId: 's1', name: 'セフトリアキソン', doseText: '2g', action: 'start', at: '2026-11-17T23:00', start: 0, end: 1 },
+          { id: 'd2', sourceId: 's1', name: 'セフトリアキソン', doseText: null, action: 'stop', at: '2026-11-20', start: 0, end: 1 },
+          { id: 'd3', sourceId: 's1', name: 'アモキシシリン', doseText: '500mg', action: 'start', at: '2026-11-20T08:00', start: 0, end: 1 },
         ],
       }),
     );
@@ -143,5 +143,33 @@ describe('投薬と背景', () => {
       ['既往歴', 's1', 5, 1],
       ['アレルギー', 'old', 10, 0],
     ]);
+  });
+});
+
+describe('いまの問題に、問題の記載に書かれた値と薬（段3c）', () => {
+  test('記載の範囲に書かれた名前の、この受診でいちばん新しい値と、薬の最後の記載', () => {
+    const s = patientState(
+      base({
+        mentions: [mention({ sourceId: 's1', start: 0, end: 7 })],
+        segments: [
+          { sourceId: 's1', label: 'problem_heading', start: 0, end: 10 },
+          { sourceId: 's1', label: 'objective', start: 10, end: 30 },
+          { sourceId: 's1', label: 'plan', start: 30, end: 50 },
+          { sourceId: 's1', label: 'other', start: 50, end: 70 },
+        ],
+        observations: [
+          { id: 'o1', sourceId: 's1', at: '2026-11-20T09:00', name: 'CRP', nameRaw: 'CRP', kind: 'lab', valueText: '6.8', unit: null, start: 12, end: 20 },
+          { id: 'o2', sourceId: 's0', at: '2026-11-21T06:00', name: 'CRP', nameRaw: 'CRP', kind: 'lab', valueText: '2.1', unit: null, start: 0, end: 5 },
+          { id: 'o3', sourceId: 's1', at: '2026-11-20T09:00', name: 'Na', nameRaw: 'Na', kind: 'lab', valueText: '135', unit: null, start: 55, end: 60 },
+        ],
+        medications: [
+          { id: 'd1', sourceId: 's1', name: 'セフトリアキソン', doseText: '2g', action: 'continue', at: '2026-11-20T09:00', start: 32, end: 40 },
+          { id: 'd2', sourceId: 's0', name: 'アセトアミノフェン', doseText: null, action: 'start', at: '2026-11-17T23:00', start: 0, end: 5 },
+        ],
+      }),
+    );
+    const c = s.current[0];
+    expect(c?.values.map((v) => [v.name, v.valueText])).toEqual([['CRP', '2.1']]);
+    expect(c?.medications.map((m) => [m.name, m.action])).toEqual([['セフトリアキソン', 'continue']]);
   });
 });

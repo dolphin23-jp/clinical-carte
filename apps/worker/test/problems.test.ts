@@ -237,3 +237,16 @@ describe('本人の直す操作と履歴', () => {
     expect(JSON.stringify(rows)).not.toContain('抗菌薬継続');
   });
 });
+
+describe('回診リストの材料（段3d）', () => {
+  test('患者の一覧に、いまの問題の名前・記録の上で最後の日時・ほかの問題の数が付く。文は付かない', async () => {
+    const s = await setup({ [D1]: answer(problem('#1 発熱'), problem('#2 低K血症')), [D3]: answer(problem('#2 低K血症', 'problem', 'resolved')) });
+    await s.add(D1, '2026-11-17T23:00');
+    await s.add(D3, '2026-11-19T09:00');
+    const body = (await (await s.w.call('GET', '/api/patients', { cookie: s.cookie })).json()) as {
+      patients: { round: { asOf: string | null; lastEntered: string | null; problems: string[]; otherProblems: number; unlinked: number } }[];
+    };
+    expect(body.patients[0]?.round).toMatchObject({ asOf: '2026-11-19T09:00', problems: ['#1 発熱'], otherProblems: 1, unlinked: 0 });
+    expect(JSON.stringify(body)).not.toContain('解決'); // 文の中身は送らない
+  });
+});

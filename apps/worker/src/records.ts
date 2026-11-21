@@ -1,5 +1,6 @@
 // 記録の読み書き（段1：患者・受診・取り込んだ文・測定値）。書く表は、docs/04 の 6 の一覧のとおり。
 // ここは、形を確かめた後の値だけを受け取る（形の確かめは handler.ts、文の選別は intake.ts）。
+import { roundSummary, type RoundSummary } from '@clinical-carte/core';
 import type { AuthorRole, Comparator, EncounterKind, EventKind, HistoryAction, LabRow, MedicationAction, OrganizeReport, ProblemActivity, ProblemStatus, SegmentLabel, Sex, SourceKind } from '@clinical-carte/core';
 
 import { type Db, int, real, type Statement, text } from './db.ts';
@@ -330,22 +331,49 @@ export interface PatientSummary {
   readonly latest: Encounter | null;
   /** 取り込んだ文の数 */
   readonly sources: number;
+  /** 回診リストの材料（段3d）：記録の上で最後の日時・いまの問題の名前など。数と名前だけ（文は送らない） */
+  readonly round: RoundSummary;
 }
 
 export async function listPatients(db: Db): Promise<PatientSummary[]> {
-  const [patients, encounters, counts] = await Promise.all([
+  const [patients, encounters, sourceRows, problemRows, threadRows] = await Promise.all([
     db.prepare('SELECT id, age, age_on, sex, created_on FROM patients ORDER BY id').all(),
     db.prepare('SELECT id, patient_id, kind, started, ended FROM encounters ORDER BY started, id').all(),
-    db.prepare('SELECT patient_id, COUNT(*) AS n FROM sources GROUP BY patient_id').all(),
+    // 文の中身は読まない（日時と、どの受診かだけ）
+    db.prepare('SELECT patient_id, encounter_id, at, entered_at FROM sources ORDER BY id').all(),
+    db.prepare(`SELECT patient_id, ${PROBLEM_COLUMNS} FROM problems ORDER BY source_id, span_start`).all(),
+    db.prepare('SELECT id, patient_id, display_name, merged_into FROM problem_threads ORDER BY id').all(),
   ]);
   const latest = new Map<string, Encounter>();
   for (const e of encounters.results.map(toEncounter).filter(present)) latest.set(e.patientId, e);
-  const sources = new Map<string, number>();
-  for (const row of counts.results) sources.set(text(row, 'patient_id') ?? '', int(row, 'n') ?? 0);
+  const group = <T>(rows: readonly Row[], to: (row: Row) => T | null): Map<string, T[]> => {
+    const out = new Map<string, T[]>();
+    for (const row of rows) {
+      const value = to(row);
+      const key = text(row, 'patient_id');
+      if (value === null || key === null) continue;
+      const list = out.get(key) ?? [];
+      list.push(value);
+      out.set(key, list);
+    }
+    return out;
+  };
+  const sources = group(sourceRows.results, (row) => {
+    const encounterId = text(row, 'encounter_id');
+    const enteredAt = text(row, 'entered_at');
+    return encounterId === null || enteredAt === null ? null : { encounterId, at: text(row, 'at'), enteredAt };
+  });
+  const problems = group(problemRows.results, toProblem);
+  const threads = group(threadRows.results, toThread);
   return patients.results
     .map(toPatient)
     .filter(present)
-    .map((patient) => ({ patient, latest: latest.get(patient.id) ?? null, sources: sources.get(patient.id) ?? 0 }))
+    .map((patient) => {
+      const own = sources.get(patient.id) ?? [];
+      const encounter = latest.get(patient.id) ?? null;
+      const round = roundSummary({ encounter: { id: encounter?.id ?? '' }, sources: own, threads: threads.get(patient.id) ?? [], mentions: problems.get(patient.id) ?? [] });
+      return { patient, latest: encounter, sources: own.length, round };
+    })
     // いちばん新しい受診の開始が新しい順（受け持ち中の患者が上に来る）
     .sort((a, b) => (b.latest?.start ?? '').localeCompare(a.latest?.start ?? '') || b.patient.id.localeCompare(a.patient.id));
 }
