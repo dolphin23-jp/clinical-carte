@@ -175,7 +175,24 @@ iPad・PC も、同じ（carte のアドレスを開く → 合鍵を貼る → 
 7. Anthropic の画面で、月に使ってよい金額の上限を決めておく（**Settings** → **Limits** など【画面の名前は、確かめていない】）。
 
 - 鍵は、この会話に貼らない。
-- 使う量の目安：文を1つ入れるごとに、AI を 2 回呼ぶ（識別情報の選別と、整理）。「整理し直す」でも 1 回。1日の上限は、仮に 300 回（`wrangler.jsonc` の `DAILY_AI_LIMIT`。文にして 150 件ほど）。
+- 使う量の目安：文を1つ入れるごとに、AI を 2 回呼ぶ（識別情報の選別と、整理）。「整理し直す」でも 1 回。A/P を残す・直すで 1 回（選別）、A/P の案・議論で 1 回（ネットも探すと、もう 1 回。ウェブ検索は、検索 1,000 回で 10 ドルの別料金）。1日の上限は、仮に 300 回（`wrangler.jsonc` の `DAILY_AI_LIMIT`。文にして 150 件ほど）。
+
+### 作業 7b（任意）：書籍（clinical-RAG）を参照元にする
+
+A/P の案・AI との議論で、先生の clinical-RAG の書籍を根拠に使えるようにする（段5。設定しなくても、記録とネットだけで動く）。
+
+- `wrangler.jsonc` に、clinical-RAG の Worker（名前 `medbook-rag`）への**サービスバインディング** `RAG` が入っている（clinical-modules と同じ呼び方。公開の URL を通らないので、Cloudflare Access に止められない）。
+- 先生がするのは、合鍵を置くことだけ：Cloudflare：**Workers & Pages** → `clinical-carte` → **Settings** → **Variables and Secrets** → **Add**。
+
+| 欄 | 入れるもの |
+|---|---|
+| Type | **Secret** |
+| Variable name | `RAG_TOKEN` |
+| Value | clinical-RAG のアプリのトークン（clinical-RAG の Worker の Secret と同じ値。RAG の画面に入れているもの） |
+
+- **Deploy** を押す。トークンは、この会話に貼らない。
+- 送るのは、問題の名前だけ（例：「#1 市中肺炎」）。RAG の 1 日の上限に数えられることがある【確かめていない】。
+- もし `medbook-rag` という名前の Worker が同じアカウントにないと、配る（ビルド）が失敗する。そのときは、エージェントに伝える（バインディングを外すか、名前を直す）。
 
 ## 作業 8：選別の評価（carte の画面で動かす）
 

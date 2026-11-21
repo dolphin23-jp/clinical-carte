@@ -2,6 +2,7 @@
 import { createAnthropicOrganizer, createAnthropicSelector, DEFAULT_MODEL } from './anthropic.ts';
 import type { Db } from './db.ts';
 import { handle } from './handler.ts';
+import { type BookSearcher, createRagSearcher } from './references.ts';
 import { webRuntime } from './runtime.ts';
 import { schemaGate } from './schema.ts';
 import { DEFAULT_DAILY_AI_LIMIT } from './usage.ts';
@@ -21,6 +22,18 @@ export interface Env {
   readonly MODEL?: string;
   /** AI を呼べる回数（1日）。"0" は、上限なし。なければ DEFAULT_DAILY_AI_LIMIT */
   readonly DAILY_AI_LIMIT?: string;
+  /** 本人の clinical-RAG（段5。wrangler.jsonc の services のサービスバインディング。Worker の名前 medbook-rag）。clinical-modules と同じ呼び方 */
+  readonly RAG?: { fetch(request: Request): Promise<Response> };
+  /** clinical-RAG のアプリのトークン（Cloudflare の画面の Secret）。なければ、書籍を参照元にしない */
+  readonly RAG_TOKEN?: string;
+}
+
+/** 書籍の検索を作る。バインディングかトークンがないときは null（鍵なしで外へ出さない）。宛先の URL は、バインディングの中だけの名前 */
+export function ragSearcherOf(env: { readonly RAG?: { fetch(request: Request): Promise<Response> }; readonly RAG_TOKEN?: string }): BookSearcher | null {
+  const token = env.RAG_TOKEN?.trim() ?? '';
+  const binding = env.RAG;
+  if (token === '' || binding === undefined) return null;
+  return createRagSearcher({ url: 'https://medbook-rag.internal', token, fetcher: (input, init) => binding.fetch(new Request(input, init)) });
 }
 
 /** Anthropic の API の鍵の名前（先にあるほうを使う）。ANTHROPIC_API_KEY が手順書の名前、CARTE_api_key は本番で置いた名前 */
@@ -65,6 +78,7 @@ export default {
       model,
       organizer: apiKey === '' ? null : createAnthropicOrganizer({ apiKey, model }),
       dailyAiLimit: dailyLimitOf(env.DAILY_AI_LIMIT),
+      books: ragSearcherOf(env),
     });
   },
 };

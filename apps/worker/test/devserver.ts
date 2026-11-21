@@ -7,6 +7,7 @@ import { extname, join, normalize } from 'node:path';
 
 import { handle } from '../src/handler.ts';
 import type { Organizer } from '../src/organizer.ts';
+import type { BookSearcher } from '../src/references.ts';
 import type { Selector } from '../src/selector.ts';
 import { type Clock, fakeOrganizer, fakeSelector, openDb, type TestDb, testRuntime } from './support.ts';
 
@@ -48,7 +49,7 @@ export interface DevServer {
   close(): Promise<void>;
 }
 
-export async function startDevServer(options: { dist: string; key: string | undefined; selector?: Selector | null; organizer?: Organizer | null; dailyAiLimit?: number }): Promise<DevServer> {
+export async function startDevServer(options: { dist: string; key: string | undefined; selector?: Selector | null; organizer?: Organizer | null; dailyAiLimit?: number; books?: BookSearcher | null }): Promise<DevServer> {
   const organizer = options.organizer === undefined ? fakeOrganizer() : options.organizer;
   const selector = options.selector === undefined ? fakeSelector() : options.selector;
   const db = openDb();
@@ -85,7 +86,7 @@ export async function startDevServer(options: { dist: string; key: string | unde
       if (method !== 'GET' && method !== 'HEAD') init.body = new Uint8Array(Buffer.concat(chunks));
       const request = new Request(`http://${req.headers.host ?? '127.0.0.1'}${req.url ?? '/'}`, init);
       // 手元は http なので、印に Secure と __Host- を付けない
-      const response = await handle(request, { db, key: options.key, runtime, secureCookies: false, assets, selector, dailyAiLimit: options.dailyAiLimit ?? 0, model: 'test-model', organizer });
+      const response = await handle(request, { db, key: options.key, runtime, secureCookies: false, assets, selector, dailyAiLimit: options.dailyAiLimit ?? 0, model: 'test-model', organizer, books: options.books ?? null });
       res.statusCode = response.status;
       response.headers.forEach((value, name) => {
         if (name !== 'set-cookie') res.setHeader(name, value);

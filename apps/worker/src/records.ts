@@ -1,7 +1,7 @@
 // 記録の読み書き（段1：患者・受診・取り込んだ文・測定値）。書く表は、docs/04 の 6 の一覧のとおり。
 // ここは、形を確かめた後の値だけを受け取る（形の確かめは handler.ts、文の選別は intake.ts）。
 import { roundSummary, type RoundSummary } from '@clinical-carte/core';
-import { type FactField, type FactKind, USER_EDIT_FIELDS, USER_EDIT_TARGETS, type UserEditField, type UserEditTarget } from '@clinical-carte/core';
+import { ApRef, type ApOrigin, type ApPart, type FactField, type FactKind, type PlanKind, USER_EDIT_FIELDS, USER_EDIT_TARGETS, type UserEditField, type UserEditTarget } from '@clinical-carte/core';
 import type { AuthorRole, Comparator, EncounterKind, EventKind, HistoryAction, LabRow, MedicationAction, OrganizeReport, ProblemActivity, ProblemStatus, SegmentLabel, Sex, SourceKind } from '@clinical-carte/core';
 
 import { type Db, int, real, type Statement, text } from './db.ts';
@@ -107,6 +107,20 @@ export interface ProblemThread {
   readonly ord: number | null;
   readonly excluded: boolean;
   readonly typedName: string | null;
+}
+
+export interface ApNote {
+  readonly id: string;
+  readonly encounterId: string;
+  readonly threadId: string;
+  readonly day: string;
+  readonly part: ApPart;
+  readonly planKind: PlanKind | null;
+  readonly text: string;
+  readonly origin: ApOrigin;
+  readonly refs: readonly ApRef[];
+  readonly enteredAt: string;
+  readonly updatedAt: string;
 }
 
 export interface UserEdit {
@@ -365,6 +379,36 @@ function toThread(row: Row): ProblemThread | null {
 /** 問題の筋の列（読み出し） */
 export const THREAD_COLUMNS = 'id, display_name, merged_into, status_override, activity_override, ord, excluded, typed_name';
 
+function toApNote(row: Row): ApNote | null {
+  const id = text(row, 'id');
+  const encounterId = text(row, 'encounter_id');
+  const threadId = text(row, 'thread_id');
+  const day = text(row, 'day');
+  const part = text(row, 'part');
+  const body = text(row, 'text');
+  const origin = text(row, 'origin');
+  const enteredAt = text(row, 'entered_at');
+  const updatedAt = text(row, 'updated_at');
+  if (id === null || encounterId === null || threadId === null || day === null || body === null || enteredAt === null || updatedAt === null) return null;
+  if ((part !== 'assessment' && part !== 'plan') || (origin !== 'self' && origin !== 'ai' && origin !== 'ai_edited')) return null;
+  const kind = text(row, 'plan_kind');
+  let refs: ApRef[] = [];
+  try {
+    const parsed: unknown = JSON.parse(text(row, 'refs') ?? '[]');
+    if (Array.isArray(parsed)) refs = parsed.map((r) => ApRef.safeParse(r)).flatMap((r) => (r.success ? [r.data] : []));
+  } catch {
+    // 読めない参照は、ないものとして扱う
+  }
+  return { id, encounterId, threadId, day, part, planKind: kind === 'dx' || kind === 'tx' || kind === 'ex' || kind === 'other' ? kind : null, text: body, origin, refs, enteredAt, updatedAt };
+}
+
+/** A/P の列（読み出し） */
+export const AP_COLUMNS = 'id, encounter_id, thread_id, day, part, plan_kind, text, origin, refs, entered_at, updated_at';
+
+export function apNoteOf(row: Row): ApNote | null {
+  return toApNote(row);
+}
+
 function toUserEdit(row: Row): UserEdit | null {
   const id = text(row, 'id');
   const at = text(row, 'at');
@@ -474,6 +518,8 @@ export interface PatientRecord {
   readonly factEdits: FactEdit[];
   /** 本人の調節の記録（新しい順。CA-029） */
   readonly userEdits: UserEdit[];
+  /** A/P（段5。本人が残した・採用した、決まったことだけ） */
+  readonly apNotes: ApNote[];
 }
 
 /** 問題の列（読み出し） */
@@ -482,7 +528,7 @@ export const PROBLEM_COLUMNS = 'id, source_id, encounter_id, name, status, activ
 export async function getRecord(db: Db, id: string): Promise<PatientRecord | null> {
   const patient = await getPatient(db, id);
   if (patient === null) return null;
-  const [encounters, sources, observations, segments, medications, events, problems, threads, history, factEdits, userEdits] = await Promise.all([
+  const [encounters, sources, observations, segments, medications, events, problems, threads, history, factEdits, userEdits, apNotes] = await Promise.all([
     db.prepare('SELECT id, patient_id, kind, started, ended FROM encounters WHERE patient_id = ? ORDER BY started, id').bind(id).all(),
     db.prepare('SELECT id, patient_id, encounter_id, kind, author_role, at, entered_at, text, replaced, organized, organized_version, organize_report FROM sources WHERE patient_id = ? ORDER BY id').bind(id).all(),
     db
@@ -497,6 +543,7 @@ export async function getRecord(db: Db, id: string): Promise<PatientRecord | nul
     db.prepare('SELECT id, at, action, target, before, after FROM history WHERE patient_id = ? ORDER BY at DESC, id DESC LIMIT 200').bind(id).all(),
     db.prepare('SELECT id, at, fact, target, field, before, after FROM fact_edits WHERE patient_id = ? ORDER BY at DESC, id DESC LIMIT 500').bind(id).all(),
     db.prepare('SELECT id, at, target_type, target, field, before, after FROM user_edits WHERE patient_id = ? ORDER BY at DESC, id DESC LIMIT 500').bind(id).all(),
+    db.prepare(`SELECT ${AP_COLUMNS} FROM ap_notes WHERE patient_id = ? ORDER BY day, entered_at, id`).bind(id).all(),
   ]);
   return {
     patient,
@@ -511,6 +558,7 @@ export async function getRecord(db: Db, id: string): Promise<PatientRecord | nul
     history: history.results.map(toHistory).filter(present),
     factEdits: factEdits.results.map(toFactEdit).filter(present),
     userEdits: userEdits.results.map(toUserEdit).filter(present),
+    apNotes: apNotes.results.map(toApNote).filter(present),
   };
 }
 
@@ -550,7 +598,7 @@ export async function setEncounterEnd(db: Db, id: string, end: string | null): P
 export const FACT_TABLES = ['observations', 'segments', 'medications', 'events', 'problems'] as const;
 
 /** 患者に付く、文からではない行の表（患者を消すと、一緒に消える。文を消しても残る：筋は、記載がなくなると見えなくなるだけ） */
-export const PATIENT_TABLES = ['problem_threads', 'history', 'fact_edits', 'user_edits'] as const;
+export const PATIENT_TABLES = ['problem_threads', 'history', 'fact_edits', 'user_edits', 'ap_notes', 'ap_history'] as const;
 
 /** 問題の行を、表から読む */
 export function problemOf(row: Record<string, unknown>): Problem | null {

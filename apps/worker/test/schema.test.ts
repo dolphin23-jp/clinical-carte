@@ -18,7 +18,7 @@ describe('migrations の写し', () => {
   });
 
   test('番号の順に並び、最初は、適用の控えの表', () => {
-    expect(MIGRATIONS.map((m) => m.name)).toEqual(['0000_schema', '0001_entrance', '0002_records', '0003_organize', '0004_threads', '0005_fact_edits', '0006_user_edits']);
+    expect(MIGRATIONS.map((m) => m.name)).toEqual(['0000_schema', '0001_entrance', '0002_records', '0003_organize', '0004_threads', '0005_fact_edits', '0006_user_edits', '0007_ap_notes']);
     for (const m of MIGRATIONS) expect(m.statements.length, m.name).toBeGreaterThan(0);
   });
 
@@ -33,7 +33,7 @@ describe('表の用意', () => {
     const db = openDb({ empty: true });
     expect(tables(db)).toEqual([]);
     expect(await ensureSchema(db)).toBe(MIGRATIONS.length);
-    expect(tables(db)).toEqual(['devices', 'encounters', 'entrance_daily', 'events', 'fact_edits', 'history', 'medications', 'observations', 'patients', 'problem_threads', 'problems', 'schema_migrations', 'segments', 'sources', 'usage_daily', 'user_edits']);
+    expect(tables(db)).toEqual(['ap_history', 'ap_notes', 'devices', 'encounters', 'entrance_daily', 'events', 'fact_edits', 'history', 'medications', 'observations', 'patients', 'problem_threads', 'problems', 'schema_migrations', 'segments', 'sources', 'usage_daily', 'user_edits']);
     expect(db.raw.prepare('SELECT name FROM schema_migrations ORDER BY name').all()).toEqual(MIGRATIONS.map((m) => ({ name: m.name })));
   });
 

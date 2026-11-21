@@ -10,7 +10,7 @@ import type { Db, Statement } from '../src/db.ts';
 import { handle, type HandlerDeps } from '../src/handler.ts';
 import { MIGRATIONS as MIGRATION_LIST } from '../src/migrations.gen.ts';
 import { type Runtime, webRuntime } from '../src/runtime.ts';
-import type { DrafterResult, LinkerResult, Organizer, OrganizerResult } from '../src/organizer.ts';
+import type { DiscussResult, DrafterResult, LinkerResult, Organizer, OrganizerResult, ProposerResult, ResearchResult } from '../src/organizer.ts';
 import type { Selector, SelectorResult } from '../src/selector.ts';
 
 export const MIGRATIONS = resolve(import.meta.dirname, '..', 'migrations');
@@ -167,6 +167,16 @@ export interface FakeOrganizer extends Organizer {
   readonly linked: string[];
   /** 草案に渡された資料（JSON） */
   readonly drafted: string[];
+  /** 参照元の検索・A/P の案・議論に渡された資料（JSON） */
+  readonly researched: string[];
+  readonly proposed: string[];
+  readonly discussed: string[];
+}
+
+export interface FakeApAnswers {
+  readonly research?: (message: string) => ResearchResult;
+  readonly propose?: (message: string) => ProposerResult;
+  readonly discuss?: (message: string) => DiscussResult;
 }
 
 /** AI の整理の代役：文を受け取り、決めた答えを返す（既定は、何も見つけない）。つなぎは、既定では何もつながない */
@@ -174,7 +184,11 @@ export function fakeOrganizer(
   answer: (text: string) => OrganizerResult = () => ({ ok: true, answer: EMPTY_ORGANIZE }),
   link: (message: string) => LinkerResult = () => ({ ok: true, answer: { links: [] } }),
   draft: (message: string) => DrafterResult = () => ({ ok: true, answer: { sections: [] } }),
+  ap: FakeApAnswers = {},
 ): FakeOrganizer {
+  const researched: string[] = [];
+  const proposed: string[] = [];
+  const discussed: string[] = [];
   const seen: string[] = [];
   const linked: string[] = [];
   const drafted: string[] = [];
@@ -182,6 +196,21 @@ export function fakeOrganizer(
     seen,
     linked,
     drafted,
+    researched,
+    proposed,
+    discussed,
+    research: (message) => {
+      researched.push(message);
+      return Promise.resolve(ap.research?.(message) ?? { ok: true, hits: [] });
+    },
+    propose: (message) => {
+      proposed.push(message);
+      return Promise.resolve(ap.propose?.(message) ?? { ok: true, answer: { problems: [] } });
+    },
+    discuss: (message) => {
+      discussed.push(message);
+      return Promise.resolve(ap.discuss?.(message) ?? { ok: true, answer: { paragraphs: [] } });
+    },
     organize: (text) => {
       seen.push(text);
       return Promise.resolve(answer(text));

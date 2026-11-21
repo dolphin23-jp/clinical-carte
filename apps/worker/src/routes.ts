@@ -3,7 +3,11 @@
 import {
   compareDateTime,
   AddFact,
+  ApNotePatch,
+  ApNotesNew,
+  DiscussRequest,
   EncounterPatch,
+  ProposalRequest,
   SegmentPatch,
   SourcePatch,
   SourceTextPut,
@@ -26,12 +30,15 @@ import {
 import type { z } from 'zod';
 
 import type { Db } from './db.ts';
+import { addApNotes, type ApOutcome, deleteApNote, patchApNote } from './ap.ts';
 import { draftCourse, draftMaterialFor } from './draft.ts';
 import { addFact, patchSegment, patchSource, retypeSource } from './edits.ts';
 import { patchFact } from './facts.ts';
 import { intake } from './intake.ts';
 import { organizeSource } from './organize.ts';
 import type { Organizer } from './organizer.ts';
+import { type CallGate, discuss, gatherReferences, materialFor, propose, talkHasShapes } from './proposal.ts';
+import type { BookSearcher } from './references.ts';
 import { type EditOutcome, type LinkOutcome, linkPatient, moveMention, patchThread, setTypedName } from './problems.ts';
 import { SELECT_PROMPT_VERSION } from './prompt.ts';
 import {
@@ -68,6 +75,8 @@ export interface RecordDeps {
   readonly model: string;
   /** AI の整理（段2）。鍵がなければ null：文は入れられないので、整理もない */
   readonly organizer: Organizer | null;
+  /** 書籍の検索（段5。本人の clinical-RAG）。宛先と合鍵の設定がなければ null：書籍は参照元にしない */
+  readonly books: BookSearcher | null;
 }
 
 export interface Reply {
@@ -100,6 +109,17 @@ const edited = (outcome: EditOutcome): Reply =>
 
 /** つなぎの結果のうち、画面に出すもの（数だけ） */
 const linkSummary = (o: LinkOutcome) => ({ usedAi: o.usedAi, pendingLeft: o.pendingLeft, failure: o.failure, report: o.report });
+
+/** AI の失敗を、名前だけの答えにする */
+const aiFailed = (failure: 'refused' | 'unavailable' | 'bad_answer'): Reply => (failure === 'refused' ? reply(422, { error: 'ai_refused' }) : reply(502, { error: failure === 'unavailable' ? 'ai_unavailable' : 'ai_bad_answer' }));
+
+const apReply = (r: ApOutcome): Reply => {
+  if (r.ok) return reply(200, { ids: r.ids });
+  if (r.error === 'not_found') return missing();
+  if (r.error === 'bad_request' || r.error === 'empty') return bad();
+  if (r.error === 'ai') return aiFailed(r.failure);
+  return reply(422, { error: 'selection_failed' });
+};
 
 const newId = (runtime: Runtime): string => ulid(runtime.now(), runtime.randomBytes(ULID_RANDOM_BYTES));
 
@@ -264,6 +284,72 @@ export async function recordApi(request: Request, path: string, deps: RecordDeps
       return reply(422, { error: 'draft_empty' });
     }
     return reply(200, { draft: result.draft, quotes: result.quotes, dropped: result.dropped });
+  }
+
+  // AI を呼ぶ回数の確かめ：呼ぶたびに数える（上限なら呼ばない）
+  const gate: CallGate = {
+    take: async () => {
+      if (deps.dailyAiLimit > 0 && (await callsOn(db, today)) >= deps.dailyAiLimit) return false;
+      await countCall(db, today);
+      return true;
+    },
+  };
+
+  // A/P を残す（段5。CA-031・034）：本人が書いた・AI の案から採用した、決まったことだけ。文は選別（C-1）を通す。まとめて1回の選別
+  const apNew = /^\/api\/encounters\/([^/]+)\/ap-notes$/.exec(path);
+  if (apNew && method === 'POST') {
+    const encounterId = apNew[1] ?? '';
+    if (!isUlid(encounterId)) return bad();
+    const body = await readBody(request, ApNotesNew);
+    if (body === null || body.notes.some((n) => n.encounterId !== encounterId)) return bad();
+    if (deps.selector === null) return reply(503, { error: 'no_ai' });
+    if (!(await gate.take())) return reply(429, { error: 'ai_limit' });
+    return apReply(await addApNotes(db, body.notes, deps.selector, runtime));
+  }
+  const oneAp = /^\/api\/ap-notes\/([^/]+)$/.exec(path);
+  if (oneAp && method === 'PATCH') {
+    const id = oneAp[1] ?? '';
+    if (!isUlid(id)) return bad();
+    const body = await readBody(request, ApNotePatch);
+    if (body === null) return bad();
+    if ('text' in body) {
+      if (deps.selector === null) return reply(503, { error: 'no_ai' });
+      if (!(await gate.take())) return reply(429, { error: 'ai_limit' });
+    }
+    return apReply(await patchApNote(db, id, body, deps.selector, runtime));
+  }
+  if (oneAp && method === 'DELETE') {
+    const id = oneAp[1] ?? '';
+    if (!isUlid(id)) return bad();
+    return (await deleteApNote(db, id, runtime)) ? reply(200, { removed: id }) : missing();
+  }
+
+  // A/P の案（段5。CA-030）と議論（CA-032）：保存しない。記録の引用が空なら、AI を呼ばない
+  const apProposal = /^\/api\/encounters\/([^/]+)\/(ap-proposal|discuss)$/.exec(path);
+  if (apProposal && method === 'POST') {
+    const encounterId = apProposal[1] ?? '';
+    if (!isUlid(encounterId)) return bad();
+    const isDiscuss = apProposal[2] === 'discuss';
+    const body = isDiscuss ? await readBody(request, DiscussRequest) : await readBody(request, ProposalRequest);
+    if (body === null) return bad();
+    const threadIds = 'threadIds' in body ? [...new Set(body.threadIds)] : [body.threadId];
+    const material = await materialFor(db, encounterId, threadIds, body.day);
+    if (material === null) return missing();
+    if (material.record.length === 0) return reply(422, { error: 'ap_empty' });
+    if (deps.organizer === null) return reply(503, { error: 'no_ai' });
+    if ('question' in body && talkHasShapes(body)) return reply(422, { error: 'shape' });
+    const refs = await gatherReferences(
+      material.problems.map((p) => p.name),
+      { web: body.web, books: deps.books, organizer: deps.organizer, gate },
+    );
+    if ('question' in body) {
+      const r = await discuss(material, body.day, body, refs, deps.organizer, gate);
+      if (!r.ok) return r.reason === 'ai_limit' ? reply(429, { error: 'ai_limit' }) : aiFailed(r.failure);
+      return reply(200, { discussion: r.discussion, sources: r.sources.length, webFailed: r.webFailed, books: refs.books.length, web: refs.web.length });
+    }
+    const r = await propose(material, body.day, refs, deps.organizer, gate);
+    if (!r.ok) return r.reason === 'ai_limit' ? reply(429, { error: 'ai_limit' }) : aiFailed(r.failure);
+    return reply(200, { proposal: r.proposal, sources: r.sources.length, webFailed: r.webFailed, books: refs.books.length, web: refs.web.length });
   }
 
   // 問題以外の事実を直す（段3e）：外す・戻す、投薬の動き・できごとの種類・日時を選び直す

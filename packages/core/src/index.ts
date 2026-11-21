@@ -20,3 +20,5 @@ export * from './problems/threads.ts';
 export * from './views/state.ts';
 export * from './record/edits.ts';
 export * from './draft/course.ts';
+export * from './notes/ap.ts';
+export * from './notes/note.ts';
