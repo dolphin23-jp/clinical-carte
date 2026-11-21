@@ -40,7 +40,7 @@ export function StateView({ state, sources, onProblems }: { state: PatientState;
           <p className="note">いまの問題として書かれたものはありません。</p>
         ) : (
           <ul className="threads">
-            {state.current.map(({ thread, notes }) => (
+            {state.current.map(({ thread, notes, values, medications }) => (
               <li key={thread.id} className="thread" data-testid="state-problem">
                 <div className="thread-head">
                   <strong className="thread-name">{thread.name}</strong>
@@ -58,6 +58,17 @@ export function StateView({ state, sources, onProblems }: { state: PatientState;
                   </div>
                 ) : (
                   <p className="thread-sub">A・P の区切りは見つかっていません（最後の記載 {showDateTime(thread.last)}）。</p>
+                )}
+                {values.length > 0 && (
+                  <p className="thread-sub" data-testid="state-problem-values">
+                    記載に書かれた値：{values.map((o) => `${o.name ?? o.nameRaw} ${o.valueText}${o.unit === null ? '' : ` ${o.unit}`}（${showDateTime(o.at)}）`).join('・')}
+                  </p>
+                )}
+                {medications.length > 0 && (
+                  <p className="thread-sub" data-testid="state-problem-meds">
+                    記載に書かれた薬：
+                    {medications.map((m) => `${m.name} ${m.action === null ? '動きの記載なし' : MEDICATION_ACTION_NAMES[m.action]}（${showDateTime(m.at)}）`).join('・')}
+                  </p>
                 )}
               </li>
             ))}

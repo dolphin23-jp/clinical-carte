@@ -45,6 +45,25 @@ const ANSWERS: Record<string, OrganizeAnswer> = {
   },
 };
 
+const D4 = '#1 市中肺炎\nO) CRP 6.8 WBC 10.1\nA) 改善傾向\nP) セフトリアキソン 2g 継続\n#2 低Na血症\nA) 経過観察\nNa 132';
+ANSWERS[D4] = {
+  ...EMPTY_ORGANIZE,
+  segments: [
+    { label: 'problem_heading', start: '#1 市中肺炎' },
+    { label: 'objective', start: 'O) CRP' },
+    { label: 'assessment', start: 'A) 改善' },
+    { label: 'plan', start: 'P) セフ' },
+    { label: 'problem_heading', start: '#2 低Na血症' },
+    { label: 'assessment', start: 'A) 経過観察' },
+  ],
+  problems: [
+    { name: '#1 市中肺炎', status: 'diagnosis', activity: null },
+    { name: '#2 低Na血症', status: 'problem', activity: null },
+  ],
+  medications: [{ name: 'セフトリアキソン', dose: '2g', action: 'continue', when: null }],
+  measurements: [{ quote: 'CRP 6.8 WBC 10.1', when: null }, { quote: 'Na 132', when: null }],
+};
+
 /** つなぎの代役：「市中肺炎」を「発熱」の筋につなぐ（つなげる設定のときだけ） */
 let linkPneumonia = true;
 const link = (message: string): LinkerResult => {
@@ -201,5 +220,49 @@ describe('いまの状態（段3b）', () => {
     if (SHOTS !== undefined) await page.screenshot({ path: `${SHOTS}/state-iphone.png`, fullPage: true });
     await page.getByTestId('state-to-problems').click();
     expect(await page.getByTestId('tab-problems').getAttribute('aria-selected')).toBe('true');
+  });
+});
+
+describe('問題の記載に書かれた値・薬（段3c）と、回診リスト（段3d）', () => {
+  test('問題の記載の中に書かれた検査の推移と薬が、その問題に出る。ほかの問題の範囲のものは出ない', async () => {
+    const page = await openPatient();
+    // 先に検査結果だけの記載（CRP の推移の点を足す）
+    await page.getByTestId('kind-chip-lab').click();
+    await page.getByTestId('at-day').fill('2026-11-17');
+    await page.getByTestId('at-time').fill('06:00');
+    await page.getByTestId('text').fill('CRP 12.4 WBC 14.2 Na 130');
+    const before = await page.getByTestId('source').count();
+    await page.getByTestId('send').click();
+    await expect.poll(() => page.getByTestId('source').count(), { timeout: 10_000 }).toBe(before + 1);
+    await send(page, D4, '2026-11-19');
+
+    await page.getByTestId('tab-problems').click();
+    const pneu = page.getByTestId('problem-line').filter({ has: page.getByTestId('thread-name').filter({ hasText: '#1 市中肺炎' }) });
+    const related = pneu.getByTestId('thread-related');
+    await related.locator('summary').click();
+    const names = await related.getByTestId('trend').locator('.trend-name').allTextContents();
+    expect(names.sort()).toEqual(['CRP', 'WBC']); // Na は #2 の範囲なので、#1 には出ない
+    expect(await related.getByTestId('thread-related-meds').textContent()).toContain('セフトリアキソン');
+    const hypoNa = page.getByTestId('problem-line').filter({ has: page.getByTestId('thread-name').filter({ hasText: '#2 低Na血症' }) });
+    await hypoNa.getByTestId('thread-related').locator('summary').click();
+    expect(await hypoNa.getByTestId('thread-related').getByTestId('trend').locator('.trend-name').allTextContents()).toEqual(['Na']);
+    expect(await fits(page)).toBe(true);
+    if (SHOTS !== undefined) await page.screenshot({ path: `${SHOTS}/related-iphone.png`, fullPage: true });
+
+    // 「いま」にも、記載に書かれた値の最新と薬
+    await page.getByTestId('tab-state').click();
+    const values = page.getByTestId('state-problem-values').first();
+    expect(await values.textContent()).toContain('CRP 6.8');
+    expect(await page.getByTestId('state-problem-meds').first().textContent()).toContain('セフトリアキソン 継続');
+
+    // 回診リスト：いまの問題・記録の上での病日・最後の日時
+    await page.getByTestId('back').click();
+    const row = page.getByTestId('patient').first();
+    await row.waitFor();
+    expect(await row.getByTestId('round-problems').textContent()).toBe('3病日（記録の上で）#1 市中肺炎、#2 低Na血症');
+    expect(await row.textContent()).toContain('記録の上で最後：2026-11-19 09:00');
+    expect(await page.getByTestId('round-active').count()).toBe(1);
+    expect(await fits(page)).toBe(true);
+    if (SHOTS !== undefined) await page.screenshot({ path: `${SHOTS}/rounds-iphone.png`, fullPage: true });
   });
 });

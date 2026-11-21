@@ -4,8 +4,8 @@
 // - 「いま」は、記録の上で最後の日時（asOf）。端末の時計の「いま」ではない（carte は写しで、最新とは限らない）。
 // - 判定しない：並べるだけ。投薬は「薬ごとの最後の記載」で、いま続いているかを補わない。
 import { type EventKind, type MedicationAction, type SegmentLabel, SEGMENT_LABEL_NAMES } from '../organize/answer.ts';
-import { medicationTimeline } from '../organize/views.ts';
-import { type ProblemNote, problemNotes, type ThreadMention, type ThreadRow, type ThreadView, threadViews } from '../problems/threads.ts';
+import { medicationTimeline, nameKey } from '../organize/views.ts';
+import { type ProblemNote, problemNotes, relatedFacts, type ThreadMention, type ThreadRow, type ThreadView, threadViews } from '../problems/threads.ts';
 import { ageNow, hospitalDay } from '../record/headline.ts';
 import { ENCOUNTER_KIND_LABELS, type EncounterKind, type Sex } from '../record/schema.ts';
 import { compareDateTime } from '../time/datetime.ts';
@@ -40,6 +40,8 @@ export interface StateMedication {
   readonly doseText: string | null;
   readonly action: MedicationAction | null;
   readonly at: string | null;
+  readonly start: number;
+  readonly end: number;
 }
 
 export interface StateEvent {
@@ -48,6 +50,8 @@ export interface StateEvent {
   readonly kind: EventKind;
   readonly title: string;
   readonly at: string | null;
+  readonly start: number;
+  readonly end: number;
 }
 
 export interface StateObservation {
@@ -59,6 +63,8 @@ export interface StateObservation {
   readonly kind: 'lab' | 'vital' | null;
   readonly valueText: string;
   readonly unit: string | null;
+  readonly start: number;
+  readonly end: number;
 }
 
 export interface StateInput {
@@ -88,6 +94,10 @@ export interface CurrentProblem {
   readonly thread: ThreadView;
   /** いちばん新しい記載の A・P（同じ記載の区切りをまとめて。なければ空） */
   readonly notes: readonly ProblemNote[];
+  /** その問題の記載の中に書かれた検査・バイタルの名前ごとの、この受診でいちばん新しい値（段3c） */
+  readonly values: readonly StateObservation[];
+  /** その問題の記載の中に書かれた薬の、薬ごとの最後の記載（段3c） */
+  readonly medications: readonly MedicationLast[];
 }
 
 export interface MedicationLast {
@@ -132,6 +142,13 @@ export interface PatientState {
   readonly background: readonly BackgroundPart[];
 }
 
+/** 日時のいちばん新しいもの（日時のないものは、日時のあるものがなければ、最後のもの） */
+function latestBy<T extends { readonly at: string | null }>(items: readonly T[]): T | null {
+  let best: T | null = null;
+  for (const item of items) if (item.at !== null && (best === null || compareDateTime(item.at, best.at) >= 0)) best = item;
+  return best ?? items.at(-1) ?? null;
+}
+
 const latestOf = (values: readonly (string | null)[]): string | null =>
   values.reduce<string | null>((best, v) => (v !== null && (best === null || compareDateTime(v, best) > 0) ? v : best), null);
 
@@ -140,6 +157,66 @@ function fromTime(t: number): string {
   const d = new Date(t);
   const two = (n: number): string => String(n).padStart(2, '0');
   return `${String(d.getUTCFullYear())}-${two(d.getUTCMonth() + 1)}-${two(d.getUTCDate())}T${two(d.getUTCHours())}:${two(d.getUTCMinutes())}`;
+}
+
+/** 1行の要約の材料：年齢・性別・受診・記録の上で最後の日時・いまの問題の名前だけ */
+export interface OneLinerInput {
+  readonly patient: { readonly age: number; readonly ageOn: string; readonly sex: Sex };
+  readonly encounter: { readonly kind: EncounterKind; readonly start: string; readonly end: string | null };
+  readonly today: string;
+  readonly asOf: string | null;
+  readonly problems: readonly string[];
+}
+
+/** 記録の上での病日（入院で、記録の上で最後の日時があるときだけ） */
+export function dayOnRecord(encounter: OneLinerInput['encounter'], asOf: string | null): number | null {
+  return encounter.kind === 'inpatient' && asOf !== null ? hospitalDay(encounter.start, asOf) : null;
+}
+
+/** 1行の要約（決定論のひな形。作文しない）。「いまの状態」と回診リストが同じものを使う */
+export function oneLinerOf(input: OneLinerInput): string {
+  const who = `${String(ageNow(input.patient.age, input.patient.ageOn, input.today))}歳 ${SEX_WORDS[input.patient.sex]}`;
+  const { encounter } = input;
+  const start = encounter.start.slice(0, 10);
+  const span = encounter.kind === 'inpatient' ? `${start}〜${encounter.end === null ? '' : encounter.end.slice(0, 10)}` : start;
+  const day = dayOnRecord(encounter, input.asOf);
+  const dayText = day === null ? '' : `（記録の上では ${String(day)}病日まで）`;
+  const problemText = input.problems.length === 0 ? 'いまの問題の記載なし' : `いまの問題：${input.problems.join('、')}`;
+  return `${who}。${ENCOUNTER_KIND_LABELS[encounter.kind]} ${span}${dayText}。${problemText}。`;
+}
+
+export interface RoundInput {
+  readonly encounter: { readonly id: string };
+  /** その患者の文（いちばん新しい受診のものから、記録の上で最後の日時を取る） */
+  readonly sources: readonly { readonly encounterId: string; readonly at: string | null; readonly enteredAt: string }[];
+  readonly threads: readonly ThreadRow[];
+  readonly mentions: readonly ThreadMention[];
+}
+
+export interface RoundSummary {
+  /** 記録の上で最後の日時（その受診の文の日時の最大） */
+  readonly asOf: string | null;
+  readonly lastEntered: string | null;
+  /** いまの問題の名前（最初の記載の順） */
+  readonly problems: readonly string[];
+  /** 解決・非活動・否定的と書かれた問題の数 */
+  readonly otherProblems: number;
+  /** まだ筋につないでいない問題の記載の数 */
+  readonly unlinked: number;
+}
+
+/** 回診リストの1行の材料（段3d。CA-028）。サーバーが患者ごとに作る（記録の全体を送らないため） */
+export function roundSummary(input: RoundInput): RoundSummary {
+  const own = input.sources.filter((s) => s.encounterId === input.encounter.id);
+  const views = threadViews(input.threads, input.mentions);
+  const current = views.threads.filter((t) => t.group === 'current');
+  return {
+    asOf: latestOf(own.map((s) => s.at)),
+    lastEntered: latestOf(own.map((s) => s.enteredAt)),
+    problems: current.map((t) => t.name),
+    otherProblems: views.threads.length - current.length,
+    unlinked: views.unlinked.length,
+  };
 }
 
 export function patientState(input: StateInput): PatientState {
@@ -153,6 +230,14 @@ export function patientState(input: StateInput): PatientState {
   ]);
   const lastEntered = latestOf(encounterSources.map((s) => s.enteredAt));
 
+  // 投薬：薬ごとの最後の記載
+  const lines = medicationTimeline(input.medications.map((m) => ({ ...m })));
+  const medsLast: MedicationLast[] = lines.map((line) => {
+    const dated = line.entries.filter((e) => e.at !== null);
+    const e = dated.at(-1) ?? line.entries.at(-1);
+    return { name: line.name, action: e?.action ?? null, doseText: e?.doseText ?? null, at: e?.at ?? null, entries: line.entries.length };
+  });
+
   // 問題（受診をまたぐ）
   const views = threadViews(input.threads, input.mentions);
   const current = views.threads
@@ -160,19 +245,23 @@ export function patientState(input: StateInput): PatientState {
     .map((thread) => {
       const notes = problemNotes(thread.mentions, input.segments);
       const last = notes.at(-1);
-      return { thread, notes: last === undefined ? [] : notes.filter((n) => n.sourceId === last.sourceId) };
+      const related = relatedFacts(thread.mentions, input.segments, { observations: input.observations, medications: input.medications, events: input.events });
+      const values = related.valueNames
+        .map((name) => latestBy(input.observations.filter((o) => (o.name ?? o.nameRaw) === name)))
+        .filter((o): o is StateObservation => o !== null);
+      const medKeys = new Set(related.medicationNames.map(nameKey));
+      return {
+        thread,
+        notes: last === undefined ? [] : notes.filter((n) => n.sourceId === last.sourceId),
+        values,
+        medications: medsLast.filter((m) => medKeys.has(nameKey(m.name))),
+      };
     });
   const closed = views.threads.filter((t) => t.group === 'closed');
   const ruledOut = views.threads.filter((t) => t.group === 'ruled_out');
 
   // 1行の要約
-  const who = `${String(ageNow(input.patient.age, input.patient.ageOn, input.today))}歳 ${SEX_WORDS[input.patient.sex]}`;
-  const start = encounter.start.slice(0, 10);
-  const span = encounter.kind === 'inpatient' ? `${start}〜${encounter.end === null ? '' : encounter.end.slice(0, 10)}` : start;
-  const day = encounter.kind === 'inpatient' && asOf !== null ? hospitalDay(encounter.start, asOf) : null;
-  const dayText = day === null ? '' : `（記録の上では ${String(day)}病日まで）`;
-  const problemText = current.length === 0 ? 'いまの問題の記載なし' : `いまの問題：${current.map((c) => c.thread.name).join('、')}`;
-  const oneLiner = `${who}。${ENCOUNTER_KIND_LABELS[encounter.kind]} ${span}${dayText}。${problemText}。`;
+  const oneLiner = oneLinerOf({ patient: input.patient, encounter, today: input.today, asOf, problems: current.map((c) => c.thread.name) });
 
   // 最後の記録までの24時間
   let recent: PatientState['recent'] = null;
@@ -204,13 +293,6 @@ export function patientState(input: StateInput): PatientState {
     recent = { from: fromText, to: asOf, items };
   }
 
-  // 投薬：薬ごとの最後の記載
-  const lines = medicationTimeline(input.medications.map((m) => ({ ...m })));
-  const last = lines.map((line) => {
-    const dated = line.entries.filter((e) => e.at !== null);
-    const e = dated.at(-1) ?? line.entries.at(-1);
-    return { name: line.name, action: e?.action ?? null, doseText: e?.doseText ?? null, at: e?.at ?? null, entries: line.entries.length };
-  });
 
   // 背景（受診をまたぐ）：区切りごとに、いちばん新しい記載のもの
   const sourceAt = new Map(input.sources.map((s) => [s.id, s]));
@@ -238,8 +320,8 @@ export function patientState(input: StateInput): PatientState {
     ruledOut,
     unlinked: views.unlinked.length,
     recent,
-    medications: last.filter((m) => m.action !== 'stop'),
-    stoppedMedications: last.filter((m) => m.action === 'stop'),
+    medications: medsLast.filter((m) => m.action !== 'stop'),
+    stoppedMedications: medsLast.filter((m) => m.action === 'stop'),
     background,
   };
 }

@@ -2,6 +2,8 @@ import { describe, expect, test } from 'vitest';
 
 import {
   liveThreadId,
+  problemBlocks,
+  relatedFacts,
   linkRequest,
   mentionLine,
   planLinks,
@@ -235,5 +237,37 @@ describe('本人の操作の形', () => {
     expect(ThreadPatch.safeParse({ displayName: null }).success).toBe(true);
     expect(ThreadPatch.safeParse({ displayName: '' }).success).toBe(false);
     expect(ThreadPatch.safeParse({ mergeInto: id, displayName: 'x' }).success).toBe(false);
+  });
+});
+
+describe('問題の記載の中に書かれた事実（段3c）', () => {
+  const seg = (label: string, start: number, end: number, sourceId = 's1') => ({ sourceId, label: label as never, start, end });
+  const segments = [seg('problem_heading', 0, 10), seg('subjective', 10, 20), seg('objective', 20, 40), seg('plan', 40, 60), seg('problem_heading', 60, 80), seg('assessment', 80, 100), seg('other', 100, 120)];
+  test('#問題の見出しから、続く S・O・A・P の終わりまで。ほかの問題の範囲・その他の区切りは入れない', () => {
+    const a = m({ start: 0, end: 5 });
+    expect(problemBlocks([a], segments)).toEqual([{ sourceId: 's1', start: 0, end: 60 }]);
+    const obs = [
+      { id: 'o1', sourceId: 's1', start: 22, end: 30, name: 'CRP', nameRaw: 'CRP' },
+      { id: 'o2', sourceId: 's1', start: 25, end: 32, name: 'CRP', nameRaw: 'CRP' },
+      { id: 'o3', sourceId: 's1', start: 85, end: 90, name: 'カリウム', nameRaw: 'K' },
+      { id: 'o4', sourceId: 's1', start: 105, end: 110, name: null, nameRaw: 'X' },
+      { id: 'o5', sourceId: 's2', start: 22, end: 30, name: 'WBC', nameRaw: 'WBC' },
+    ];
+    const meds = [
+      { id: 'd1', sourceId: 's1', start: 42, end: 50, name: 'セフトリアキソン' },
+      { id: 'd2', sourceId: 's1', start: 52, end: 59, name: 'ｾﾌﾄﾘｱｷｿﾝ' },
+    ];
+    const r = relatedFacts([a], segments, { observations: obs, medications: meds, events: [] });
+    expect(r.valueNames).toEqual(['CRP']);
+    expect(r.observations.map((o) => o.id)).toEqual(['o1', 'o2']);
+    expect(r.medicationNames).toEqual(['セフトリアキソン']);
+    const b = m({ start: 61, end: 65 });
+    expect(relatedFacts([b], segments, { observations: obs, medications: meds, events: [] }).valueNames).toEqual(['カリウム']);
+  });
+
+  test('A・P の中の記載は、その区切りだけ。区切りの外の記載は、範囲を持たない', () => {
+    expect(problemBlocks([m({ start: 82, end: 85 })], segments)).toEqual([{ sourceId: 's1', start: 80, end: 100 }]);
+    expect(problemBlocks([m({ start: 102, end: 105 })], segments)).toEqual([]);
+    expect(problemBlocks([m({ sourceId: 's9', start: 0, end: 3 })], segments)).toEqual([]);
   });
 });

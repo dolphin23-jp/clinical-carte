@@ -1358,3 +1358,19 @@ select.input {
 .state-section .sub-title {
   margin-top: 4px;
 }
+
+/* ===== 回診リスト（段3d） ===== */
+.round-group {
+  display: grid;
+  gap: 6px;
+}
+
+.round-problems {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 8px;
+  font-size: 14.5px;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
