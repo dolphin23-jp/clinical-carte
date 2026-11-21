@@ -32,6 +32,9 @@ class FakeBooks implements BookSearcher {
     this.asked.push(queries);
     return Promise.resolve(this.hits);
   }
+  check(): Promise<'ok'> {
+    return Promise.resolve('ok');
+  }
 }
 
 const BOOK: BookHit = { title: '架空の内科学', path: '呼吸器 > 肺炎', page: '120', snippet: '市中肺炎では、臨床の改善を見て、静注から経口へ切り替える。' };
@@ -313,5 +316,35 @@ describe('書籍の検索（RAG）', () => {
     expect(ragSearcherOf({ RAG: binding, RAG_TOKEN: '  ' })).toBeNull();
     expect(ragSearcherOf({ RAG_TOKEN: 't' })).toBeNull();
     expect(ragSearcherOf({ RAG: binding, RAG_TOKEN: 't' })).not.toBeNull();
+  });
+});
+
+describe('書籍のつながりの確かめ', () => {
+  test('設定がなければ off。あれば、決めた一般の語だけで1回検索し、ok・鍵が違う・つながらないを返す', async () => {
+    const off = await setup();
+    expect(await (await off.w.call('GET', '/api/references', { cookie: off.cookie })).json()).toEqual({ books: 'off' });
+    const on = await setup({}, { books: new FakeBooks([]) });
+    expect(await (await on.w.call('GET', '/api/references', { cookie: on.cookie })).json()).toEqual({ books: 'ok' });
+
+    const sent: unknown[] = [];
+    const answer = (status: number) =>
+      createRagSearcher({
+        url: 'https://medbook-rag.internal',
+        token: 't',
+        fetcher: async (url, init) => {
+          sent.push(await new Request(url, init).json());
+          return new Response('{}', { status });
+        },
+      });
+    expect(await answer(200).check()).toBe('ok');
+    expect(await answer(401).check()).toBe('unauthorized');
+    expect(await answer(500).check()).toBe('unavailable');
+    expect(await createRagSearcher({ url: 'https://medbook-rag.internal', token: 't', fetcher: () => Promise.reject(new Error('x')) }).check()).toBe('unavailable');
+    expect(sent[0]).toEqual({ queries: ['肺炎'], parents: 1 });
+  });
+
+  test('登録していない端末には答えない', async () => {
+    const s = await setup({}, { books: new FakeBooks([]) });
+    expect((await s.w.call('GET', '/api/references')).status).toBe(401);
   });
 });

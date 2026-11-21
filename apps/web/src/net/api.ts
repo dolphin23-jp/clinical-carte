@@ -592,3 +592,13 @@ export async function requestDiscussion(
   const discussion = result.value['discussion'];
   return counts !== null && isRecord(discussion) ? { ok: true, value: { discussion: discussion as unknown as CheckedDiscussion, ...counts } } : { ok: false, error: 'network' };
 }
+
+/** 書籍の参照元（clinical-RAG）のつながり：設定なし・つながっている・鍵が違う・つながらない */
+export type BookStatus = 'off' | 'ok' | 'unauthorized' | 'unavailable';
+
+export async function getReferences(): Promise<Result<BookStatus>> {
+  const result = await call('GET', 'references');
+  if (!result.ok) return result;
+  const books = result.value['books'];
+  return books === 'off' || books === 'ok' || books === 'unauthorized' || books === 'unavailable' ? { ok: true, value: books } : { ok: false, error: 'network' };
+}

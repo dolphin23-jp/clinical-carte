@@ -24,7 +24,7 @@ const ANSWER: OrganizeAnswer = {
 };
 
 const BOOK: BookHit = { title: '架空の内科学', path: '呼吸器 > 肺炎', page: '120', snippet: '臨床の改善を見て、静注から経口へ切り替える。' };
-const books: BookSearcher = { search: () => Promise.resolve([BOOK]) };
+const books: BookSearcher = { search: () => Promise.resolve([BOOK]), check: () => Promise.resolve('ok') };
 
 const PROPOSAL: ProposalAnswer = {
   problems: [
@@ -174,5 +174,30 @@ describe('記載', () => {
     const everything = JSON.stringify(server.db.raw.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all().map((t) => server.db.raw.prepare(`SELECT * FROM ${(t as { name: string }).name}`).all()));
     expect(everything).not.toContain('経口に切り替える時期は？');
     expect(await fits(page)).toBe(true);
+  });
+});
+
+describe('書籍の参照元の設定', () => {
+  test('ホームから、つながりを確かめ、鍵を作れる（鍵は 64 字の 16 進。画面の外へ送らない）', async () => {
+    const context = await browser.newContext({ ...presets['iPhone 15'], colorScheme: 'light' });
+    contexts.push(context);
+    const page = await context.newPage();
+    const sent: string[] = [];
+    page.on('request', (r) => {
+      sent.push(`${r.method()} ${new URL(r.url()).pathname} ${r.postData() ?? ''}`);
+    });
+    await page.goto(server.url);
+    await page.getByTestId('key').fill(TEST_KEY);
+    await page.getByTestId('register').click();
+    await page.getByTestId('home').waitFor();
+    await page.getByTestId('show-bookkey').click();
+    await page.getByTestId('bookkey-check').click();
+    await expect.poll(() => page.getByTestId('bookkey-status').textContent()).toContain('つながっています');
+    await page.getByTestId('bookkey-make').click();
+    const key = (await page.getByTestId('bookkey-key').textContent()) ?? '';
+    expect(key).toMatch(/^[0-9a-f]{64}$/);
+    expect(sent.some((s) => s.includes(key))).toBe(false);
+    expect(await fits(page)).toBe(true);
+    if (SHOTS !== undefined) await page.screenshot({ path: `${SHOTS}/bookkey-iphone.png`, fullPage: true });
   });
 });

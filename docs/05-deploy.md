@@ -182,16 +182,16 @@ iPad・PC も、同じ（carte のアドレスを開く → 合鍵を貼る → 
 A/P の案・AI との議論で、先生の clinical-RAG の書籍を根拠に使えるようにする（段5。設定しなくても、記録とネットだけで動く）。
 
 - `wrangler.jsonc` に、clinical-RAG の Worker（名前 `medbook-rag`）への**サービスバインディング** `RAG` が入っている（clinical-modules と同じ呼び方。公開の URL を通らないので、Cloudflare Access に止められない）。
-- 先生がするのは、合鍵を置くことだけ：Cloudflare：**Workers & Pages** → `clinical-carte` → **Settings** → **Variables and Secrets** → **Add**。
+- 鍵は、clinical-RAG のアプリのトークン（`APP_TOKEN`）を使わない（値を取り出せないため）。**書籍の検索だけを開ける、carte 専用の鍵**を作る（clinical-RAG の `docs/clinical-use.md` の 1i。clinical-RAG の側の変更が配られている必要がある）。
 
-| 欄 | 入れるもの |
-|---|---|
-| Type | **Secret** |
-| Variable name | `RAG_TOKEN` |
-| Value | clinical-RAG のアプリのトークン（clinical-RAG の Worker の Secret と同じ値。RAG の画面に入れているもの） |
+1. carte のホームの「書籍の参照元（clinical-RAG）の設定」→「鍵を作る」→「コピーする」。
+2. Cloudflare：**Workers & Pages** → `medbook-rag` → **Settings** → **Variables and Secrets** → **Add**。Type は **Secret**、名前は `CARTE_SEARCH_TOKEN`、値に貼る → **Deploy**。
+3. Cloudflare：**Workers & Pages** → `clinical-carte` → **Settings** → **Variables and Secrets** → **Add**。Type は **Secret**、名前は `RAG_TOKEN`、値に同じものを貼る → **Deploy**。
+4. carte に戻り、「つながりを確かめる」を押す。「つながっています」と出れば済み。
 
-- **Deploy** を押す。トークンは、この会話に貼らない。
-- 送るのは、問題の名前だけ（例：「#1 市中肺炎」）。RAG の 1 日の上限に数えられることがある【確かめていない】。
+- 鍵は、この会話に貼らない。画面を閉じると、同じ鍵は見られない（作り直したら、2 か所とも貼り直す）。
+- 送るのは、問題の名前だけ（例：「#1 市中肺炎」）。「つながりを確かめる」は、一般の語（「肺炎」）で 1 回だけ検索する。
+- やめるときは、どちらかの Secret を消す。
 - もし `medbook-rag` という名前の Worker が同じアカウントにないと、配る（ビルド）が失敗する。そのときは、エージェントに伝える（バインディングを外すか、名前を直す）。
 
 ## 作業 8：選別の評価（carte の画面で動かす）
