@@ -51,6 +51,39 @@ export interface NoteInput {
   readonly medications: readonly NoteMedication[];
 }
 
+/** 値の表示の1つ分（血圧は、同じ文・同じ場所の収縮期と拡張期を「BP 98/52」の1つにする） */
+export interface ObservationText {
+  readonly text: string;
+  /** 表示の名前（血圧は「血圧」） */
+  readonly name: string;
+  readonly items: readonly NoteObservation[];
+}
+
+const SYSTOLIC = '収縮期血圧';
+const DIASTOLIC = '拡張期血圧';
+
+/** 値を、表示の文にする。血圧の2行は、同じ文・同じ場所なら1つにまとめる（字は、書かれた名前と値のまま） */
+export function observationTexts(list: readonly NoteObservation[]): ObservationText[] {
+  const out: ObservationText[] = [];
+  const used = new Set<NoteObservation>();
+  const unitOf = (o: NoteObservation): string => (o.unit === null ? '' : ` ${o.unit}`);
+  for (const o of list) {
+    if (used.has(o)) continue;
+    if (o.name === SYSTOLIC || o.name === DIASTOLIC) {
+      const other = list.find((x) => x !== o && !used.has(x) && x.sourceId === o.sourceId && x.start === o.start && x.name === (o.name === SYSTOLIC ? DIASTOLIC : SYSTOLIC));
+      if (other !== undefined) {
+        const [sys, dia] = o.name === SYSTOLIC ? [o, other] : [other, o];
+        used.add(o).add(other);
+        out.push({ text: `${sys.nameRaw} ${sys.valueText}/${dia.valueText}${unitOf(sys)}`, name: '血圧', items: [sys, dia] });
+        continue;
+      }
+    }
+    used.add(o);
+    out.push({ text: `${o.nameRaw} ${o.valueText}${unitOf(o)}`, name: o.name ?? o.nameRaw, items: [o] });
+  }
+  return out;
+}
+
 /** 受診の、記載のある日（新しい順） */
 export function noteDays(encounterId: string, sources: readonly NoteSource[]): string[] {
   return [...new Set(sources.filter((s) => s.encounterId === encounterId && s.at !== null).map((s) => (s.at ?? '').slice(0, 10)))].sort().reverse();
@@ -168,8 +201,10 @@ export function recordSources(input: NoteInput, problems: readonly MaterialProbl
     const keepSources = [...new Set(notes.map((n) => n.sourceId))].slice(-RECORD_AP_SOURCES);
     for (const n of notes.filter((x) => keepSources.includes(x.sourceId))) quote(p.ref, { sourceId: n.sourceId, label: n.label, start: n.start, end: n.end });
     for (const part of [...np.s, ...np.o]) quote(p.ref, part);
-    for (const v of np.values) {
-      out.push({ kind: 'record', problem: p.ref, text: `${v.nameRaw} ${v.valueText}${v.unit === null ? '' : ` ${v.unit}`}`, at: v.at, day: dayOf(v.at), label: `値（${v.name ?? v.nameRaw}）`, ref: { k: 'record', sourceId: v.sourceId, start: v.start, end: v.end } });
+    for (const t of observationTexts(np.values)) {
+      const v = t.items[0];
+      if (v === undefined) continue;
+      out.push({ kind: 'record', problem: p.ref, text: t.text, at: v.at, day: dayOf(v.at), label: `値（${t.name}）`, ref: { k: 'record', sourceId: v.sourceId, start: v.start, end: v.end } });
     }
     const related = relatedFacts(mentionsUpTo, input.segments, { observations: [], medications: input.medications.filter((m) => upTo(m.at, input.day)), events: [] });
     const medKeys = new Set(related.medicationNames.map(nameKey));
@@ -182,8 +217,10 @@ export function recordSources(input: NoteInput, problems: readonly MaterialProbl
       out.push({ kind: 'record', problem: p.ref, text: `${line.name}${last.doseText === null ? '' : ` ${last.doseText}`}${action}`, at: last.at, day: dayOf(last.at), label: '投薬', ref: { k: 'record', sourceId: last.sourceId, start: last.start, end: last.end } });
     }
   }
-  for (const v of day.vitals) {
-    out.push({ kind: 'record', problem: null, text: `${v.nameRaw} ${v.valueText}${v.unit === null ? '' : ` ${v.unit}`}`, at: v.at, day: dayOf(v.at), label: `バイタル（${v.name ?? v.nameRaw}）`, ref: { k: 'record', sourceId: v.sourceId, start: v.start, end: v.end } });
+  for (const t of observationTexts(day.vitals)) {
+    const v = t.items[0];
+    if (v === undefined) continue;
+    out.push({ kind: 'record', problem: null, text: t.text, at: v.at, day: dayOf(v.at), label: `バイタル（${t.name}）`, ref: { k: 'record', sourceId: v.sourceId, start: v.start, end: v.end } });
   }
   return out.map((s, i) => ({ ...s, id: `Q${String(i + 1)}` }));
 }

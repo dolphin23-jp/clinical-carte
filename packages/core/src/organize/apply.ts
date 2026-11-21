@@ -190,9 +190,39 @@ export function applyOrganization(answer: OrganizeAnswer, ctx: OrganizeContext):
   }
   const segments: OrganizedSegment[] = starts.map((s, i) => ({ label: s.label, start: s.start, end: starts[i + 1]?.start ?? text.length }));
 
+  /**
+   * 事実の名前の場所。同じ字が文に何度も出るとき、最初の場所に決め打ちしない（問題一覧の「NSAIDs・ARBの関与」の ARB を、
+   * P の「ARB…中止」の事実の場所にしてしまうと、別の問題の記載に書かれた薬になる）。字はどの場所でも同じなので、変わるのは場所だけ：
+   *  1. 手がかり（用量・日時の引用）が同じ行にある場所
+   *  2. その中で、同じ種類の前の項目より後ろの、最初の場所（AI は、文の順に返すことが多い）
+   *  3. なければ、手がかりの合う最初の場所。手がかりがどこにも合わなければ、すべての場所から同じ順で選ぶ
+   */
+  const placeFact = (category: ReportCategory, quote: string, anchors: readonly (string | null)[], cursor: number): Span | null => {
+    const first = place(category, quote);
+    if (first === null) return null;
+    const all: Span[] = [];
+    for (let from = 0; ; ) {
+      const found = locate(text, folded, quote, from);
+      if (found === null) break;
+      all.push(found);
+      from = found.start + 1;
+    }
+    if (all.length === 1) return first;
+    const lineOf = (span: Span): string => {
+      const start = text.lastIndexOf('\n', span.start - 1) + 1;
+      const end = text.indexOf('\n', span.end);
+      return foldSameLength(text.slice(start, end < 0 ? text.length : end));
+    };
+    const hints = anchors.filter((a): a is string => a !== null && a !== '').map((a) => foldSameLength(a));
+    const anchored = hints.length === 0 ? [] : all.filter((span) => hints.some((h) => lineOf(span).includes(h)));
+    const pool = anchored.length > 0 ? anchored : all;
+    return pool.find((span) => span.start >= cursor) ?? pool[0] ?? first;
+  };
+
   const medications: OrganizedMedication[] = [];
+  let medicationCursor = 0;
   for (const m of capped('medication', answer.medications)) {
-    const name = place('medication', m.name);
+    const name = placeFact('medication', m.name, [m.dose, m.when], medicationCursor);
     if (name === null) continue;
     let doseText: string | null = null;
     if (m.dose !== null) {
@@ -200,20 +230,25 @@ export function applyOrganization(answer: OrganizeAnswer, ctx: OrganizeContext):
       if (dose === null) continue;
       doseText = text.slice(dose.start, dose.end);
     }
+    medicationCursor = name.start;
     medications.push({ ...name, name: text.slice(name.start, name.end), doseText, action: m.action, at: factAt('medication', m.when) });
   }
 
   const events: OrganizedEvent[] = [];
+  let eventCursor = 0;
   for (const e of capped('event', answer.events)) {
-    const span = place('event', e.title);
+    const span = placeFact('event', e.title, [e.when], eventCursor);
     if (span === null) continue;
+    eventCursor = span.start;
     events.push({ ...span, kind: e.kind, title: text.slice(span.start, span.end), at: factAt('event', e.when) });
   }
 
   const problems: OrganizedProblem[] = [];
+  let problemCursor = 0;
   for (const p of capped('problem', answer.problems)) {
-    const span = place('problem', p.name);
+    const span = placeFact('problem', p.name, [], problemCursor);
     if (span === null) continue;
+    problemCursor = span.start;
     problems.push({ ...span, name: text.slice(span.start, span.end), status: p.status, activity: p.activity, at });
   }
 
@@ -243,7 +278,9 @@ export function applyOrganization(answer: OrganizeAnswer, ctx: OrganizeContext):
       if (span === null) continue;
       used.push(span);
       const read = readLabText(text.slice(span.start, span.end));
-      if (read.unread.length > 0) count(report, 'measurement', 'unread');
+      // 数えるのは、何も読めなかった引用と、項目の名前は読めたのに値を読めなかった引用だけ。
+      // 「SpO2 96%（室内気）」の「室内気」のような、項目でない語が残っただけの引用は数えない（数が、ほぼすべての記載に付いて、意味をなくすため）
+      if (read.rows.length === 0 || read.unread.some((u) => u.reason !== 'unknown')) count(report, 'measurement', 'unread');
       if (read.rows.length === 0) continue;
       const rowAt = factAt('measurement', m.when);
       for (const row of read.rows) observations.push({ row: { ...row, start: row.start + span.start, end: row.end + span.start }, at: rowAt, origin: 'ai' });

@@ -8,6 +8,8 @@ import {
   type NoteInput,
   noteDay,
   noteDays,
+  type NoteObservation,
+  observationTexts,
   proposalMessage,
   recordSources,
   type RefSource,
@@ -97,6 +99,21 @@ describe('記載ノート（noteDay）', () => {
 
   test('記載のある日（新しい順）', () => {
     expect(noteDays('e1', input().sources)).toEqual(['2026-11-19', '2026-11-17']);
+  });
+});
+
+describe('値の表示（observationTexts）', () => {
+  const o = (patch: Partial<NoteObservation>): NoteObservation => ({ id: 'x', sourceId: 's', encounterId: 'e1', at: '2026-11-21T11:50', name: 'Hb', nameRaw: 'Hb', kind: 'lab', valueText: '11.8', unit: 'g/dL', start: 0, end: 7, ...patch });
+  test('血圧は、同じ文・同じ場所の収縮期と拡張期を1つにする。ほかは、書かれた名前と値のまま', () => {
+    const sys = o({ id: '1', name: '収縮期血圧', nameRaw: 'BP', kind: 'vital', valueText: '98', unit: null, start: 10, end: 18 });
+    const dia = o({ id: '2', name: '拡張期血圧', nameRaw: 'BP', kind: 'vital', valueText: '52', unit: null, start: 10, end: 18 });
+    expect(observationTexts([dia, o({}), sys]).map((t) => [t.name, t.text])).toEqual([
+      ['血圧', 'BP 98/52'],
+      ['Hb', 'Hb 11.8 g/dL'],
+    ]);
+    // 場所の違う（別の測定の）収縮期・拡張期は、組にしない
+    const other = o({ id: '3', name: '拡張期血圧', nameRaw: 'BP', kind: 'vital', valueText: '40', unit: null, start: 30, end: 38 });
+    expect(observationTexts([sys, other]).map((t) => t.text)).toEqual(['BP 98', 'BP 40']);
   });
 });
 

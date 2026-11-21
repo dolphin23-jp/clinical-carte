@@ -68,6 +68,25 @@ describe('読めるもの', () => {
     expect(readLabText('WBC 12,300').rows[0]).toMatchObject({ value: 12300, valueText: '12,300' });
   });
 
+  test('「℃」の付いた体温を読む（全角の記号でも、空白をはさんでも）', () => {
+    expect(brief(readLabText('BT 39.2℃ 体温 37.8 ℃ BT 38.0°C').rows)).toEqual(['体温=39.2 ℃', '体温=37.8 ℃', '体温=38.0 °C']);
+  });
+
+  test('値のすぐ後ろの括弧（全角・半角）で、値を捨てない。括弧の中の項目も読む', () => {
+    const r = readLabText('BP 84/40（MAP 約55） ALP 597（IFCC法） WBC 20,500/μL（Neut 91%） PT 62%(PT-INR 1.38)');
+    expect(brief(r.rows)).toEqual(['収縮期血圧=84', '拡張期血圧=40', 'ALP=597', 'WBC=20,500 /μL', 'Neut=91 %', 'PT=62 %', 'PT-INR=1.38']);
+    expect(brief(readLabText('HBs抗原（−） 顆粒円柱(+)').rows)).toEqual(['HBs抗原=（−）', '顆粒円柱=(+)']);
+    // 括弧のあとの「：」は、つなぎの字
+    expect(brief(readLabText('健診（2026年6月）：Cr 0.86、Plt 21万（紹介状）').rows)).toEqual(['Cr=0.86', 'Plt=21 万']);
+  });
+
+  test('時刻・比・式の「:」「=」と、単位だけの語を、カタログにない名前と読まない', () => {
+    for (const text of ['【腎臓内科の意見（11:35、電話）】', '次回は翌日11:00、23:20', 'GCS E3V4M6＝13', '0.05 μg/kg/min ＝ 3.2 mL/hr', 'mL/hr: 40']) {
+      expect(readLabText(text).rows, text).toEqual([]);
+    }
+    expect(brief(readLabText('架空マーカー: 12.3 P/F比: 200').rows)).toEqual(['?架空マーカー=12.3', '?P/F比=200']);
+  });
+
   test('カタログにない名前は、「名前: 値」「名前=値」と書いたときだけ読む（書かれた名前のまま）', () => {
     const r = readLabText('架空マーカー: 12.3 別の項目=陽性 これは 5');
     expect(brief(r.rows)).toEqual(['?架空マーカー=12.3', '?別の項目=陽性']);
@@ -113,7 +132,7 @@ describe('性質', () => {
         const covered = new Array<boolean>(text.length).fill(false);
         for (const s of [...r.rows, ...r.unread]) for (let i = s.start; i < s.end; i++) covered[i] = true;
         for (let i = 0; i < text.length; i++) {
-          if (!covered[i]) expect([' ', '\n', ',', '、', ';', '。', ':', '=', '　'], `位置 ${String(i)}「${text}」`).toContain(text[i]);
+          if (!covered[i]) expect([' ', '\n', ',', '、', ';', '。', ':', '=', '　', '(', ')'], `位置 ${String(i)}「${text}」`).toContain(text[i]);
         }
       }),
       { numRuns: 500 },
