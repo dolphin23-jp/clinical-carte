@@ -12,10 +12,23 @@ export function cleanText(text: string): string {
   return text.replace(INVISIBLE, '').replace(/\r\n?/gu, '\n').trim();
 }
 
+const SCRIPTS: ReadonlyMap<string, string> = new Map([
+  ...Array.from({ length: 10 }, (_, i) => [String.fromCharCode(0x2080 + i), String(i)] as const),
+  ['\u2070', '0'],
+  ['\u00B9', '1'],
+  ['\u00B2', '2'],
+  ['\u00B3', '3'],
+  ...Array.from({ length: 6 }, (_, i) => [String.fromCharCode(0x2074 + i), String(i + 4)] as const),
+  ['\u207A', '+'],
+  ['\u207B', '-'],
+  ['\u208A', '+'],
+  ['\u208B', '-'],
+]);
+
 const DASHES = new Set(['\u2010', '\u2011', '\u2012', '\u2013', '\u2014', '\u2015', '\u2212', '\uFF0D', '\uFE63']);
 const SPACES = new Set(['\u3000', '\u00A0', '\t']);
 
-/** 1字を、比べるための形にする（全角の英数字・記号 → 半角、ダッシュの変種 → 「-」、空白の変種 → 空白）。必ず1字を返す */
+/** 1字を、比べるための形にする（全角の英数字・記号 → 半角、ダッシュの変種 → 「-」、空白の変種 → 空白、下付き・上付きの数字と符号 → 普通の字）。必ず1字を返す */
 function foldChar(c: string): string {
   const code = c.charCodeAt(0);
   if (code >= 0xff01 && code <= 0xff5e) return String.fromCharCode(code - 0xfee0);
@@ -23,6 +36,9 @@ function foldChar(c: string): string {
   if (SPACES.has(c)) return ' ';
   // マイクロ記号（µ）を、ギリシャ文字のミュー（μ）に
   if (c === '\u00B5') return '\u03BC';
+  // 下付き・上付きの数字と符号（「SpO₂」「pCO₂」「HCO₃⁻」「m²」）を、普通の字に（2026-11-21：SpO₂ が読めなかった）
+  const sub = SCRIPTS.get(c);
+  if (sub !== undefined) return sub;
   return c;
 }
 

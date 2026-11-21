@@ -13,9 +13,9 @@ const NOTE = '#1 市中肺炎\nS) 咳嗽は軽減。\nO) BT 37.2。昨日 BT 38.
 const ANSWER: OrganizeAnswer = {
   ...EMPTY_ORGANIZE,
   segments: [
-    { label: 'subjective', start: 'S)' },
-    { label: 'objective', start: 'O)' },
-    { label: 'plan', start: 'P)' },
+    { label: 'subjective', start: 'S)', when: null },
+    { label: 'objective', start: 'O)', when: null },
+    { label: 'plan', start: 'P)', when: null },
   ],
   medications: [
     { name: 'メロペネム', dose: '1g 8時間毎', action: 'continue', when: null },

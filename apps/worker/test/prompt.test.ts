@@ -92,15 +92,15 @@ describe('整理の指示（段2）', () => {
     const digest = createHash('sha256').update(ORGANIZE_SYSTEM).digest('hex').slice(0, 16);
     expect({ version: ORGANIZE_PROMPT_VERSION, digest }).toMatchInlineSnapshot(`
       {
-        "digest": "b6721930fe1d26f5",
-        "version": "organize-4",
+        "digest": "210f02dd3f48046f",
+        "version": "organize-5",
       }
     `);
   });
 
-  test('前の版（評価で比べるためだけ）は、organize-3 の中身のまま変えない。本番の選び先は、いまの版', () => {
+  test('前の版（評価で比べるためだけ）は、organize-4 の中身のまま変えない。本番の選び先は、いまの版', () => {
     const digest = createHash('sha256').update(ORGANIZE_SYSTEM_PREVIOUS).digest('hex').slice(0, 16);
-    expect({ version: ORGANIZE_PROMPT_VERSION_PREVIOUS, digest }).toEqual({ version: 'organize-3', digest: 'c148ccb46b8678b9' });
+    expect({ version: ORGANIZE_PROMPT_VERSION_PREVIOUS, digest }).toEqual({ version: 'organize-4', digest: 'b6721930fe1d26f5' });
     expect(ORGANIZE_PROMPTS.current).toEqual({ version: ORGANIZE_PROMPT_VERSION, system: ORGANIZE_SYSTEM });
     expect(ORGANIZE_PROMPTS.previous.system).not.toBe(ORGANIZE_SYSTEM);
   });
@@ -139,6 +139,13 @@ describe('整理の指示（organize-3 の足し分：拾いすぎを止める�
     for (const sp of MEASUREMENT_SPECIMENS) expect(ORGANIZE_SYSTEM, sp).toContain(`尿の検査（尿定性・尿沈渣・尿化学）の引用なら ${sp}`);
     expect(ORGANIZE_SYSTEM).toContain('項目名に「尿」が付いていなくても');
     expect(ORGANIZE_SYSTEM).toContain('1つの引用に、尿の検査とそれ以外を混ぜません');
+  });
+
+  test('organize-5：区切りの時刻を指させる。A・一行要約で触れ直した薬を返さない。見出しの行は1つの問題', () => {
+    expect(ORGANIZE_SYSTEM).toContain('- when：その区切りの見出しや最初の行に、その区切りの時刻・日時が書かれていれば');
+    expect(ORGANIZE_SYSTEM).toContain('区切りごとに時刻が違う記載では、いちばん初めの区切りの時刻');
+    expect(ORGANIZE_SYSTEM).toContain('理由や背景として触れ直した薬');
+    expect(ORGANIZE_SYSTEM).toContain('その行の名前を1つの問題として、1つだけ返します');
   });
 
   test('同じ事実は、起きた・測った・行った場所を1つだけ', () => {

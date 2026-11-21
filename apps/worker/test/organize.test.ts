@@ -12,9 +12,9 @@ const NOTE = `${NAME}さん。#1 市中肺炎\nS) 咳嗽は軽減。\nO) BT 37.2
 const ANSWER: OrganizeAnswer = {
   ...EMPTY_ORGANIZE,
   segments: [
-    { label: 'subjective', start: 'S)' },
-    { label: 'objective', start: 'O)' },
-    { label: 'plan', start: 'P)' },
+    { label: 'subjective', start: 'S)', when: null },
+    { label: 'objective', start: 'O)', when: null },
+    { label: 'plan', start: 'P)', when: null },
   ],
   medications: [
     { name: 'メロペネム', dose: '1g 8時間毎', action: 'continue', when: null },
@@ -183,5 +183,38 @@ describe('入口と、ほかの決まり', () => {
     const all = JSON.stringify(['sources', 'segments', 'medications', 'events', 'problems', 'observations'].map((t) => s.w.db.raw.prepare(`SELECT * FROM ${t}`).all()));
     expect(all).not.toContain('AI が作った用量');
     expect(all).not.toContain('バンコマイシン');
+  });
+});
+
+describe('文に書かれた時刻を、自動で記録の時刻にする（2026-11-21 の本人の決定）', () => {
+  test('日だけで入れた記載は、整理のあと、AI が指した同じ日の時刻になる。区切りの中の値は、区切りの時刻', async () => {
+    const text = '初期評価（10:44）\nBT 36.5 HR 36\n静脈血ガス（10:50）\nK 7.8';
+    const organizer = fakeOrganizer(() => ({
+      ok: true,
+      answer: {
+        ...EMPTY_ORGANIZE,
+        when: '10:44',
+        segments: [
+          { label: 'objective', start: '初期評価（10:44）', when: '10:44' },
+          { label: 'labs', start: '静脈血ガス（10:50）', when: '10:50' },
+        ],
+        measurements: [
+          { quote: 'BT 36.5 HR 36', when: null, specimen: null },
+          { quote: 'K 7.8', when: null, specimen: null },
+        ],
+      },
+    }));
+    const w = world({ selector: fakeSelector(), organizer });
+    const { cookie } = await registered(w);
+    const created = (await (await w.call('POST', '/api/patients', { cookie, body: { age: 78, ageOn: '2026-11-21', sex: 'male', encounter: { kind: 'er', start: '2026-11-21T10:42' } } })).json()) as { patient: { id: string }; encounter: { id: string } };
+    const saved = (await (await w.call('POST', `/api/encounters/${created.encounter.id}/sources`, { cookie, body: { kind: 'er_note', authorRole: 'self', at: '2026-11-21', text } })).json()) as { source: { id: string } };
+    expect((await w.call('POST', `/api/sources/${saved.source.id}/organize`, { cookie, body: {} })).status).toBe(200);
+    const record = await recordOf({ w, cookie, patientId: created.patient.id, sourceId: saved.source.id });
+    expect(record.sources[0]?.at).toBe('2026-11-21T10:44');
+    expect(record.observations.map((o) => [o.name, o.at])).toEqual([
+      ['体温', '2026-11-21T10:44'],
+      ['心拍数', '2026-11-21T10:44'],
+      ['K', '2026-11-21T10:50'],
+    ]);
   });
 });

@@ -13,7 +13,7 @@ import {
   TEXT_LIMIT,
   whenCandidates,
 } from '@clinical-carte/core';
-import { type SyntheticEvent, useEffect, useRef, useState } from 'react';
+import { type SyntheticEvent, useRef, useState } from 'react';
 
 import { joinDateTime, nowLocal, replacedSummary, showDateTime } from './format.ts';
 import { errorMessage } from './messages.ts';
@@ -89,27 +89,18 @@ export function Composer({
     }
   };
 
-  /** 文に時刻の候補があるのに、時刻なし（日だけ）で送ろうとしたとき：送る前に確かめる（2026-11-21 の本人の決定） */
+  /** 文に時刻の候補があって、時刻なし（日だけ）で送るとき：整理のときに、文に書かれた時刻を AI が指し、記載と事実の時刻にする
+   *  （2026-11-21 の本人の決定。送る前の確かめ〔CA-040〕は、自動にしたので外した） */
   const timedCandidates = candidates.filter((c) => c.length > 10);
-  const needsDayOnlyCheck = !unknownTime && time === '' && timedCandidates.length > 0;
-  const [askDayOnly, setAskDayOnly] = useState(false);
-  useEffect(() => {
-    setAskDayOnly(false);
-  }, [text, time, unknownTime]);
+  const autoTime = !unknownTime && time === '' && timedCandidates.length > 0;
 
   const submit = (event: SyntheticEvent) => {
     event.preventDefault();
-    if (busy || !ready) return;
-    if (needsDayOnlyCheck && !askDayOnly) {
-      setAskDayOnly(true);
-      return;
-    }
     send();
   };
 
   const send = () => {
     if (busy || !ready) return;
-    setAskDayOnly(false);
     setBusy(true);
     setMessage(null);
     setDone(null);
@@ -270,7 +261,12 @@ export function Composer({
         </div>
         {!unknownTime && time === '' && (
           <p className="note" data-testid="when-day-only">
-            時刻なし（日だけ）で入れます。時刻の書かれていない値・できごとも、日だけになります。時刻が分かれば、選ぶか打ってください。
+            {autoTime
+              ? `時刻を空のまま入れると、整理のときに、文に書かれた時刻（${timedCandidates
+                  .slice(0, 3)
+                  .map((c) => c.slice(11, 16))
+                  .join('・')} など）を AI が読み取り、記載と、その見出しの下の値・できごとの時刻にします（この日の時刻だけ）。`
+              : '時刻なし（日だけ）で入れます。時刻の書かれていない値・できごとも、日だけになります。時刻が分かれば、選ぶか打ってください。'}
           </p>
         )}
       </fieldset>
@@ -326,16 +322,6 @@ export function Composer({
         <p className="note" role="status" data-testid="composer-organizing">
           {organizing}
         </p>
-      )}
-      {askDayOnly && needsDayOnlyCheck && (
-        <div className="alert" role="alert" data-testid="day-only-check">
-          <p>
-            文に時刻（{timedCandidates.slice(0, 3).map((c) => c.slice(11, 16)).join('・')}）が書かれています。時刻なし（日だけ）で入れると、時刻の書かれていない値・できごとは日だけになり、同じ日の時刻のある記録との前後が分からなくなります。上の「文に書かれた日時」から選ぶか、時刻を打ってください。
-          </p>
-          <button className="button small" type="button" onClick={send} disabled={busy} data-testid="send-day-only">
-            このまま時刻なしで入れる
-          </button>
-        </div>
       )}
       <p className="target" data-testid="target">
         入れる先：<strong>{target}</strong>

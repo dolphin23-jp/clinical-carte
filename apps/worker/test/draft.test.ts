@@ -10,9 +10,9 @@ const NOTE = `${NAME}さん。\n#1 市中肺炎\nA) 抗菌薬に反応\nP) セ�
 const ANSWER: OrganizeAnswer = {
   ...EMPTY_ORGANIZE,
   segments: [
-    { label: 'problem_heading', start: '#1 市中肺炎' },
-    { label: 'assessment', start: 'A) 抗菌薬' },
-    { label: 'plan', start: 'P) セフ' },
+    { label: 'problem_heading', start: '#1 市中肺炎', when: null },
+    { label: 'assessment', start: 'A) 抗菌薬', when: null },
+    { label: 'plan', start: 'P) セフ', when: null },
   ],
   problems: [{ name: '#1 市中肺炎', status: 'diagnosis', activity: null }],
 };
