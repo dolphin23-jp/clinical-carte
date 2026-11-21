@@ -8,7 +8,11 @@ import {
   foldedMedicationIds,
   foldedObservationIds,
   headline,
+  dayStrip,
+  dayWindow,
   hospitalDay,
+  noteDays,
+  relatedFacts,
   labTrends,
   medicationTimeline,
   patientState,
@@ -21,12 +25,13 @@ import {
   threadViews,
   vitalPanels,
 } from '@clinical-carte/core';
-import { type SyntheticEvent, useCallback, useEffect, useRef, useState } from 'react';
+import { Fragment, type SyntheticEvent, useCallback, useEffect, useRef, useState } from 'react';
 
-import { Timeline } from './charts/Timeline.tsx';
+import { DEFAULT_TIMELINE_RANGE, Timeline, type TimelineRange } from './charts/Timeline.tsx';
 import { TrendGrid } from './charts/TrendGrid.tsx';
 
 import { Composer } from './Composer.tsx';
+import { DayStrip } from './DayStrip.tsx';
 import { joinDateTime, nowLocal, replacedSummary, showDateTime } from './format.ts';
 import { LabTable } from './LabTable.tsx';
 import { LatestStrip } from './LatestStrip.tsx';
@@ -62,18 +67,40 @@ import { nextDayLabel } from './NextDayAsk.tsx';
 import { DraftView } from './DraftView.tsx';
 import { NoteView } from './NoteView.tsx';
 
-type Tab = 'draft' | 'chart' | 'state' | 'overview' | 'notes' | 'values' | 'medications' | 'problems' | 'events';
+// 見方（段H。CA-053）：9つのタブを4つにまとめた。経過・検査・投薬・できごと・記載は、どれも同じ時間の上のものなので、
+// 「経過」の中で、日の帯と表示の範囲を分け合って切り替える。草案は、問題の中。
+type Tab = 'state' | 'course' | 'problems' | 'notes';
 const TABS: readonly (readonly [Tab, string])[] = [
   ['state', 'いま'],
-  ['overview', '経過表'],
+  ['course', '経過'],
+  ['problems', '問題'],
   ['notes', '記録'],
+];
+type CourseView = 'overview' | 'values' | 'medications' | 'events' | 'chart';
+const COURSE_VIEWS: readonly (readonly [CourseView, string])[] = [
+  ['overview', '経過表'],
   ['values', '検査'],
   ['medications', '投薬'],
-  ['problems', '問題'],
-  ['chart', '記載'],
   ['events', 'できごと'],
-  ['draft', '草案'],
+  ['chart', '記載'],
 ];
+
+/** 広い画面（PC・横向きの iPad）か。2列にするときだけ使う（端末に保存しない。画面の幅を見るだけ） */
+function useWide(): boolean {
+  const query = '(min-width: 1100px)';
+  const [wide, setWide] = useState(() => typeof window !== 'undefined' && window.matchMedia(query).matches);
+  useEffect(() => {
+    const m = window.matchMedia(query);
+    const on = () => {
+      setWide(m.matches);
+    };
+    m.addEventListener('change', on);
+    return () => {
+      m.removeEventListener('change', on);
+    };
+  }, []);
+  return wide;
+}
 
 const encounterLabel = (e: Encounter): string => {
   const start = e.start.slice(0, 10);
@@ -93,6 +120,13 @@ export function PatientPage({ patientId, onBack, onLeft }: { patientId: string; 
   const [message, setMessage] = useState<string | null>(null);
   const [encounterId, setEncounterId] = useState<string | null>(null);
   const [tab, setTab] = useState<Tab>('state');
+  const [view, setView] = useState<CourseView>('overview');
+  // 日の帯で選んだ日と、経過表の表示の範囲（画面のメモリだけ）
+  const [day, setDay] = useState<string | null>(null);
+  const [range, setRange] = useState<TimelineRange>(DEFAULT_TIMELINE_RANGE);
+  // 入れる欄は、開いたときだけ出す（記録のない受診では、はじめから開く）
+  const [composing, setComposing] = useState<boolean | null>(null);
+  const wide = useWide();
   const [kindFilter, setKindFilter] = useState<SourceKind | 'all'>('all');
   const composerRef = useRef<HTMLElement>(null);
   const [panel, setPanel] = useState<'none' | 'encounter' | 'end' | 'kind' | 'delete'>('none');
@@ -151,268 +185,149 @@ export function PatientPage({ patientId, onBack, onLeft }: { patientId: string; 
 
   const panels = vitalPanels(observations);
   const trends = labTrends(observations, record.scaleLinks);
+  // いまの問題（問題のタブと同じ並び）
+  const currentThreads = threadViews(record.problemThreads, record.problems).threads.filter((t) => t.group === 'current');
   // いまの問題の見出し（経過のひな形。書かれた名前のまま。番号のない名前には「#」だけを付ける）
-  const problemHeadings = threadViews(record.problemThreads, record.problems)
-    .threads.filter((t) => t.group === 'current')
-    .map((t) => (/^[#＃]/u.test(t.name) ? t.name : `#${t.name}`));
+  const problemHeadings = currentThreads.map((t) => (/^[#＃]/u.test(t.name) ? t.name : `#${t.name}`));
+  // いまの問題の記載に書かれた検査の名前（検査の推移で、先に出す。段H。推し量らない：その問題の記載の範囲に書かれたものだけ）
+  const problemValueNames = new Set(currentThreads.flatMap((t) => relatedFacts(t.mentions, record.segments, { observations: live.observations, medications: [], events: [] }).valueNames));
   // 同じ日の二重（時刻のない方針の行と、時刻つきの実施の行）は、経過表・いまでは、時刻つきのほうだけを出す（消さない。投薬・できごとのタブで見られる）
   const foldedMeds = foldedMedicationIds(medications);
   const foldedEvents = foldedEventIds(events);
   const shownMeds = medications.filter((m) => !foldedMeds.has(m.id));
   const shownEvents = events.filter((e) => !foldedEvents.has(e.id));
+  const composerOpen = composing ?? sources.length === 0;
   const toComposer = () => {
-    composerRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    setComposing(true);
+    requestAnimationFrame(() => {
+      composerRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    });
   };
+  // 日の帯（段H）：選んだ日は、経過表の範囲（その日の0〜24時）・記載の日・投薬とできごとの一覧に効く
+  const strip = current === null ? [] : dayStrip({ encounter: current, sources: encounterSources, observations, medications: shownMeds, events: shownEvents });
+  const selectDay = (d: string | null) => {
+    setDay(d);
+    setRange(d === null ? DEFAULT_TIMELINE_RANGE : { window: dayWindow(d) });
+  };
+  const onDayOf = (at: string | null): boolean => day === null || (at !== null && at.slice(0, 10) === day);
+  const noteDaysHere = current === null ? [] : noteDays(current.id, record.sources);
+  const hospital = current !== null && current.kind === 'inpatient' && strip.length > 0 ? strip.at(-1)?.hospitalDay ?? null : null;
+
+  const noteView = (key: string) =>
+    current === null ? null : (
+      <>
+        {day !== null && !noteDaysHere.includes(day) && <p className="note">{`${day.slice(5).replace('-', '/')} には記載がありません。いちばん新しい記載の日を出しています。`}</p>}
+        <NoteView key={key} record={record} encounter={current} day={day} onDay={selectDay} onChanged={load} onLeft={onLeft} />
+      </>
+    );
 
   return (
-    <main className="page" data-testid="patient-page">
+    <main className={wide ? 'page wide' : 'page'} data-testid="patient-page">
       <button className="button link" type="button" onClick={onBack} data-testid="back">
         ← 患者の一覧
       </button>
 
       <section className="card head-card" aria-labelledby="headline">
-        <h1 id="headline" data-testid="headline">
-          {title}
-        </h1>
-        <LatestStrip panels={panels} />
-        <div className="encounter-bar">
-          <div className="chips" data-testid="encounters" aria-label="受診">
-            {record.encounters.map((e) => (
-              <button
-                key={e.id}
-                type="button"
-                className={e.id === current?.id ? 'chip on' : 'chip'}
-                aria-pressed={e.id === current?.id}
-                onClick={() => {
-                  setEncounterId(e.id);
-                }}
-              >
-                {encounterLabel(e)}
-              </button>
-            ))}
-          </div>
-          <div className="actions">
-            <button
-              className="button small"
-              type="button"
-              onClick={() => {
-                setPanel(panel === 'encounter' ? 'none' : 'encounter');
-              }}
-              data-testid="add-encounter"
-            >
-              ＋ 受診
-            </button>
-            {current !== null && (
+        <div className="head-line">
+          <h1 id="headline" data-testid="headline">
+            {title}
+          </h1>
+          {hospital !== null && (
+            <span className="head-day" data-testid="head-day">
+              {`${String(hospital)}病日（記録の上で）`}
+            </span>
+          )}
+        </div>
+        <details className="encounter-details" open={panel !== 'none'} data-testid="encounter-details">
+          <summary>受診：{current === null ? 'なし' : encounterLabel(current)}{record.encounters.length > 1 && `（ほか ${String(record.encounters.length - 1)}）`}・切り替える・直す・患者を消す</summary>
+          <div className="encounter-bar">
+            <div className="chips" data-testid="encounters" aria-label="受診">
+              {record.encounters.map((e) => (
+                <button
+                  key={e.id}
+                  type="button"
+                  className={e.id === current?.id ? 'chip on' : 'chip'}
+                  aria-pressed={e.id === current?.id}
+                  onClick={() => {
+                    setEncounterId(e.id);
+                    setDay(null);
+                    setRange(DEFAULT_TIMELINE_RANGE);
+                  }}
+                >
+                  {encounterLabel(e)}
+                </button>
+              ))}
+            </div>
+            <div className="actions">
               <button
                 className="button small"
                 type="button"
                 onClick={() => {
-                  setPanel(panel === 'end' ? 'none' : 'end');
+                  setPanel(panel === 'encounter' ? 'none' : 'encounter');
                 }}
-                data-testid="set-end"
+                data-testid="add-encounter"
               >
-                {current.end === null ? '終わり（退院・帰宅）' : '終わりを直す'}
+                ＋ 受診
               </button>
-            )}
-            {current !== null && (
-              <button
-                className="button small"
-                type="button"
-                onClick={() => {
-                  setPanel(panel === 'kind' ? 'none' : 'kind');
-                }}
-                data-testid="set-kind"
-              >
-                {current.kind === 'inpatient' ? '種類を変える' : '入院にする・種類を変える'}
-              </button>
-            )}
+              {current !== null && (
+                <button
+                  className="button small"
+                  type="button"
+                  onClick={() => {
+                    setPanel(panel === 'end' ? 'none' : 'end');
+                  }}
+                  data-testid="set-end"
+                >
+                  {current.end === null ? '終わり（退院・帰宅）' : '終わりを直す'}
+                </button>
+              )}
+              {current !== null && (
+                <button
+                  className="button small"
+                  type="button"
+                  onClick={() => {
+                    setPanel(panel === 'kind' ? 'none' : 'kind');
+                  }}
+                  data-testid="set-kind"
+                >
+                  {current.kind === 'inpatient' ? '種類を変える' : '入院にする・種類を変える'}
+                </button>
+              )}
+            </div>
           </div>
-        </div>
-        {panel === 'encounter' && (
-          <EncounterForm
-            patientId={patientId}
-            onDone={(e) => {
-              setPanel('none');
-              setEncounterId(e.id);
-              load();
-            }}
-            onLeft={onLeft}
-          />
-        )}
-        {panel === 'kind' && current !== null && (
-          <KindForm
-            encounter={current}
-            onDone={() => {
-              setPanel('none');
-              load();
-            }}
-            onLeft={onLeft}
-          />
-        )}
-        {panel === 'end' && current !== null && (
-          <EndForm
-            encounter={current}
-            onDone={() => {
-              setPanel('none');
-              load();
-            }}
-            onLeft={onLeft}
-          />
-        )}
-      </section>
-      {message !== null && (
-        <p className="alert" role="alert">
-          {message}
-        </p>
-      )}
-
-      <section className="card" aria-labelledby="record-title">
-        <h2 id="record-title" className="sr-only">
-          {current === null ? '記録' : encounterLabel(current)}
-        </h2>
-        <div className="tabbar" role="tablist" aria-label="見方">
-          {TABS.map(([id, name]) => (
-            <button
-              key={id}
-              type="button"
-              role="tab"
-              aria-selected={tab === id}
-              className={tab === id ? 'tab on' : 'tab'}
-              onClick={() => {
-                setTab(id);
+          {panel === 'encounter' && (
+            <EncounterForm
+              patientId={patientId}
+              onDone={(e) => {
+                setPanel('none');
+                setEncounterId(e.id);
+                load();
               }}
-              data-testid={`tab-${id}`}
-            >
-              {name}
-              {id === 'notes' && <span className="tab-count">{String(sources.length)}</span>}
-            </button>
-          ))}
-        </div>
-        {tab === 'state' && current !== null && (
-          <StateView
-            state={patientState({
-              patient: record.patient,
-              encounter: current,
-              today: record.today,
-              sources: record.sources,
-              segments: record.segments,
-              threads: record.problemThreads,
-              mentions: record.problems,
-              medications: shownMeds,
-              events: shownEvents,
-              observations,
-            })}
-            sources={record.sources}
-            onProblems={() => {
-              setTab('problems');
-            }}
-          />
-        )}
-        {tab === 'overview' && current !== null && (
-          <Timeline panels={panels} medications={medicationTimeline(shownMeds)} events={shownEvents} encounterStart={current.start} encounterEnd={current.end} inpatient={current.kind === 'inpatient'} />
-        )}
-        {tab === 'values' && (
-          <>
-            <TrendGrid trends={trends} />
-            <ScaleLinks trends={trends} links={record.scaleLinks} onChanged={load} onLeft={onLeft} />
-            <h3 className="sub-title">表（書かれたとおり）</h3>
-            <LabTable observations={observations} />
-            {foldedHere > 0 && (
-              <p className="note" data-testid="values-folded">
-                記載（経過など）の中で挙げ直した値のうち、同じ日の検査結果・バイタルの文に同じ項目・同じ値があるもの {String(foldedHere)} 件は、二重になるので、ここ・経過表・いまでは出していません（消していません。記録の各記載の「整理した事実」にあります）。
-              </p>
-            )}
-          </>
-        )}
-        {tab === 'medications' && <MedicationView medications={medications} sources={encounterSources} />}
-        {tab === 'problems' && (
-          <ProblemThreads
-            patientId={patientId}
-            problems={record.problems}
-            threads={record.problemThreads}
-            segments={record.segments}
-            sources={record.sources}
-            history={record.history}
-            userEdits={record.userEdits}
-            observations={live.observations}
-            medications={live.medications}
-            events={live.events}
-            onChanged={load}
-            onLeft={onLeft}
-          />
-        )}
-        {tab === 'events' && <EventView events={events} sources={encounterSources} />}
-        {tab === 'chart' && current !== null && <NoteView key={current.id} record={record} encounter={current} onChanged={load} onLeft={onLeft} />}
-        {tab === 'draft' && current !== null && <DraftView key={current.id} encounterId={current.id} onLeft={onLeft} />}
-        {tab === 'notes' && kindsHere.length > 1 && (
-          <div className="chips kind-filter" data-testid="kind-filter" aria-label="記載の種類で絞る">
-            {(['all', ...kindsHere] as const).map((k) => (
-              <button
-                key={k}
-                type="button"
-                className={kindFilter === k ? 'chip small on' : 'chip small'}
-                aria-pressed={kindFilter === k}
-                onClick={() => {
-                  setKindFilter(k);
-                }}
-                data-testid={`kind-filter-${k}`}
-              >
-                {k === 'all' ? `すべて（${String(sources.length)}）` : `${SOURCE_KIND_LABELS[k]}（${String(sources.filter((s) => s.kind === k).length)}）`}
-              </button>
-            ))}
-          </div>
-        )}
-        {tab !== 'notes' ? null : sources.length === 0 ? (
-          <p className="note">この受診には、まだ、記録がありません。</p>
-        ) : (
-          <ul className="sources" data-testid="sources">
-            {shownSources.map((s) => (
-              <SourceCard
-                key={s.id}
-                source={s}
-                segments={record.segments.filter((g) => g.sourceId === s.id)}
-                facts={{
-                  medications: record.medications.filter((m) => m.sourceId === s.id),
-                  events: record.events.filter((e) => e.sourceId === s.id),
-                  observations: record.observations.filter((o) => o.sourceId === s.id),
-                }}
-                edits={record.factEdits}
-                userEdits={record.userEdits}
-                encounter={current}
-                onChanged={load}
-                onLeft={onLeft}
-              />
-            ))}
-          </ul>
-        )}
-      </section>
-
-      {current !== null && (
-        <section className="card composer-card" aria-labelledby="composer-title" ref={composerRef}>
-          <h2 id="composer-title">入れる</h2>
-          <Composer
-            key={current.id}
-            encounterId={current.id}
-            target={`${title.split(' ｜ ')[0] ?? title} ｜ ${encounterLabel(current)}`}
-            problemHeadings={problemHeadings}
-            onSaved={(source) => {
-              // 保存したら、記録のタブで、入れた文を見せる
-              if (source !== undefined) setTab('notes');
-              load();
-            }}
-            onLeft={onLeft}
-          />
-        </section>
-      )}
-
-      {current !== null && (
-        <button type="button" className="fab" onClick={toComposer} data-testid="fab-compose">
-          ＋ 入れる
-        </button>
-      )}
-
-      <section className="card" aria-labelledby="danger-title">
-        <h2 id="danger-title">この患者を消す</h2>
+              onLeft={onLeft}
+            />
+          )}
+          {panel === 'kind' && current !== null && (
+            <KindForm
+              encounter={current}
+              onDone={() => {
+                setPanel('none');
+                load();
+              }}
+              onLeft={onLeft}
+            />
+          )}
+          {panel === 'end' && current !== null && (
+            <EndForm
+              encounter={current}
+              onDone={() => {
+                setPanel('none');
+                load();
+              }}
+              onLeft={onLeft}
+            />
+          )}
+                <div className="danger-zone" aria-labelledby="danger-title">
+        <h3 id="danger-title" className="sub-title">この患者を消す</h3>
         <p className="note">この患者の受診・記録・検査の値を、すべて消します。戻せません。</p>
         {panel === 'delete' ? (
           <div className="actions">
@@ -454,7 +369,249 @@ export function PatientPage({ patientId, onBack, onLeft }: { patientId: string; 
             </button>
           </div>
         )}
+      </div>
+        </details>
       </section>
+      {message !== null && (
+        <p className="alert" role="alert">
+          {message}
+        </p>
+      )}
+
+      <section className="card" aria-labelledby="record-title">
+        <h2 id="record-title" className="sr-only">
+          {current === null ? '記録' : encounterLabel(current)}
+        </h2>
+        <div className="tabbar" role="tablist" aria-label="見方">
+          {TABS.map(([id, name]) => (
+            <button
+              key={id}
+              type="button"
+              role="tab"
+              aria-selected={tab === id}
+              className={tab === id ? 'tab on' : 'tab'}
+              onClick={() => {
+                setTab(id);
+              }}
+              data-testid={`tab-${id}`}
+            >
+              {name}
+              {id === 'notes' && <span className="tab-count">{String(sources.length)}</span>}
+            </button>
+          ))}
+        </div>
+        {tab === 'state' && current !== null && (
+          <>
+            <div className="state-latest">
+              <LatestStrip panels={panels} />
+            </div>
+            <StateView
+              state={patientState({
+                patient: record.patient,
+                encounter: current,
+                today: record.today,
+                sources: record.sources,
+                segments: record.segments,
+                threads: record.problemThreads,
+                mentions: record.problems,
+                medications: shownMeds,
+                events: shownEvents,
+                observations,
+              })}
+              sources={record.sources}
+              onProblems={() => {
+                setTab('problems');
+              }}
+            />
+          </>
+        )}
+        {tab === 'course' && current !== null && (
+          <div className="course" data-testid="course">
+            <DayStrip days={strip} selected={day} onSelect={selectDay} />
+            <div className="subbar" role="tablist" aria-label="経過の見方">
+              {COURSE_VIEWS.map(([id, name]) => (
+                <button
+                  key={id}
+                  type="button"
+                  role="tab"
+                  aria-selected={view === id}
+                  className={view === id ? 'subtab on' : 'subtab'}
+                  onClick={() => {
+                    setView(id);
+                  }}
+                  data-testid={`tab-${id}`}
+                >
+                  {name}
+                </button>
+              ))}
+            </div>
+            <div className={wide && view !== 'chart' ? 'course-grid' : 'course-single'}>
+              <div className="course-main">
+                {view === 'overview' && (
+                  <Timeline
+                    panels={panels}
+                    medications={medicationTimeline(shownMeds)}
+                    events={shownEvents}
+                    encounterStart={current.start}
+                    encounterEnd={current.end}
+                    inpatient={current.kind === 'inpatient'}
+                    range={range}
+                    onRange={setRange}
+                  />
+                )}
+                {view === 'values' && (
+                  <>
+                    <TrendGrid trends={trends} priority={problemValueNames} />
+                    <ScaleLinks trends={trends} links={record.scaleLinks} onChanged={load} onLeft={onLeft} />
+                    <h3 className="sub-title">表（書かれたとおり。日ごと）</h3>
+                    <LabTable observations={observations} />
+                    {foldedHere > 0 && (
+                      <p className="note" data-testid="values-folded">
+                        記載（経過など）の中で挙げ直した値のうち、同じ日の検査結果・バイタルの文に同じ項目・同じ値があるもの {String(foldedHere)} 件は、二重になるので、ここ・経過表・いまでは出していません（消していません。記録の各記載の「整理した事実」にあります）。
+                      </p>
+                    )}
+                  </>
+                )}
+                {view === 'medications' && (
+                  <>
+                    {day !== null && <p className="note">{`${day.slice(5).replace('-', '/')} の記録だけを出しています（日を外すと、全期間）。`}</p>}
+                    <MedicationView medications={medications.filter((m) => onDayOf(m.at))} sources={encounterSources} />
+                  </>
+                )}
+                {view === 'events' && (
+                  <>
+                    {day !== null && <p className="note">{`${day.slice(5).replace('-', '/')} の記録だけを出しています（日を外すと、全期間）。`}</p>}
+                    <EventView events={events.filter((e) => onDayOf(e.at))} sources={encounterSources} />
+                  </>
+                )}
+                {view === 'chart' && noteView(current.id)}
+              </div>
+              {/* 広い画面では、右に、その日の記載（段H。PC の2列） */}
+              {wide && view !== 'chart' && (
+                <aside className="course-side" aria-label="その日の記載">
+                  {noteView(`side-${current.id}`)}
+                </aside>
+              )}
+            </div>
+          </div>
+        )}
+        {tab === 'problems' && (
+          <>
+            <ProblemThreads
+              patientId={patientId}
+              problems={record.problems}
+              threads={record.problemThreads}
+              segments={record.segments}
+              sources={record.sources}
+              history={record.history}
+              userEdits={record.userEdits}
+              observations={live.observations}
+              medications={live.medications}
+              events={live.events}
+              onChanged={load}
+              onLeft={onLeft}
+            />
+            {current !== null && (
+              <section className="draft-section" aria-labelledby="draft-title">
+                <h3 id="draft-title" className="sub-title">
+                  草案（AI。保存しません）
+                </h3>
+                <DraftView key={current.id} encounterId={current.id} onLeft={onLeft} />
+              </section>
+            )}
+          </>
+        )}
+        {tab === 'notes' && kindsHere.length > 1 && (
+          <div className="chips row kind-filter" data-testid="kind-filter" aria-label="記載の種類で絞る">
+            {(['all', ...kindsHere] as const).map((k) => (
+              <button
+                key={k}
+                type="button"
+                className={kindFilter === k ? 'chip small on' : 'chip small'}
+                aria-pressed={kindFilter === k}
+                onClick={() => {
+                  setKindFilter(k);
+                }}
+                data-testid={`kind-filter-${k}`}
+              >
+                {k === 'all' ? `すべて（${String(sources.length)}）` : `${SOURCE_KIND_LABELS[k]}（${String(sources.filter((s) => s.kind === k).length)}）`}
+              </button>
+            ))}
+          </div>
+        )}
+        {tab !== 'notes' ? null : sources.length === 0 ? (
+          <p className="note">この受診には、まだ、記録がありません。</p>
+        ) : (
+          <ul className="sources" data-testid="sources">
+            {shownSources.map((s, i) => {
+              const dayHead = s.at === null ? '日時不明' : s.at.slice(0, 10);
+              const prev = shownSources[i - 1];
+              const prevHead = prev === undefined ? null : prev.at === null ? '日時不明' : prev.at.slice(0, 10);
+              return (
+                <Fragment key={s.id}>
+                  {dayHead !== prevHead && (
+                    <li className="source-day" data-testid="source-day">
+                      {dayHead === '日時不明' ? dayHead : `${dayHead}${current !== null && current.kind === 'inpatient' ? `（${String(hospitalDay(current.start, dayHead))}病日）` : ''}`}
+                    </li>
+                  )}
+                  <SourceCard
+                    source={s}
+                    segments={record.segments.filter((g) => g.sourceId === s.id)}
+                    facts={{
+                      medications: record.medications.filter((m) => m.sourceId === s.id),
+                      events: record.events.filter((e) => e.sourceId === s.id),
+                      observations: record.observations.filter((o) => o.sourceId === s.id),
+                    }}
+                    edits={record.factEdits}
+                    userEdits={record.userEdits}
+                    encounter={current}
+                    onChanged={load}
+                    onLeft={onLeft}
+                  />
+                </Fragment>
+              );
+            })}
+          </ul>
+        )}
+      </section>
+
+      {current !== null && composerOpen && (
+        <section className="card composer-card" aria-labelledby="composer-title" ref={composerRef}>
+          <div className="composer-head">
+            <h2 id="composer-title">入れる</h2>
+            <button
+              type="button"
+              className="button small"
+              onClick={() => {
+                setComposing(false);
+              }}
+              data-testid="composer-close"
+            >
+              閉じる
+            </button>
+          </div>
+          <Composer
+            key={current.id}
+            encounterId={current.id}
+            target={`${title.split(' ｜ ')[0] ?? title} ｜ ${encounterLabel(current)}`}
+            problemHeadings={problemHeadings}
+            onSaved={(source) => {
+              // 保存したら、記録のタブで、入れた文を見せる。入れる欄は、閉じるまで開いたまま（続けて入れられる）
+              setComposing(true);
+              if (source !== undefined) setTab('notes');
+              load();
+            }}
+            onLeft={onLeft}
+          />
+        </section>
+      )}
+
+      {current !== null && (
+        <button type="button" className="fab" onClick={toComposer} data-testid="fab-compose">
+          ＋ 入れる
+        </button>
+      )}
+
     </main>
   );
 }

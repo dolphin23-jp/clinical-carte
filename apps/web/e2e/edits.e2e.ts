@@ -121,6 +121,7 @@ describe('段3e：種類で絞る・事実を直す', () => {
     const ev = page.getByTestId('source-facts').first().getByTestId('fact-row').filter({ hasText: '胸部X線' });
     await ev.getByTestId('fact-exclude').click();
     await expect.poll(() => ev.getAttribute('data-excluded')).toBe('true');
+    await page.getByTestId('tab-course').click();
     await page.getByTestId('tab-events').click();
     expect(await page.getByTestId('events').textContent()).not.toContain('胸部X線');
     expect(await fits(page)).toBe(true);
@@ -128,6 +129,7 @@ describe('段3e：種類で絞る・事実を直す', () => {
       await page.getByTestId('tab-notes').click();
       await page.getByTestId('source-facts').first().locator('summary').click();
       await page.screenshot({ path: `${SHOTS}/facts-iphone.png`, fullPage: true });
+      await page.getByTestId('tab-course').click();
       await page.getByTestId('tab-events').click();
     }
     // 戻す
@@ -135,6 +137,7 @@ describe('段3e：種類で絞る・事実を直す', () => {
     const facts2 = page.getByTestId('source-facts').first();
     if ((await facts2.getAttribute('open')) === null) await facts2.locator('summary').click();
     await facts2.getByTestId('fact-row').filter({ hasText: '胸部X線' }).getByTestId('fact-exclude').click();
+    await page.getByTestId('tab-course').click();
     await page.getByTestId('tab-events').click();
     await expect.poll(() => page.getByTestId('events').textContent()).toContain('胸部X線');
   });
@@ -144,7 +147,7 @@ describe('段4：草案', () => {
   test('問題ごとの入院後経過の草案が出る。根拠の引用が開ける。根拠にない数の文は出ず、数だけ出る。保存しない', async () => {
     const page = await openPatient();
     await send(page, 'progress_note', NOTE, '2026-11-19');
-    await page.getByTestId('tab-draft').click();
+    await page.getByTestId('tab-problems').click();
     await page.getByTestId('draft-make').click();
     const section = page.getByTestId('draft-section');
     await section.first().waitFor();
@@ -161,7 +164,7 @@ describe('段4：草案', () => {
     if (SHOTS !== undefined) await page.screenshot({ path: `${SHOTS}/draft-iphone.png`, fullPage: true });
     // ほかのタブへ移って戻ると、草案は消えている（画面のメモリだけ）
     await page.getByTestId('tab-state').click();
-    await page.getByTestId('tab-draft').click();
+    await page.getByTestId('tab-problems').click();
     expect(await page.getByTestId('draft-section').count()).toBe(0);
   });
 });

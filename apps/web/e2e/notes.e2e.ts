@@ -109,6 +109,7 @@ async function openNotes(note = NOTE): Promise<Page> {
   await page.getByTestId('send').click();
   await expect.poll(() => page.getByTestId('source').count(), { timeout: 10_000 }).toBe(1);
   await expect.poll(() => page.getByTestId('composer-organizing').textContent()).not.toContain('整理しています');
+  await page.getByTestId('tab-course').click();
   await page.getByTestId('tab-chart').click();
   await page.getByTestId('note-view').waitFor();
   return page;

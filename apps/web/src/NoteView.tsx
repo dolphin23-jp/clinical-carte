@@ -332,9 +332,29 @@ function Discuss({ encounterId, threadId, day, onAdopt, busy, onLeft }: { encoun
   );
 }
 
-export function NoteView({ record, encounter, onChanged, onLeft }: { record: PatientRecord; encounter: Encounter; onChanged: () => void; onLeft: () => void }) {
+export function NoteView({
+  record,
+  encounter,
+  onChanged,
+  onLeft,
+  day: dayProp,
+  onDay,
+}: {
+  record: PatientRecord;
+  encounter: Encounter;
+  onChanged: () => void;
+  onLeft: () => void;
+  /** 日の帯で選んだ日（段H）。記載のある日なら、その日を出す */
+  day?: string | null;
+  onDay?: (day: string) => void;
+}) {
   const days = noteDays(encounter.id, record.sources);
-  const [chosen, setChosen] = useState<string | null>(null);
+  const [own, setOwn] = useState<string | null>(null);
+  const chosen = dayProp ?? own;
+  const setChosen = (d: string): void => {
+    setOwn(d);
+    onDay?.(d);
+  };
   const day = chosen !== null && days.includes(chosen) ? chosen : (days[0] ?? null);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
