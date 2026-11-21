@@ -16,11 +16,11 @@ function recentText(item: RecentItem): { tag: string; text: string } {
     case 'event':
       return { tag: EVENT_KIND_NAMES[item.kind], text: item.title };
     case 'lab':
-      return { tag: '検査', text: `${item.name} ${item.valueText}${item.unit === null ? '' : ` ${item.unit}`}` };
+      return { tag: '検査', text: `${item.name} ${item.comparator ?? ''}${item.valueText}${item.unit === null ? '' : ` ${item.unit}`}` };
   }
 }
 
-const labText = (item: Extract<RecentItem, { type: 'lab' }>): string => `${item.name} ${item.valueText}${item.unit === null ? '' : ` ${item.unit}`}`;
+const labText = (item: Extract<RecentItem, { type: 'lab' }>): string => `${item.name} ${item.comparator ?? ''}${item.valueText}${item.unit === null ? '' : ` ${item.unit}`}`;
 
 /** 1つのまとまりで、はじめに見せる数（残りは畳む） */
 const FIRST = 6;
@@ -135,7 +135,7 @@ export function StateView({ state, sources, onProblems }: { state: PatientState;
                 )}
                 {values.length > 0 && (
                   <p className="thread-sub" data-testid="state-problem-values">
-                    記載に書かれた値：{values.map((o) => `${o.name ?? o.nameRaw} ${o.valueText}${o.unit === null ? '' : ` ${o.unit}`}（${showDateTime(o.at)}）`).join('・')}
+                    記載に書かれた値：{values.map((o) => `${o.name ?? o.nameRaw} ${o.comparator ?? ''}${o.valueText}${o.unit === null ? '' : ` ${o.unit}`}（${showDateTime(o.at)}）`).join('・')}
                   </p>
                 )}
                 {medications.length > 0 && (

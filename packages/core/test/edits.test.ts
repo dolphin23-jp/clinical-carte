@@ -44,13 +44,15 @@ describe('問題の筋の本人の決め（CA-029）', () => {
       ],
       mentions.slice(0, 3),
     ).threads;
-    expect(reorder(v, 'C', 'up')).toEqual([
-      { id: 'A', ord: 0 },
-      { id: 'C', ord: 1 },
+    // 既定の並びは、いちばん新しい記載の順（C〔11/13〕・B〔11/12〕・A〔11/11〕）
+    expect(v.map((t) => t.id)).toEqual(['C', 'B', 'A']);
+    expect(reorder(v, 'A', 'up')).toEqual([
+      { id: 'C', ord: 0 },
+      { id: 'A', ord: 1 },
       { id: 'B', ord: 2 },
     ]);
-    expect(reorder(v, 'A', 'up')).toBeNull();
-    expect(reorder(v, 'C', 'down')).toBeNull();
+    expect(reorder(v, 'C', 'up')).toBeNull();
+    expect(reorder(v, 'A', 'down')).toBeNull();
   });
 
   test('操作の形', () => {

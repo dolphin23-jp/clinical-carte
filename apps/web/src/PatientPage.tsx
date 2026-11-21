@@ -6,6 +6,7 @@ import {
   type EncounterKind,
   foldedEventIds,
   foldedMedicationIds,
+  foldedObservationIds,
   headline,
   hospitalDay,
   labTrends,
@@ -17,6 +18,7 @@ import {
   type SourceKind,
   CARTE_ONLY_KINDS,
   UNREAD_LABELS,
+  threadViews,
   vitalPanels,
 } from '@clinical-carte/core';
 import { type SyntheticEvent, useCallback, useEffect, useRef, useState } from 'react';
@@ -54,6 +56,7 @@ import { SourceEdit } from './SourceEdit.tsx';
 import { SourceFacts } from './SourceFacts.tsx';
 import { SourceText } from './SourceText.tsx';
 import { StateView } from './StateView.tsx';
+import { nextDayLabel } from './NextDayAsk.tsx';
 import { DraftView } from './DraftView.tsx';
 import { NoteView } from './NoteView.tsx';
 
@@ -126,12 +129,17 @@ export function PatientPage({ patientId, onBack, onLeft }: { patientId: string; 
   const title = headline({ ...record.patient, encounter: latest }, record.today);
   const sources = record.sources.filter((s) => s.encounterId === current?.id).sort(newestFirst);
   // 本人が外した事実（段3e）は、見方から除く。記載ごとの「事実を見る・直す」には、外したものも出す
+  // 同じ値の二重（CA-049）：記載の中で挙げ直した値で、同じ日の検査結果・バイタルの文に同じ値があるものは、見方では出さない（消さない）
+  const kindOf = new Map(record.sources.map((s) => [s.id, s.kind]));
+  const notExcluded = record.observations.filter((o) => !o.excluded);
+  const foldedValues = foldedObservationIds(notExcluded, (id) => READ_VALUES_KINDS.includes(kindOf.get(id) ?? 'unsorted'));
   const live = {
-    observations: record.observations.filter((o) => !o.excluded),
+    observations: notExcluded.filter((o) => !foldedValues.has(o.id)),
     medications: record.medications.filter((m) => !m.excluded),
     events: record.events.filter((e) => !e.excluded),
   };
   const observations = live.observations.filter((o) => o.encounterId === current?.id);
+  const foldedHere = notExcluded.filter((o) => o.encounterId === current?.id && foldedValues.has(o.id)).length;
   const encounterSources = record.sources.filter((s) => s.encounterId === current?.id);
   const medications = live.medications.filter((m) => m.encounterId === current?.id);
   const events = live.events.filter((e) => e.encounterId === current?.id);
@@ -140,6 +148,10 @@ export function PatientPage({ patientId, onBack, onLeft }: { patientId: string; 
   const shownSources = kindFilter === 'all' || !kindsHere.includes(kindFilter) ? sources : sources.filter((s) => s.kind === kindFilter);
 
   const panels = vitalPanels(observations);
+  // いまの問題の見出し（経過のひな形。書かれた名前のまま。番号のない名前には「#」だけを付ける）
+  const problemHeadings = threadViews(record.problemThreads, record.problems)
+    .threads.filter((t) => t.group === 'current')
+    .map((t) => (/^[#＃]/u.test(t.name) ? t.name : `#${t.name}`));
   // 同じ日の二重（時刻のない方針の行と、時刻つきの実施の行）は、経過表・いまでは、時刻つきのほうだけを出す（消さない。投薬・できごとのタブで見られる）
   const foldedMeds = foldedMedicationIds(medications);
   const foldedEvents = foldedEventIds(events);
@@ -301,6 +313,11 @@ export function PatientPage({ patientId, onBack, onLeft }: { patientId: string; 
             <TrendGrid trends={labTrends(observations)} />
             <h3 className="sub-title">表（書かれたとおり）</h3>
             <LabTable observations={observations} />
+            {foldedHere > 0 && (
+              <p className="note" data-testid="values-folded">
+                記載（経過など）の中で挙げ直した値のうち、同じ日の検査結果・バイタルの文に同じ項目・同じ値があるもの {String(foldedHere)} 件は、二重になるので、ここ・経過表・いまでは出していません（消していません。記録の各記載の「整理した事実」にあります）。
+              </p>
+            )}
           </>
         )}
         {tab === 'medications' && <MedicationView medications={medications} sources={encounterSources} />}
@@ -373,6 +390,7 @@ export function PatientPage({ patientId, onBack, onLeft }: { patientId: string; 
             key={current.id}
             encounterId={current.id}
             target={`${title.split(' ｜ ')[0] ?? title} ｜ ${encounterLabel(current)}`}
+            problemHeadings={problemHeadings}
             onSaved={(source) => {
               // 保存したら、記録のタブで、入れた文を見せる
               if (source !== undefined) setTab('notes');
@@ -460,6 +478,7 @@ function SourceCard({
   const [message, setMessage] = useState<string | null>(null);
   const [organizing, setOrganizing] = useState(false);
   const report = source.organized === 'done' ? reportText(source.organizeReport) : null;
+  const nextDay = nextDayLabel(source.text, source.nextDayFrom);
 
   const organize = () => {
     setOrganizing(true);
@@ -514,6 +533,7 @@ function SourceCard({
           {replaced !== null && `・置き換えた場所：${replaced}`}
           {source.organized === null && '・まだ整理していません'}
           {source.organized === 'failed' && '・整理できませんでした'}
+          {nextDay !== null && `・${nextDay === '' ? '途中' : nextDay} からあとの、日の書かれていない時刻は翌日として読んでいます`}
           {report !== null && `・確かめられず記録に入れなかったもの：${report}`}
         </span>
         <span className="row-actions">

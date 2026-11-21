@@ -63,6 +63,8 @@ export interface StateObservation {
   readonly name: string | null;
   readonly nameRaw: string;
   readonly kind: 'lab' | 'vital' | null;
+  /** 不等号（valueText には入らない。表示で添える） */
+  readonly comparator?: string | null;
   readonly valueText: string;
   readonly unit: string | null;
   readonly start: number;
@@ -90,7 +92,7 @@ export type RecentItem =
   | { readonly type: 'problem_activity'; readonly at: string; readonly name: string; readonly activity: 'resolved' | 'inactive' }
   | { readonly type: 'medication'; readonly at: string; readonly name: string; readonly action: MedicationAction; readonly doseText: string | null }
   | { readonly type: 'event'; readonly at: string; readonly kind: EventKind; readonly title: string }
-  | { readonly type: 'lab'; readonly at: string; readonly name: string; readonly valueText: string; readonly unit: string | null };
+  | { readonly type: 'lab'; readonly at: string; readonly name: string; readonly comparator: string | null; readonly valueText: string; readonly unit: string | null };
 
 export interface CurrentProblem {
   readonly thread: ThreadView;
@@ -306,7 +308,7 @@ export function patientState(input: StateInput): PatientState {
     }
     for (const m of input.medications) if (m.action !== null && inside(m.at)) items.push({ type: 'medication', at: m.at, name: m.name, action: m.action, doseText: m.doseText });
     for (const e of input.events) if (inside(e.at)) items.push({ type: 'event', at: e.at, kind: e.kind, title: e.title });
-    for (const o of input.observations) if (o.kind !== 'vital' && inside(o.at)) items.push({ type: 'lab', at: o.at, name: o.name ?? o.nameRaw, valueText: o.valueText, unit: o.unit });
+    for (const o of input.observations) if (o.kind !== 'vital' && inside(o.at)) items.push({ type: 'lab', at: o.at, name: o.name ?? o.nameRaw, comparator: o.comparator ?? null, valueText: o.valueText, unit: o.unit });
     items.sort((a, b) => compareDateTime(b.at, a.at));
     recent = { from: fromText, to: asOf, items };
   }

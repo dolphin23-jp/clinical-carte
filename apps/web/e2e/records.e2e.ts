@@ -169,6 +169,43 @@ describe('文を入れる', () => {
   });
 });
 
+describe('日をまたいだ記載（CA-047）', () => {
+  test('時刻が大きくさかのぼると、入れる前に1回だけ確かめる。答えるまで入れられず、答えは記録の札に出る', async () => {
+    const page = await open();
+    await newPatient(page);
+    await page.getByTestId('kind').selectOption({ label: '看護記録' });
+    await page.getByTestId('at-day').fill('2026-11-20');
+    await page.getByTestId('text').fill('23:30 不穏あり。');
+    expect(await page.getByTestId('composer').getByTestId('next-day').count()).toBe(0);
+    await page.getByTestId('text').fill('23:30 不穏あり。\n0:15 報告。\n3:00 BT 37.4');
+    const ask = page.getByTestId('composer').getByTestId('next-day');
+    await ask.waitFor();
+    expect(await ask.textContent()).toContain('23:30 のあとに 00:15');
+    expect(await page.getByTestId('send').isDisabled()).toBe(true);
+    expect(await page.getByTestId('next-day-yes').textContent()).toBe('翌日（11/21）');
+    await page.getByTestId('next-day-yes').click();
+    expect(await page.getByTestId('send').isDisabled()).toBe(false);
+    await page.getByTestId('send').click();
+    await page.getByTestId('composer-done').waitFor();
+    // 保存のあと、欄は空になり、確かめも消える
+    expect(await page.getByTestId('composer').getByTestId('next-day').count()).toBe(0);
+    expect(await page.getByTestId('source').first().textContent()).toContain('0:15 からあとの、日の書かれていない時刻は翌日として読んでいます');
+    expect(problems).toEqual([]);
+  });
+
+  test('「同じ日」を選ぶと、札は出ない', async () => {
+    const page = await open();
+    await newPatient(page);
+    await page.getByTestId('at-day').fill('2026-11-20');
+    await page.getByTestId('text').fill('22:00 発熱。\n6:00 解熱。');
+    await page.getByTestId('next-day-no').click();
+    await page.getByTestId('send').click();
+    await page.getByTestId('composer-done').waitFor();
+    expect(await page.getByTestId('source').first().textContent()).not.toContain('翌日として読んでいます');
+    expect(problems).toEqual([]);
+  });
+});
+
 describe('検査・バイタル', () => {
   test('ずらりと打つと、値が表に並ぶ。読めなかった部分は、理由つきで出る。色・矢印は付かない', async () => {
     const page = await open();

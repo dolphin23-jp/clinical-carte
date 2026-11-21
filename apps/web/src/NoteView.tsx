@@ -6,6 +6,7 @@
 import {
   AP_ORIGIN_NAMES,
   AP_TEXT_MAX,
+  PROPOSAL_PROBLEMS_MAX,
   type ApNoteNew,
   type ApPart,
   type ApRef,
@@ -342,7 +343,8 @@ export function NoteView({ record, encounter, onChanged, onLeft }: { record: Pat
   const [picked, setPicked] = useState<ReadonlySet<string>>(new Set());
   const [web, setWeb] = useState(false);
   const [asking, setAsking] = useState(false);
-  const [left, setLeft] = useState<ReadonlySet<string>>(new Set());
+  // 案を出す問題：はじめは「いまの問題」だけを選ぶ（解決・非活動・否定的と書かれたものは、選べば入る）。toggled は、はじめの選びから先生が変えたもの
+  const [toggled, setToggled] = useState<ReadonlySet<string>>(new Set());
 
   const run = (f: () => Promise<Result<null>>) => {
     if (busy) return;
@@ -380,6 +382,9 @@ export function NoteView({ record, encounter, onChanged, onLeft }: { record: Pat
   const notesOf = (threadId: string): ApNote[] => record.apNotes.filter((n) => n.encounterId === encounter.id && n.day === day && liveThreadId(byId, n.threadId) === threadId);
   const others = record.apNotes.filter((n) => n.encounterId === encounter.id && n.day === day && !nd.problems.some((p) => p.thread.id === liveThreadId(byId, n.threadId)));
   const currentProposal = proposal?.day === day ? proposal.value : null;
+  const isChosen = (p: (typeof nd.problems)[number]): boolean => (p.thread.group === 'current') !== toggled.has(p.thread.id);
+  const chosenIds = nd.problems.filter(isChosen).map((p) => p.thread.id);
+  const tooMany = chosenIds.length > PROPOSAL_PROBLEMS_MAX;
 
   const note = (threadId: string, part: ApPart, planKind: PlanKind | null, text: string, origin: 'self' | 'ai', refs: readonly ApRef[]): ApNoteNew => ({
     encounterId: encounter.id,
@@ -394,8 +399,9 @@ export function NoteView({ record, encounter, onChanged, onLeft }: { record: Pat
 
   const ask = () => {
     if (asking) return;
-    const threadIds = nd.problems.map((p) => p.thread.id).filter((id) => !left.has(id)).slice(0, 10);
-    if (threadIds.length === 0) return;
+    // 上限を超えるときは、黙って切らない（ボタンを止め、数を出す）
+    if (chosenIds.length === 0 || chosenIds.length > PROPOSAL_PROBLEMS_MAX) return;
+    const threadIds = chosenIds;
     setAsking(true);
     setMessage(null);
     void requestProposal(encounter.id, { day, threadIds, web }).then((r) => {
@@ -565,20 +571,20 @@ export function NoteView({ record, encounter, onChanged, onLeft }: { record: Pat
         <section className="ap-proposal" data-testid="ap-proposal">
           <h3 className="sub-title">AI の A/P の案（保存しません）</h3>
           <p className="note">
-            この日までの、問題ごとの記載（A・P・S・O と、その問題の値・薬）を材料に、問題ごとの評価と方針の案を出します。書籍（設定があるとき）と、選べばネットのガイドラインも根拠にします。外の検索に送るのは、問題の名前だけです。文ごとに根拠を確かめ、根拠にない数（用量・閾値を含む）がある文・根拠のない文は出しません。案は、選んだものだけが残ります。
+            この日までの、問題ごとの記載（A・P・S・O と、その問題の値・薬）と、どの問題にも入らない共通の資料（その日の S・O・バイタル、その日までの検査値。どの問題に関わるかは決めていません）を材料に、問題ごとの評価と方針の案を出します。書籍（設定があるとき）と、選べばネットのガイドラインも根拠にします。外の検索に送るのは、問題の名前だけです。文ごとに根拠を確かめ、根拠にない数（用量・閾値を含む）がある文・根拠のない文は出しません。案は、選んだものだけが残ります。
           </p>
           <div className="chips" role="group" aria-label="案を出す問題">
             {nd.problems.map((p) => (
               <button
                 key={p.thread.id}
                 type="button"
-                className={left.has(p.thread.id) ? 'chip small' : 'chip small on'}
-                aria-pressed={!left.has(p.thread.id)}
+                className={isChosen(p) ? 'chip small on' : 'chip small'}
+                aria-pressed={isChosen(p)}
                 onClick={() => {
-                  const next = new Set(left);
+                  const next = new Set(toggled);
                   if (next.has(p.thread.id)) next.delete(p.thread.id);
                   else next.add(p.thread.id);
-                  setLeft(next);
+                  setToggled(next);
                 }}
                 data-testid="ap-proposal-problem"
               >
@@ -590,7 +596,11 @@ export function NoteView({ record, encounter, onChanged, onLeft }: { record: Pat
             <input type="checkbox" checked={web} disabled={asking} onChange={(e) => { setWeb(e.target.checked); }} data-testid="ap-proposal-web" />
             ネットのガイドラインも探す（AI をもう 1 回使います）
           </label>
-          <button type="button" className="button primary" disabled={asking || nd.problems.every((p) => left.has(p.thread.id))} onClick={ask} data-testid="ap-proposal-make">
+          <p className={tooMany ? 'note over' : 'note'} data-testid="ap-proposal-count">
+            選んだ問題 {String(chosenIds.length)} / {String(nd.problems.length)}（はじめは、いまの問題だけを選んでいます。1回に {String(PROPOSAL_PROBLEMS_MAX)} まで）
+            {tooMany && `。${String(chosenIds.length - PROPOSAL_PROBLEMS_MAX)} つ外すと、案を出せます`}
+          </p>
+          <button type="button" className="button primary" disabled={asking || chosenIds.length === 0 || tooMany} onClick={ask} data-testid="ap-proposal-make">
             {asking ? '考えています…（1 分ほどかかることがあります）' : currentProposal === null ? 'A/P の案を出す' : 'もう一度出す'}
           </button>
           {currentProposal !== null && (

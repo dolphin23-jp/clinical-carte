@@ -77,6 +77,44 @@ describe('courseMaterial（草案の資料）', () => {
   });
 });
 
+describe('草案の共通の資料（CA-048）', () => {
+  test('どの問題の範囲にも入らないできごとは、problem: null の引用。問題の範囲の中のできごとは、その問題の引用のまま', () => {
+    const base = input();
+    const TEXT3 = '泌尿器科 併診\n18:10 尿管ステントを留置';
+    const mat = courseMaterial({
+      ...base,
+      sources: [...base.sources, { id: 's3', encounterId: 'e1', at: '2026-11-17T18:10', text: TEXT3 }],
+      events: [
+        { sourceId: 's3', start: TEXT3.indexOf('尿管'), end: TEXT3.length, kind: 'procedure', title: '尿管ステントを留置', at: '2026-11-17T18:10' },
+        { sourceId: 's1', start: TEXT1.indexOf('血液培養'), end: TEXT1.indexOf('血液培養') + 4, kind: 'test', title: '血液培養', at: '2026-11-17T23:00' },
+      ],
+    });
+    expect(mat.quotes.filter((q) => q.from.startsWith('できごと')).map((q) => [q.problem, q.text])).toEqual([
+      [null, '尿管ステントを留置'],
+      ['T1', '血液培養'],
+    ]);
+    const shared = mat.quotes.find((q) => q.problem === null)?.id ?? '';
+    const own = mat.quotes.find((q) => q.problem === 'T1')?.id ?? '';
+    const other = mat.quotes.find((q) => q.problem === 'T2')?.id ?? '';
+    const r = checkDraft(
+      {
+        sections: [
+          {
+            problem: 'T1',
+            sentences: [
+              { text: '1病日、尿管ステントを留置した。', cites: [shared, own] },
+              { text: '低K血症の補充を行った。', cites: [other] },
+            ],
+          },
+        ],
+      },
+      mat,
+    );
+    expect(r.sections[0]?.sentences.map((x) => x.text)).toEqual(['1病日、尿管ステントを留置した。']);
+    expect(r.rejected).toEqual({ other_problem: 1 });
+  });
+});
+
 describe('checkDraft（決定論の確かめ）', () => {
   const mat = courseMaterial(input());
   const draft = (sentences: DraftAnswer['sections'][number]['sentences'], problem = 'T1'): DraftAnswer => ({ sections: [{ problem, sentences }] });

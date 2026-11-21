@@ -15,6 +15,7 @@ import {
   type FactKind,
   FactPatch,
   isUlid,
+  nextDayPoint,
   japanDateTime,
   japanDay,
   NewEncounter,
@@ -223,6 +224,8 @@ export async function recordApi(request: Request, path: string, deps: RecordDeps
       organized: null,
       organizedVersion: null,
       organizeReport: {},
+      // 日をまたいだ場所は、保存する文（置き換えた後）で決め直す（打った文の位置は、置き換えでずれる）
+      nextDayFrom: body.nextDay === true ? (nextDayPoint(result.text)?.at ?? null) : null,
     };
     const observations: NewObservation[] = result.rows.map((row) => ({ id: newId(runtime), row }));
     await saveSource(db, source, observations);
@@ -425,7 +428,7 @@ export async function recordApi(request: Request, path: string, deps: RecordDeps
     if (deps.selector === null) return reply(503, { error: 'no_ai' });
     if (deps.dailyAiLimit > 0 && (await callsOn(db, today)) >= deps.dailyAiLimit) return reply(429, { error: 'ai_limit' });
     await countCall(db, today);
-    const r = await retypeSource(db, id, body.text, deps.selector, runtime);
+    const r = await retypeSource(db, id, body.text, deps.selector, runtime, body.nextDay);
     if (!r.ok) {
       if (r.error === 'not_found') return missing();
       if (r.error === 'empty') return bad();

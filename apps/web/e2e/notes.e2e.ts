@@ -23,6 +23,22 @@ const ANSWER: OrganizeAnswer = {
   problems: [{ name: '#1 市中肺炎', status: 'diagnosis', activity: null }],
 };
 
+// 解決と書かれた問題がある記載（A/P の案の、はじめの選び）
+const NOTE2 = '#1 市中肺炎\nA) 抗菌薬に反応\n#2 低K血症\nA) 補正後、解決。';
+const ANSWER2: OrganizeAnswer = {
+  ...EMPTY_ORGANIZE,
+  segments: [
+    { label: 'problem_heading', start: '#1 市中肺炎', when: null },
+    { label: 'assessment', start: 'A) 抗菌薬', when: null },
+    { label: 'problem_heading', start: '#2 低K血症', when: null },
+    { label: 'assessment', start: 'A) 補正後', when: null },
+  ],
+  problems: [
+    { name: '#1 市中肺炎', status: 'diagnosis', activity: null },
+    { name: '#2 低K血症', status: 'problem', activity: 'resolved' },
+  ],
+};
+
 const BOOK: BookHit = { title: '架空の内科学', path: '呼吸器 > 肺炎', page: '120', snippet: '臨床の改善を見て、静注から経口へ切り替える。' };
 const books: BookSearcher = { search: () => Promise.resolve([BOOK]), check: () => Promise.resolve('ok') };
 
@@ -56,7 +72,7 @@ afterAll(async () => {
 });
 beforeEach(async () => {
   organizer = fakeOrganizer(
-    () => ({ ok: true, answer: ANSWER }),
+    (text) => ({ ok: true, answer: text.includes('#2 低K血症') ? ANSWER2 : ANSWER }),
     undefined,
     undefined,
     {
@@ -71,7 +87,7 @@ afterEach(async () => {
   await server.close();
 });
 
-async function openNotes(): Promise<Page> {
+async function openNotes(note = NOTE): Promise<Page> {
   const context = await browser.newContext({ ...presets['iPhone 15'], colorScheme: 'light' });
   contexts.push(context);
   const page = await context.newPage();
@@ -89,7 +105,7 @@ async function openNotes(): Promise<Page> {
   await page.getByTestId('kind-chip-progress_note').click();
   await page.getByTestId('at-day').fill('2026-11-19');
   await page.getByTestId('at-time').fill('09:00');
-  await page.getByTestId('text').fill(NOTE);
+  await page.getByTestId('text').fill(note);
   await page.getByTestId('send').click();
   await expect.poll(() => page.getByTestId('source').count(), { timeout: 10_000 }).toBe(1);
   await expect.poll(() => page.getByTestId('composer-organizing').textContent()).not.toContain('整理しています');
@@ -126,8 +142,35 @@ describe('記載', () => {
     expect(await fits(page)).toBe(true);
   });
 
+  test('経過の入れる欄に、いまの問題の見出しのひな形が出る（書かれた名前のまま。中身は先生が書く）', async () => {
+    const page = await openNotes(NOTE2);
+    await page.getByTestId('fab-compose').click();
+    await page.getByTestId('kind-chip-progress_note').click();
+    const template = page.getByTestId('template-0');
+    expect(await template.textContent()).toContain('いまの問題の見出し（1）'); // 解決と書かれた #2 は入らない
+    await page.getByTestId('text').fill('');
+    await template.click();
+    expect(await page.getByTestId('text').inputValue()).toBe('#1 市中肺炎\n');
+    expect(await fits(page)).toBe(true);
+  });
+
+  test('AI の案の問題は、はじめは「いまの問題」だけを選ぶ。解決と書かれた問題は、選べば入る', async () => {
+    const page = await openNotes(NOTE2);
+    const chips = page.getByTestId('ap-proposal-problem');
+    await expect.poll(() => chips.count()).toBe(2);
+    expect(await chips.nth(0).getAttribute('aria-pressed')).toBe('true');
+    expect(await chips.nth(1).getAttribute('aria-pressed')).toBe('false');
+    expect(await page.getByTestId('ap-proposal-count').textContent()).toContain('選んだ問題 1 / 2');
+    await chips.nth(1).click();
+    expect(await page.getByTestId('ap-proposal-count').textContent()).toContain('選んだ問題 2 / 2');
+    await page.getByTestId('ap-proposal-make').click();
+    await expect.poll(() => organizer.proposed.length).toBe(1);
+    expect((JSON.parse(organizer.proposed[0] ?? '{}') as { problems: unknown[] }).problems).toHaveLength(2);
+  });
+
   test('AI の案：確かめを通った文だけが出て、選んだものだけが印と参照つきで残る。直すと「AI 案を直した」になる', async () => {
     const page = await openNotes();
+    expect(await page.getByTestId('ap-proposal-count').textContent()).toContain('選んだ問題 1 / 1');
     await page.getByTestId('ap-proposal-make').click();
     const sentences = page.getByTestId('ap-proposal-sentence');
     await expect.poll(() => sentences.count()).toBe(2); // 出典にない用量の文は出ない

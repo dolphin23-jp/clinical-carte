@@ -190,6 +190,8 @@ export interface Source {
   readonly organized: 'done' | 'failed' | null;
   readonly organizedVersion: string | null;
   readonly organizeReport: OrganizeReport;
+  /** 日をまたいだ場所（CA-047）。ここより後ろの、日の書かれていない時刻は翌日として読む。なければ null */
+  readonly nextDayFrom: number | null;
 }
 
 export interface Segment {
@@ -574,8 +576,8 @@ export async function addFact(sourceId: string, add: AddFact): Promise<Result<nu
 }
 
 /** 文を打ち直す（選別を通す）。引き継げなかった本人の直しの数が返る */
-export async function retypeSource(sourceId: string, text: string): Promise<Result<{ lost: number }>> {
-  const result = await call('PUT', `sources/${encodeURIComponent(sourceId)}/text`, { text });
+export async function retypeSource(sourceId: string, text: string, nextDay?: boolean): Promise<Result<{ lost: number }>> {
+  const result = await call('PUT', `sources/${encodeURIComponent(sourceId)}/text`, nextDay === undefined ? { text } : { text, nextDay });
   if (!result.ok) return result;
   const lost = result.value['lost'];
   return typeof lost === 'number' ? { ok: true, value: { lost } } : { ok: false, error: 'network' };

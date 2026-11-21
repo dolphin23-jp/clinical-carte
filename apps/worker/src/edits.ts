@@ -1,6 +1,6 @@
 // 本人の調節（CA-029。docs/04 の 11）：なぞって足す（B）、記載・区切りを直す（A）、文を打ち直す（C-1：選別を通す）。
 // どれも、本人の行（origin = self）として持ち、整理し直しより先にする（organize.ts）。直すたびに user_edits に残す。
-import { type AddFact, checkSpan, type LabRow, readLabText, READ_VALUES_KINDS, segmentEnds, type SegmentPatch, type SourcePatch, type SpanProblem, ulid, ULID_RANDOM_BYTES } from '@clinical-carte/core';
+import { type AddFact, checkSpan, type LabRow, nextDayPoint, readLabText, READ_VALUES_KINDS, segmentEnds, type SegmentPatch, type SourcePatch, type SpanProblem, ulid, ULID_RANDOM_BYTES } from '@clinical-carte/core';
 
 import type { Db, Statement } from './db.ts';
 import { intake } from './intake.ts';
@@ -128,7 +128,11 @@ export type RetypeOutcome =
  * 本人の行（足した・直した事実・区切り）は、前の文の字を新しい文で探して場所を移す（見つからなければ消し、数を返す）。
  * AI の行は消す（画面が続けて整理し直す）。直した記録には、前後の文を残さない（紛れた識別情報を消すための直しがありうる）。
  */
-export async function retypeSource(db: Db, sourceId: string, typed: string, selector: Selector, runtime: Runtime): Promise<RetypeOutcome> {
+/**
+ * 文を打ち直す。nextDay（CA-047）：true／false は、入れる欄と同じく本人が確かめた答え。答えがなければ、前に「日をまたいだ」と確かめた文だけ、
+ * 新しい文で場所を決め直す（またいでいない文は、またいでいないまま）
+ */
+export async function retypeSource(db: Db, sourceId: string, typed: string, selector: Selector, runtime: Runtime, nextDay?: boolean): Promise<RetypeOutcome> {
   const source = await getSource(db, sourceId);
   if (source === null) return { ok: false, error: 'not_found' };
   const result = await intake({ kind: source.kind, authorRole: source.authorRole, at: source.at, text: typed }, selector);
@@ -138,6 +142,7 @@ export async function retypeSource(db: Db, sourceId: string, typed: string, sele
     return { ok: false, error: 'selection' };
   }
   const text = result.text;
+  const nextDayFrom = (nextDay ?? source.nextDayFrom !== null) ? (nextDayPoint(text)?.at ?? null) : null;
   const statements: Statement[] = [];
   let lost = 0;
   const id = (): string => ulid(runtime.now(), runtime.randomBytes(ULID_RANDOM_BYTES));
@@ -181,7 +186,7 @@ export async function retypeSource(db: Db, sourceId: string, typed: string, sele
     });
   }
   statements.push(
-    db.prepare('UPDATE sources SET text = ?, replaced = ?, organized = NULL, organized_version = NULL, organize_report = NULL WHERE id = ?').bind(text, JSON.stringify(result.replaced), sourceId),
+    db.prepare('UPDATE sources SET text = ?, replaced = ?, organized = NULL, organized_version = NULL, organize_report = NULL, next_day_from = ? WHERE id = ?').bind(text, JSON.stringify(result.replaced), nextDayFrom, sourceId),
     userEdit(db, runtime, source.patientId, 'source', sourceId, 'text', null, null),
   );
   await db.batch(statements);

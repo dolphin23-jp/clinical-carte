@@ -378,7 +378,21 @@ export interface ThreadViews {
   readonly unlinked: readonly ThreadMention[];
 }
 
-/** 筋ごとに、記載を束ねて並べる。統合した筋は、統合先にまとめる。記載のない筋は出さない。最初の記載の順 */
+/** 既定の並び：いちばん新しい記載が新しい筋ほど前（日時のない記載は後ろ）。同じ記載なら、その記載の中で書かれた順 */
+function compareLatest(a: { readonly mentions: readonly ThreadMention[] }, b: { readonly mentions: readonly ThreadMention[] }): number {
+  const la = a.mentions.at(-1);
+  const lb = b.mentions.at(-1);
+  if (la === undefined || lb === undefined) return 0;
+  if (la.at !== lb.at) {
+    if (la.at === null) return 1;
+    if (lb.at === null) return -1;
+    return la.at < lb.at ? 1 : -1;
+  }
+  if (la.sourceId !== lb.sourceId) return lb.sourceId.localeCompare(la.sourceId);
+  return la.start - lb.start;
+}
+
+/** 筋ごとに、記載を束ねて並べる。統合した筋は、統合先にまとめる。記載のない筋は出さない。並びは compareLatest（本人の並びが先） */
 export function threadViews(threads: readonly ThreadRow[], mentions: readonly ThreadMention[]): ThreadViews {
   const byId = new Map(threads.map((t) => [t.id, t]));
   const per = new Map<string, ThreadMention[]>();
@@ -442,9 +456,10 @@ export function threadViews(threads: readonly ThreadRow[], mentions: readonly Th
       excluded: row?.excluded === true,
     });
   }
-  // 本人の並び（小さいほど上）が先。並びのないものは、最初の記載の順
+  // 本人の並び（小さいほど上）が先。並びのないものは、いちばん新しい記載の順（新しい記載ほど上。同じ記載の中は、書かれた順）。
+  // 最初の記載の順にしていたときは、救急の記録の評価から拾った名前が上に、いまの記載の #1 が下になった（2026-11-21。CA-049）
   const ordOf = (v: ThreadView): number => byId.get(v.id)?.ord ?? Number.POSITIVE_INFINITY;
-  views.sort((a, b) => ordOf(a) - ordOf(b) || compareMentions(a.mentions[0] as ThreadMention, b.mentions[0] as ThreadMention));
+  views.sort((a, b) => ordOf(a) - ordOf(b) || compareLatest(a, b) || compareMentions(a.mentions[0] as ThreadMention, b.mentions[0] as ThreadMention));
   return { threads: views.filter((v) => !v.excluded), excluded: views.filter((v) => v.excluded), unlinked: [...unlinked].sort(compareMentions) };
 }
 

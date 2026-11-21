@@ -18,7 +18,7 @@ describe('migrations の写し', () => {
   });
 
   test('番号の順に並び、最初は、適用の控えの表', () => {
-    expect(MIGRATIONS.map((m) => m.name)).toEqual(['0000_schema', '0001_entrance', '0002_records', '0003_organize', '0004_threads', '0005_fact_edits', '0006_user_edits', '0007_ap_notes']);
+    expect(MIGRATIONS.map((m) => m.name)).toEqual(['0000_schema', '0001_entrance', '0002_records', '0003_organize', '0004_threads', '0005_fact_edits', '0006_user_edits', '0007_ap_notes', '0008_next_day']);
     for (const m of MIGRATIONS) expect(m.statements.length, m.name).toBeGreaterThan(0);
   });
 

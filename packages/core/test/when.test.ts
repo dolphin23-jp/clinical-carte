@@ -1,7 +1,7 @@
 import fc from 'fast-check';
 import { describe, expect, test } from 'vitest';
 
-import { isDateTime, parseWhen, type WhenContext, whenCandidates } from '../src/index.ts';
+import { isDateTime, parseWhen, type WhenContext, whenCandidates, lineHeadWhen, nextDayPoint } from '../src/index.ts';
 
 const ctx: WhenContext = { refDay: '2026-11-20', encounterStart: '2026-11-18T22:10' };
 
@@ -78,5 +78,48 @@ describe('文の中の日時の候補（入れる欄で選ぶ手がかり）', (
   test('書かれていなければ、空（推測で作らない）', () => {
     expect(whenCandidates('解熱。食事摂取良好。', ctx)).toEqual([]);
     expect(whenCandidates('11/19 解熱', { refDay: null, encounterStart: null })).toEqual([]);
+  });
+});
+
+describe('行頭の日時（lineHeadWhen）', () => {
+  test.each([
+    ['16:00 BT 39.0 HR 112', '16:00'],
+    ['  3:00 BT 37.4', '3:00'],
+    ['１６：００ BT 39.0', '16:00'],
+    ['11/17（入院2日目）9:30 回診', '11/17'],
+    ['11/18 22:00 より開始', '11/18 22:00'],
+    ['2026/11/20 9:00 記載', '2026/11/20 9:00'],
+    ['6時 覚醒', '6時'],
+  ])('%s → %s', (line, quote) => {
+    expect(lineHeadWhen(line)).toBe(quote);
+  });
+  test.each([['BT 39.0 16:00'], ['16時〜22時 尿量 420mL'], ['16:00-18:00 外出'], ['1/2A 投与'], ['6時間後に再検'], ['尿量 22時〜6時 680mL']])('行頭でない・幅・単位：%s は読まない', (line) => {
+    expect(lineHeadWhen(line)).toBeNull();
+  });
+});
+
+describe('日をまたいだかもしれない場所（nextDayPoint）', () => {
+  test('23:30 のあとの 0:15', () => {
+    const text = '夜勤帯の記録\n23:30 不穏あり。\n0:15 報告。\n3:00 BT 37.4\n6:00 覚醒。';
+    expect(nextDayPoint(text)).toEqual({ at: text.indexOf('0:15'), time: '00:15', before: '23:30' });
+  });
+  test('小さな逆戻り（経過の行を、あとから書き足した）は、日をまたいだとしない', () => {
+    expect(nextDayPoint('14:20 来院。15:30 CT。\n【経過】\n14:40 培養提出\n15:50 BP 84/48')).toBeNull();
+  });
+  test('日の書かれた時刻は数えない', () => {
+    expect(nextDayPoint('23:00 発熱。11/18 1:00 解熱。')).toBeNull();
+  });
+  test('時刻のない文・順に進む文', () => {
+    expect(nextDayPoint('BT 37.2 HR 80')).toBeNull();
+    expect(nextDayPoint('8:00 回診 12:00 食事 18:00 発熱')).toBeNull();
+  });
+});
+
+describe('時刻だけの言い方を読む日（timeDay）', () => {
+  test('時刻だけなら timeDay。日の書かれたもの・相対の言い方は、これまでどおり', () => {
+    const ctx = { refDay: '2026-11-16', encounterStart: '2026-11-16', timeDay: '2026-11-17' };
+    expect(parseWhen('0:15', ctx)).toBe('2026-11-17T00:15');
+    expect(parseWhen('11/16 23:30', ctx)).toBe('2026-11-16T23:30');
+    expect(parseWhen('昨日', ctx)).toBe('2026-11-15');
   });
 });

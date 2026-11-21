@@ -24,7 +24,7 @@ export async function organizeSource(db: Db, sourceId: string, organizer: Organi
     return { ok: false, reason: 'ai', failure: answered.reason };
   }
 
-  const organized = applyOrganization(answered.answer, { text: source.text, kind: source.kind, at: source.at, encounterStart: encounter.start });
+  const organized = applyOrganization(answered.answer, { text: source.text, kind: source.kind, at: source.at, encounterStart: encounter.start, nextDayFrom: source.nextDayFrom });
   const id = (): string => ulid(runtime.now(), runtime.randomBytes(ULID_RANDOM_BYTES));
   const base = [source.patientId, source.encounterId, source.id] as const;
 

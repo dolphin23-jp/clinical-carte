@@ -1705,3 +1705,34 @@ select.input {
 .turn.ai {
   border: 1px dashed var(--line);
 }
+
+/* 入れる欄（2026-11-21）：選ぶ行は1行にまとめ、はみ出す分は横に動かす。電話で、文の欄と送るボタンまでの距離を縮める。
+   選ぶ部品は隠さない（いま選んでいるものが、いつも見える） */
+.form.composer {
+  gap: 10px;
+}
+
+.composer .field {
+  gap: 4px;
+}
+
+.chips.row {
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  padding-bottom: 2px;
+  scrollbar-width: none;
+}
+
+.chips.row > * {
+  flex: 0 0 auto;
+}
+
+.chips.row .input.compact {
+  width: auto;
+  min-height: 34px;
+}
+
+.composer .field-row {
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}

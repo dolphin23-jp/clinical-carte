@@ -115,5 +115,7 @@ export const NewSource = z.strictObject({
   /** 記載・実施の日時。分からなければ null（推測で埋めない。docs/04 の 2 の 5） */
   at: DateTime.nullable(),
   text: z.string().min(1).max(TEXT_LIMIT),
+  /** 記載の中で日をまたいだと、入れる欄で本人が確かめたか（CA-047）。true なら、サーバーが保存した文で場所（nextDayPoint）を決め直して持つ */
+  nextDay: z.boolean().optional(),
 });
 export type NewSource = z.infer<typeof NewSource>;

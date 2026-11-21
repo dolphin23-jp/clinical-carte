@@ -1,6 +1,6 @@
 import { describe, expect, it, test } from 'vitest';
 
-import { type ChartObservation, chartTime, dayTicks, labTrends, latestPoint, medicationSpans, niceTicks, timeDomain, untimedSameDay, vitalPanels } from '../src/index.ts';
+import { type ChartObservation, chartTime, dayTicks, foldedObservationIds, labTrends, latestPoint, medicationSpans, niceTicks, timeDomain, untimedSameDay, vitalPanels } from '../src/index.ts';
 
 let n = 0;
 const obs = (patch: Partial<ChartObservation>): ChartObservation => ({
@@ -182,5 +182,30 @@ describe('最新の値（どの画面も同じ決まり）', () => {
     const later = latestPoint([...(hr?.points ?? []), { ...(chartTime('2026-11-22') ?? { t: 0, dateOnly: true }), at: '2026-11-22', value: 100, text: '100' }]);
     expect(later?.text).toBe('100');
     expect(untimedSameDay(hr?.points ?? [], latestPoint([]))).toBe(false);
+  });
+});
+
+describe('同じ値の二重（CA-049）', () => {
+  const o = (id: string, sourceId: string, at: string | null, name: string, value: number | null, valueText = String(value)) => ({ id, sourceId, at, name, nameRaw: name, value, comparator: null, valueText });
+  const sheet = (sourceId: string) => sourceId.startsWith('lab');
+  test('記載の中で挙げ直した値は、同じ日の検査結果に同じ値があれば、たたむ', () => {
+    const list = [
+      o('a', 'lab1', '2026-11-17T06:00', 'Cr', 1.48),
+      o('b', 'note1', '2026-11-17T09:30', 'Cr', 1.48),
+      o('c', 'note1', '2026-11-17T09:30', 'Na', 132),
+      o('d', 'note2', '2026-11-18', 'Cr', 1.48),
+      o('e', 'note1', '2026-11-17T09:30', 'K', 4.2),
+      o('f', 'lab1', '2026-11-17T06:00', 'K', 4.3),
+    ];
+    // Na は検査結果にない。翌日の Cr は別の日。K は値が違う
+    expect([...foldedObservationIds(list, sheet)]).toEqual(['b']);
+  });
+  test('検査結果どうし・日時のない値は、たたまない', () => {
+    const list = [o('a', 'lab1', '2026-11-17T06:00', 'K', 4.0), o('b', 'lab2', '2026-11-17T18:00', 'K', 4.0), o('c', 'note1', null, 'K', 4.0)];
+    expect(foldedObservationIds(list, sheet).size).toBe(0);
+  });
+  test('定性の値は、書かれた字で比べる', () => {
+    const list = [o('a', 'lab1', '2026-11-16T14:35', '尿蛋白', null, '(1+)'), o('b', 'note1', '2026-11-16', '尿蛋白', null, '(1+)')];
+    expect([...foldedObservationIds(list, sheet)]).toEqual(['b']);
   });
 });

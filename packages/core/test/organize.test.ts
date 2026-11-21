@@ -2,7 +2,7 @@
 import fc from 'fast-check';
 import { describe, expect, test } from 'vitest';
 
-import { applyOrganization, eventTimeline, foldedEventIds, foldedMedicationIds, medicationTimeline, type OrganizeAnswer, type OrganizeContext, problemKey, problemList, reportTotal } from '../src/index.ts';
+import { applyOrganization, eventTimeline, problemBlocks, relatedFacts, foldedEventIds, foldedMedicationIds, medicationTimeline, type OrganizeAnswer, type OrganizeContext, problemKey, problemList, reportTotal } from '../src/index.ts';
 
 const NOTE = [
   '#1 市中肺炎',
@@ -407,5 +407,165 @@ describe('文に書かれた時刻を、自動で記録の時刻にする（2026
     const r = applyOrganization(answer({ segments: [{ label: 'labs', start: '静脈血ガス（10:50）', when: '10:50' }] }), { ...day, kind: 'lab' });
     expect(r.observations.filter((o) => o.row.name === 'K').map((o) => o.at)).toEqual(['2026-11-21T10:50']);
     expect(r.observations.filter((o) => o.row.name === '心拍数').map((o) => o.at)).toEqual(['2026-11-21']);
+  });
+});
+
+// 入院時記載の標準の形：問題の一覧（#1〜#3）のあとに、問題ごとの見出しと A・P が続く。見出しの字は、一覧の字と同じ
+describe('問題の一覧と、同じ字の「#問題」の見出し', () => {
+  const ADM = [
+    '【プロブレムリスト】',
+    '#1 尿路感染症',
+    '#2 脱水',
+    '#3 高血圧症',
+    '',
+    '#1 尿路感染症',
+    'A）発熱と膿尿。',
+    'P）抗菌薬Xを開始。',
+    '#2 脱水',
+    'A）経口摂取の低下。',
+    'P）補液。',
+    '#3 高血圧症',
+    'A）血圧は低め。',
+    'P）降圧薬Yは中止。',
+  ].join('\n');
+  const admCtx: OrganizeContext = { text: ADM, kind: 'admission_note', at: '2026-11-16T17:30', encounterStart: '2026-11-16' };
+  const admAnswer = (segments: OrganizeAnswer['segments']): OrganizeAnswer =>
+    answer({
+      segments,
+      medications: [
+        { name: '抗菌薬X', dose: null, action: 'start', when: null },
+        { name: '降圧薬Y', dose: null, action: 'stop', when: null },
+      ],
+      problems: [
+        { name: '#1 尿路感染症', status: 'problem', activity: null },
+        { name: '#2 脱水', status: 'problem', activity: null },
+        { name: '#3 高血圧症', status: 'problem', activity: null },
+      ],
+    });
+  const heading = (n: string) => ADM.lastIndexOf(n);
+
+  const check = (r: ReturnType<typeof applyOrganization>) => {
+    // 見出しの区切りは、一覧ではなく、見出しの行から
+    const headings = r.segments.filter((g) => g.label === 'problem_heading');
+    expect(headings.map((g) => g.start)).toEqual([heading('#1 尿路感染症'), heading('#2 脱水'), heading('#3 高血圧症')]);
+    // 問題の場所も、見出しの行
+    expect(r.problems.map((p) => p.start)).toEqual([heading('#1 尿路感染症'), heading('#2 脱水'), heading('#3 高血圧症')]);
+    // 問題ごとの範囲には、その問題の A・P の薬だけが入る（別の問題の薬を結びつけない）
+    const segs = r.segments.map((g) => ({ ...g, sourceId: 's' }));
+    const meds = r.medications.map((m, i) => ({ ...m, id: String(i), sourceId: 's' }));
+    const mention = (i: number) => {
+      const p = r.problems[i];
+      if (p === undefined) throw new Error('問題がない');
+      return { id: String(i), sourceId: 's', threadId: null, name: p.name, status: p.status, activity: p.activity, at: p.at, start: p.start, end: p.end };
+    };
+    expect(relatedFacts([mention(0)], segs, { observations: [], medications: meds, events: [] }).medicationNames).toEqual(['抗菌薬X']);
+    expect(relatedFacts([mention(1)], segs, { observations: [], medications: meds, events: [] }).medicationNames).toEqual([]);
+    expect(relatedFacts([mention(2)], segs, { observations: [], medications: meds, events: [] }).medicationNames).toEqual(['降圧薬Y']);
+    // 一覧は、見出しの区切りに入らない
+    expect(problemBlocks([mention(0)], segs)).toEqual([{ sourceId: 's', start: heading('#1 尿路感染症'), end: heading('#2 脱水') }]);
+  };
+
+  test('見出しと A・P の区切りがあるとき', () => {
+    check(
+      applyOrganization(
+        admAnswer([
+          { label: 'other', start: '【プロブレムリスト】', when: null },
+          { label: 'problem_heading', start: '#1 尿路感染症', when: null },
+          { label: 'assessment', start: 'A）発熱', when: null },
+          { label: 'plan', start: 'P）抗菌薬X', when: null },
+          { label: 'problem_heading', start: '#2 脱水', when: null },
+          { label: 'assessment', start: 'A）経口', when: null },
+          { label: 'plan', start: 'P）補液', when: null },
+          { label: 'problem_heading', start: '#3 高血圧症', when: null },
+          { label: 'assessment', start: 'A）血圧', when: null },
+          { label: 'plan', start: 'P）降圧薬Y', when: null },
+        ]),
+        admCtx,
+      ),
+    );
+  });
+
+  test('見出しだけが続くとき（A・P の区切りがない）も、後ろから置き直す', () => {
+    const r = applyOrganization(
+      admAnswer([
+        { label: 'other', start: '【プロブレムリスト】', when: null },
+        { label: 'problem_heading', start: '#1 尿路感染症', when: null },
+        { label: 'problem_heading', start: '#2 脱水', when: null },
+        { label: 'problem_heading', start: '#3 高血圧症', when: null },
+      ]),
+      admCtx,
+    );
+    expect(r.segments.filter((g) => g.label === 'problem_heading').map((g) => g.start)).toEqual([heading('#1 尿路感染症'), heading('#2 脱水'), heading('#3 高血圧症')]);
+    expect(r.problems.map((p) => p.start)).toEqual([heading('#1 尿路感染症'), heading('#2 脱水'), heading('#3 高血圧症')]);
+  });
+
+  test('一覧だけで見出しのない文は、これまでどおり一覧の場所', () => {
+    const LIST = ['#1 尿路感染症', '#2 脱水', 'A/P）補液と抗菌薬X。'].join('\n');
+    const r = applyOrganization(
+      answer({ segments: [{ label: 'assessment_plan', start: 'A/P）', when: null }], problems: [{ name: '#1 尿路感染症', status: 'problem', activity: null }] }),
+      { ...admCtx, text: LIST },
+    );
+    expect(r.problems.map((p) => p.start)).toEqual([0]);
+  });
+});
+
+describe('行頭の時刻と、日をまたいだ記載', () => {
+  test('バイタルの文：行頭の時刻が、その行の値の時刻（区切りの時刻・記載の日時より先）', () => {
+    const VITAL = ['16:00 BT 39.0 HR 112', '18:00 BT 38.6 HR 104', '尿量 420mL'].join('\n');
+    const r = applyOrganization(answer({ when: '16:00' }), { text: VITAL, kind: 'vital', at: '2026-11-16', encounterStart: '2026-11-16' });
+    expect(r.at).toBe('2026-11-16T16:00');
+    expect(r.observations.map((o) => [o.row.nameRaw, o.at])).toEqual([
+      ['BT', '2026-11-16T16:00'],
+      ['HR', '2026-11-16T16:00'],
+      ['BT', '2026-11-16T18:00'],
+      ['HR', '2026-11-16T18:00'],
+      ['尿量', '2026-11-16T16:00'],
+    ]);
+  });
+
+  test('AI が日時を返さなかった値・できごとも、行頭の時刻にする。行頭が日だけで同じ日なら、時刻のある日時のまま', () => {
+    const NOTE2 = ['11/17（入院2日目）9:30 回診', 'O) BT 37.6', '8:00 細菌検査室より連絡'].join('\n');
+    const r = applyOrganization(
+      answer({ measurements: [{ quote: 'BT 37.6', when: null, specimen: null }], events: [{ kind: 'other', title: '細菌検査室より連絡', when: null }] }),
+      { text: NOTE2, kind: 'progress_note', at: '2026-11-17T09:30', encounterStart: '2026-11-16' },
+    );
+    expect(r.observations.map((o) => o.at)).toEqual(['2026-11-17T09:30']);
+    expect(r.events.map((e) => e.at)).toEqual(['2026-11-17T08:00']);
+  });
+
+  test('日をまたいだ場所（本人が確かめた）より後ろの時刻だけの言い方は、翌日', () => {
+    const NURSE = ['夜勤帯の記録', '23:30 不穏あり。センサーマットを設置。', '0:15 報告。', '3:00 BT 37.4 HR 88'].join('\n');
+    const base = { text: NURSE, kind: 'nursing' as const, at: '2026-11-16', encounterStart: '2026-11-16' };
+    const ans = answer({
+      when: '23:30',
+      events: [{ kind: 'other', title: 'センサーマットを設置', when: '23:30' }],
+      measurements: [{ quote: 'BT 37.4 HR 88', when: '3:00', specimen: null }],
+    });
+    const same = applyOrganization(ans, base);
+    expect(same.observations.map((o) => o.at)).toEqual(['2026-11-16T03:00', '2026-11-16T03:00']);
+    const next = applyOrganization(ans, { ...base, nextDayFrom: NURSE.indexOf('0:15') });
+    expect(next.at).toBe('2026-11-16T23:30');
+    expect(next.events.map((e) => e.at)).toEqual(['2026-11-16T23:30']);
+    expect(next.observations.map((o) => o.at)).toEqual(['2026-11-17T03:00', '2026-11-17T03:00']);
+  });
+});
+
+describe('同じ日時の事実の並び', () => {
+  test('同じ記載の中では、書かれた順（id の順ではない）。「薬ごとの最後の記載」は、あとに書かれた中止', () => {
+    const at = '2026-11-16T17:30';
+    // id は、同じミリ秒の中では乱数の順：書かれた順と逆になりうる
+    const lines = medicationTimeline([
+      { id: 'B', sourceId: 's1', name: 'アジルサルタン', doseText: null, action: 'stop', at, start: 900 },
+      { id: 'A', sourceId: 's1', name: 'アジルサルタン', doseText: '20mg 1錠分1', action: 'continue', at, start: 300 },
+    ]);
+    expect(lines[0]?.entries.map((e) => e.action)).toEqual(['continue', 'stop']);
+  });
+  test('別の記載どうしは、入れた順', () => {
+    const at = '2026-11-16';
+    const lines = medicationTimeline([
+      { id: 'X2', sourceId: 's2', name: '薬A', doseText: null, action: 'stop', at, start: 0 },
+      { id: 'X1', sourceId: 's1', name: '薬A', doseText: null, action: 'start', at, start: 50 },
+    ]);
+    expect(lines[0]?.entries.map((e) => e.action)).toEqual(['start', 'stop']);
   });
 });
