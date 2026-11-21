@@ -198,6 +198,8 @@ AI が返すのは、次の3つだけ（構造化した出力）。
 | `user_edits` | 本人が調節したとき（CA-029：問題の確からしさ・状態・並び・外す・統合を解く・打った名前、記載の種類・日時・書いた人、区切りの見出し、値の項目名、なぞって足した、文を打ち直した） |
 | `ap_notes` | 本人が A/P を残す・直す・消すとき（段5。本人が書いたもの・AI の案から本人が選んだもの。文は選別を通した後の字） |
 | `ap_history` | 本人が A/P を残す・直す・種類を選び直す・消すとき（段5。**文は入らない**） |
+| `documents` | 本人がカルテ記載を「保存する」・直す・消すとき（段I。CA-054。文は選別を通した後の字） |
+| `document_history` | 本人がカルテ記載を残す・直す・消すとき（段I。**文は入らない**） |
 | `devices` | 端末の登録・外すとき・その日はじめて使ったとき（1日に1回） |
 | `entrance_daily` | 合鍵を間違えたとき |
 | `usage_daily` | AI を呼んだとき |
@@ -206,7 +208,7 @@ AI が返すのは、次の3つだけ（構造化した出力）。
 
 - 打った原文・AI へ送った文・AI の答えそのものは、どの表にも書かない。ログにも出さない。
 - 表を足すときは、先にこの一覧を直す。
-- いまある表（段0〜段5）は `devices`・`entrance_daily`・`patients`・`encounters`・`sources`・`observations`・`usage_daily`・`schema_migrations`・`segments`・`medications`・`events`・`problems`・`problem_threads`・`history`・`fact_edits`・`user_edits`・`ap_notes`・`ap_history`・`scale_links`。`apps/worker/test/writes.test.ts` が、migrations が作る表と、ソースの SQL が書く表を、この一覧と突き合わせる。
+- いまある表（段0〜段5）は `devices`・`entrance_daily`・`patients`・`encounters`・`sources`・`observations`・`usage_daily`・`schema_migrations`・`segments`・`medications`・`events`・`problems`・`problem_threads`・`history`・`fact_edits`・`user_edits`・`ap_notes`・`ap_history`・`scale_links`・`documents`・`document_history`。`apps/worker/test/writes.test.ts` が、migrations が作る表と、ソースの SQL が書く表を、この一覧と突き合わせる。
 
 ## 7. 段1 で作ったものと、案との違い
 
@@ -274,7 +276,7 @@ AI が返すのは、次の3つだけ（構造化した出力）。
 - **直せること**：外す・戻す。投薬の動き（開始・変更・中止・継続・記載なし）。できごとの種類。日時（日だけ・日時・不明）。打つ欄はない（打った文は選別を通す決まり。docs/01 の 2）。値の数・名前・用量・できごとの題は直さない（文に書かれたとおりのもの。違うなら外す）。
 - **整理し直したとき**：同じ文の、同じ場所・同じ字（投薬の名前・できごとの題・測定値の書かれた名前）の行に、直した値・外した印を引き継ぎ、origin を self のままにする。場所や字が変われば引き継がない（直した記録は残る）。
 - **見方**：外した事実は、経過表・検査・投薬・問題・いま・草案・回診リストの計算から除く。記載ごとの「事実を見る・直す」には出す（戻せる）。
-- **草案（段4）は、どの表にも書かない**（保存しない）。AI を呼んだ回数だけが、`usage_daily` に数えられる。
+- **出したカルテ記載・相談のやりとりは、どの表にも書かない**（保存しない。段I）。AI を呼んだ回数だけが、`usage_daily` に数えられる。残すのは、本人が「保存する」を押した記載だけ（15）。
 
 ## 11. 本人の調節で作ったもの（CA-029）
 
@@ -329,3 +331,17 @@ AI が返すのは、次の3つだけ（構造化した出力）。
 
 - **患者に付かない**（全患者に共通。本人の決定）：項目の名前と単位の書き方だけで、患者・記録の字は入らない。サーバーは、表にない名前・単位、バイタル、同じ単位の組を断る（`scaleLinkProblem`）。同じ組（向きは問わない）は1つ。
 - 見るとき（`labTrends`）に、決めた組の推移を1つにつなぐ。換算の倍率は持たない。
+
+## 15. カルテ記載（段I。CA-054）
+
+作った表は、`apps/worker/migrations/0010_documents.sql`。形と確かめは、`packages/core/src/notes/document.ts`。
+
+| 表 | 列 |
+|---|---|
+| `documents` | id・patient_id・encounter_id・type（er_record・outpatient_first・outpatient_revisit・admission・progress・interim_summary・discharge_summary）・day（その記載の日。日付だけ）・sections（見出しごとの文と根拠の参照の JSON：`[{ key, text, refs }]`。text は**選別を通した後の字**で、1つの見出しは 6,000 字・全体で 18,000 字まで。refs は場所・題・頁・URL だけで、**本文・抜き出しは入れない**。20 件まで）・origin（ai：AI が書いたまま・ai_edited：AI が書いて先生が直した・self：先生が書いた）・entered_at・updated_at |
+| `document_history` | id・patient_id・at・document_id・action（add・edit・delete）・origin。**文は残さない** |
+
+- 見出しは、種類ごとに決めたもの（`DOC_SECTIONS`）だけ。同じ見出しは1回。中身のない見出しは、選別に通さず空のまま残す（書かれていないことを補わない）。全部が空なら残さない。
+- 患者を消すと、記載と履歴も消える（`PATIENT_TABLES`）。
+- 出した記載・相談のやりとり・数の照らし合わせの表（数だけ）は保存しない。
+

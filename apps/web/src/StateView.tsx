@@ -111,7 +111,7 @@ function recentCounts(items: readonly RecentItem[]): string {
 
 export function StateView({ state, sources, onProblems }: { state: PatientState; sources: readonly Source[]; onProblems: () => void }) {
   const textOf = (sourceId: string, start: number, end: number): string => sources.find((s) => s.id === sourceId)?.text.slice(start, end).trim() ?? '';
-  // A・P の文は4行までに畳み、押すと全文（段H。「いま」を1〜2画面に）。開いたものは画面のメモリだけ
+  // いまの問題は、名前の1行だけ。押すと、最後の A・P と、その問題の記載に書かれた値・薬が開く（段I。「いま」を1〜2画面に）。開いたものは画面のメモリだけ
   const [open, setOpen] = useState<ReadonlySet<string>>(new Set());
   const toggle = (id: string) => {
     const next = new Set(open);
@@ -138,83 +138,102 @@ export function StateView({ state, sources, onProblems }: { state: PatientState;
         {state.current.length === 0 ? (
           <p className="note">いまの問題として書かれたものはありません。</p>
         ) : (
-          <ul className="threads">
-            {state.current.map(({ thread, notes, values, medications }) => (
-              <li key={thread.id} className="thread" data-testid="state-problem">
-                <div className="thread-head">
-                  <strong className="thread-name">{thread.name}</strong>
-                  <span className="tag">{PROBLEM_STATUS_NAMES[thread.status]}</span>
-                  {notes.length > 0 && <span className="thread-when">{showDateTime(notes[0]?.at ?? null)}</span>}
-                </div>
-                {notes.length > 0 ? (
-                  <div
-                    className={open.has(thread.id) ? 'thread-note' : 'thread-note clamped'}
-                    role="button"
-                    tabIndex={0}
-                    aria-expanded={open.has(thread.id)}
-                    onClick={() => {
-                      toggle(thread.id);
-                    }}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter' || e.key === ' ') toggle(thread.id);
-                    }}
-                    data-testid="state-note"
-                  >
-                    {notes.map((n) => (
-                      <p key={`${n.sourceId}:${String(n.start)}`} className="source-text">
-                        <span className="sr-only">{SEGMENT_LABEL_NAMES[n.label]}：</span>
-                        {textOf(n.sourceId, n.start, n.end)}
-                      </p>
-                    ))}
-                  </div>
-                ) : (
-                  <p className="thread-sub">A・P の区切りは見つかっていません（最後の記載 {showDateTime(thread.last)}）。</p>
-                )}
-                {(values.length > 0 || medications.length > 0) && (
-                  <details className="thread-more">
-                    <summary>
-                      この問題の記載に書かれた{values.length > 0 && `値 ${String(values.length)}`}
-                      {values.length > 0 && medications.length > 0 && '・'}
-                      {medications.length > 0 && `薬 ${String(medications.length)}`}
-                    </summary>
-                    {values.length > 0 && (
-                      <p className="thread-sub" data-testid="state-problem-values">
-                        記載に書かれた値：{values.map((o) => `${o.name ?? o.nameRaw} ${o.comparator ?? ''}${o.valueText}${o.unit === null ? '' : ` ${o.unit}`}（${showDateTime(o.at)}）`).join('・')}
-                      </p>
+          <>
+            <div className="row-actions">
+              <button
+                type="button"
+                className="chip small"
+                onClick={() => {
+                  const all = state.current.every(({ thread }) => open.has(thread.id));
+                  setOpen(all ? new Set() : new Set([...state.current.map(({ thread }) => thread.id), ...(state.sharedPlan === null ? [] : ['shared'])]));
+                }}
+                data-testid="state-open-all"
+              >
+                {state.current.every(({ thread }) => open.has(thread.id)) ? 'すべて畳む' : 'すべて開く'}
+              </button>
+            </div>
+            <ul className="threads compact">
+              {state.current.map(({ thread, notes, values, medications }) => {
+                const on = open.has(thread.id);
+                return (
+                  <li key={thread.id} className={on ? 'thread open' : 'thread'} data-testid="state-problem">
+                    <button
+                      type="button"
+                      className="thread-head thread-toggle"
+                      aria-expanded={on}
+                      onClick={() => {
+                        toggle(thread.id);
+                      }}
+                      data-testid="state-problem-head"
+                    >
+                      <span className="fold-mark" aria-hidden="true">
+                        {on ? '▾' : '▸'}
+                      </span>
+                      <strong className="thread-name">{thread.name}</strong>
+                      <span className="tag">{PROBLEM_STATUS_NAMES[thread.status]}</span>
+                      <span className="thread-when">{showDateTime(notes[0]?.at ?? thread.last)}</span>
+                    </button>
+                    {on && (
+                      <>
+                        {notes.length > 0 ? (
+                          <div className="thread-note" data-testid="state-note">
+                            {notes.map((n) => (
+                              <p key={`${n.sourceId}:${String(n.start)}`} className="source-text">
+                                <span className="sr-only">{SEGMENT_LABEL_NAMES[n.label]}：</span>
+                                {textOf(n.sourceId, n.start, n.end)}
+                              </p>
+                            ))}
+                          </div>
+                        ) : (
+                          <p className="thread-sub">A・P の区切りは見つかっていません（最後の記載 {showDateTime(thread.last)}）。</p>
+                        )}
+                        {values.length > 0 && (
+                          <p className="thread-sub" data-testid="state-problem-values">
+                            記載に書かれた値：{values.map((o) => `${o.name ?? o.nameRaw} ${o.comparator ?? ''}${o.valueText}${o.unit === null ? '' : ` ${o.unit}`}（${showDateTime(o.at)}）`).join('・')}
+                          </p>
+                        )}
+                        {medications.length > 0 && (
+                          <p className="thread-sub" data-testid="state-problem-meds">
+                            記載に書かれた薬：
+                            {medications.map((m) => `${m.name} ${m.action === null ? '動きの記載なし' : MEDICATION_ACTION_NAMES[m.action]}（${showDateTime(m.at)}）`).join('・')}
+                          </p>
+                        )}
+                      </>
                     )}
-                    {medications.length > 0 && (
-                      <p className="thread-sub" data-testid="state-problem-meds">
-                        記載に書かれた薬：
-                        {medications.map((m) => `${m.name} ${m.action === null ? '動きの記載なし' : MEDICATION_ACTION_NAMES[m.action]}（${showDateTime(m.at)}）`).join('・')}
-                      </p>
-                    )}
-                  </details>
-                )}
-              </li>
-            ))}
-          </ul>
+                  </li>
+                );
+              })}
+            </ul>
+          </>
         )}
         {state.sharedPlan !== null && (
-          <div
-            className={open.has('shared') ? 'thread-note' : 'thread-note clamped'}
-            role="button"
-            tabIndex={0}
-            aria-expanded={open.has('shared')}
-            onClick={() => {
-              toggle('shared');
-            }}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' || e.key === ' ') toggle('shared');
-            }}
-            data-testid="state-shared-plan"
-          >
-            <span className="part-label">記載全体の方針（問題に分けて書かれていない P）・{showDateTime(state.sharedPlan.at)}</span>
-            {state.sharedPlan.parts.map((n) => (
-              <p key={`${n.sourceId}:${String(n.start)}`} className="source-text">
-                <span className="sr-only">{SEGMENT_LABEL_NAMES[n.label]}：</span>
-                {textOf(n.sourceId, n.start, n.end)}
-              </p>
-            ))}
+          <div className={open.has('shared') ? 'thread open' : 'thread'} data-testid="state-shared">
+            <button
+              type="button"
+              className="thread-head thread-toggle"
+              aria-expanded={open.has('shared')}
+              onClick={() => {
+                toggle('shared');
+              }}
+              data-testid="state-shared-head"
+            >
+              <span className="fold-mark" aria-hidden="true">
+                {open.has('shared') ? '▾' : '▸'}
+              </span>
+              <strong className="thread-name">記載全体の方針</strong>
+              <span className="tag">問題に分けて書かれていない P</span>
+              <span className="thread-when">{showDateTime(state.sharedPlan.at)}</span>
+            </button>
+            {open.has('shared') && (
+              <div className="thread-note" data-testid="state-shared-plan">
+                {state.sharedPlan.parts.map((n) => (
+                  <p key={`${n.sourceId}:${String(n.start)}`} className="source-text">
+                    <span className="sr-only">{SEGMENT_LABEL_NAMES[n.label]}：</span>
+                    {textOf(n.sourceId, n.start, n.end)}
+                  </p>
+                ))}
+              </div>
+            )}
           </div>
         )}
         {(state.closed.length > 0 || state.ruledOut.length > 0) && (

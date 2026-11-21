@@ -11,7 +11,6 @@ import {
   dayStrip,
   dayWindow,
   hospitalDay,
-  noteDays,
   relatedFacts,
   labTrends,
   medicationTimeline,
@@ -64,8 +63,7 @@ import { SourceFacts } from './SourceFacts.tsx';
 import { SourceText } from './SourceText.tsx';
 import { StateView } from './StateView.tsx';
 import { nextDayLabel } from './NextDayAsk.tsx';
-import { DraftView } from './DraftView.tsx';
-import { NoteView } from './NoteView.tsx';
+import { DocumentView } from './DocumentView.tsx';
 
 // 見方（段H。CA-053）：9つのタブを4つにまとめた。経過・検査・投薬・できごと・記載は、どれも同じ時間の上のものなので、
 // 「経過」の中で、日の帯と表示の範囲を分け合って切り替える。草案は、問題の中。
@@ -128,6 +126,8 @@ export function PatientPage({ patientId, onBack, onLeft }: { patientId: string; 
   const [composing, setComposing] = useState<boolean | null>(null);
   const wide = useWide();
   const [kindFilter, setKindFilter] = useState<SourceKind | 'all'>('all');
+  // 記録のタブ：開いた記載（段I。既定は、いちばん新しいものだけ開く）。画面のメモリだけ
+  const [opened, setOpened] = useState<ReadonlyMap<string, boolean>>(new Map());
   const composerRef = useRef<HTMLElement>(null);
   const [panel, setPanel] = useState<'none' | 'encounter' | 'end' | 'kind' | 'delete'>('none');
 
@@ -210,16 +210,11 @@ export function PatientPage({ patientId, onBack, onLeft }: { patientId: string; 
     setRange(d === null ? DEFAULT_TIMELINE_RANGE : { window: dayWindow(d) });
   };
   const onDayOf = (at: string | null): boolean => day === null || (at !== null && at.slice(0, 10) === day);
-  const noteDaysHere = current === null ? [] : noteDays(current.id, record.sources);
   const hospital = current !== null && current.kind === 'inpatient' && strip.length > 0 ? strip.at(-1)?.hospitalDay ?? null : null;
 
+  // カルテ記載（段I。CA-054）：種類と日を選んで「出す」。日の帯で選んだ日が、記載の日の既定になる
   const noteView = (key: string) =>
-    current === null ? null : (
-      <>
-        {day !== null && !noteDaysHere.includes(day) && <p className="note">{`${day.slice(5).replace('-', '/')} には記載がありません。いちばん新しい記載の日を出しています。`}</p>}
-        <NoteView key={key} record={record} encounter={current} day={day} onDay={selectDay} onChanged={load} onLeft={onLeft} />
-      </>
-    );
+    current === null ? null : <DocumentView key={key} record={record} encounter={current} days={strip.map((d) => d.day)} selectedDay={day} onChanged={load} onLeft={onLeft} />;
 
   return (
     <main className={wide ? 'page wide' : 'page'} data-testid="patient-page">
@@ -511,14 +506,6 @@ export function PatientPage({ patientId, onBack, onLeft }: { patientId: string; 
               onChanged={load}
               onLeft={onLeft}
             />
-            {current !== null && (
-              <section className="draft-section" aria-labelledby="draft-title">
-                <h3 id="draft-title" className="sub-title">
-                  草案（AI。保存しません）
-                </h3>
-                <DraftView key={current.id} encounterId={current.id} onLeft={onLeft} />
-              </section>
-            )}
           </>
         )}
         {tab === 'notes' && kindsHere.length > 1 && (
@@ -542,6 +529,21 @@ export function PatientPage({ patientId, onBack, onLeft }: { patientId: string; 
         {tab !== 'notes' ? null : sources.length === 0 ? (
           <p className="note">この受診には、まだ、記録がありません。</p>
         ) : (
+          <>
+          <div className="row-actions sources-actions">
+            <span className="note">新しい順。押すと全体を開きます。</span>
+            <button
+              type="button"
+              className="chip small"
+              onClick={() => {
+                const allOpen = shownSources.every((s, i) => opened.get(s.id) ?? i === 0);
+                setOpened(new Map(shownSources.map((s) => [s.id, !allOpen])));
+              }}
+              data-testid="sources-open-all"
+            >
+              {shownSources.every((s, i) => opened.get(s.id) ?? i === 0) ? 'すべて畳む' : 'すべて開く'}
+            </button>
+          </div>
           <ul className="sources" data-testid="sources">
             {shownSources.map((s, i) => {
               const dayHead = s.at === null ? '日時不明' : s.at.slice(0, 10);
@@ -565,6 +567,10 @@ export function PatientPage({ patientId, onBack, onLeft }: { patientId: string; 
                     edits={record.factEdits}
                     userEdits={record.userEdits}
                     encounter={current}
+                    open={opened.get(s.id) ?? i === 0}
+                    onToggle={() => {
+                      setOpened(new Map(opened).set(s.id, !(opened.get(s.id) ?? i === 0)));
+                    }}
                     onChanged={load}
                     onLeft={onLeft}
                   />
@@ -572,6 +578,7 @@ export function PatientPage({ patientId, onBack, onLeft }: { patientId: string; 
               );
             })}
           </ul>
+          </>
         )}
       </section>
 
@@ -623,6 +630,8 @@ function SourceCard({
   edits,
   userEdits,
   encounter,
+  open,
+  onToggle,
   onChanged,
   onLeft,
 }: {
@@ -632,6 +641,9 @@ function SourceCard({
   edits: readonly FactEdit[];
   userEdits: readonly UserEdit[];
   encounter: Encounter | null;
+  /** 全体を開いているか（閉じているときは、日時・種類・書いた人・冒頭の1行だけ。段I） */
+  open: boolean;
+  onToggle: () => void;
   onChanged: () => void;
   onLeft: () => void;
 }) {
@@ -661,18 +673,35 @@ function SourceCard({
   // 読めなかった部分は、保存した文から、同じ決まりで読み直して出す（保存していない）
   const unread = READ_VALUES_KINDS.includes(source.kind) ? readLabText(source.text).unread : [];
 
+  const firstLine = source.text.split(/\r?\n/u).find((l) => l.trim() !== '')?.trim() ?? '';
+  const head = (
+    <button type="button" className="source-head source-toggle" aria-expanded={open} onClick={onToggle} data-testid="source-summary">
+      <span className="source-when">
+        <span className="fold-mark" aria-hidden="true">
+          {open ? '▾' : '▸'}
+        </span>
+        {showDateTime(source.at)}
+        {day !== null && <span className="tag">第{String(day)}病日</span>}
+      </span>
+      <span className="source-kind">
+        {SOURCE_KIND_LABELS[source.kind]}・{AUTHOR_ROLE_LABELS[source.authorRole]}
+        {CARTE_ONLY_KINDS.includes(source.kind) && <span className="tag">carte だけの記録</span>}
+        {source.organized === null && <span className="tag">未整理</span>}
+        {source.organized === 'failed' && <span className="tag">整理できず</span>}
+      </span>
+      {!open && <span className="source-first">{firstLine}</span>}
+    </button>
+  );
+  if (!open)
+    return (
+      <li className="source folded" data-testid="source">
+        {head}
+      </li>
+    );
+
   return (
     <li className="source" data-testid="source">
-      <div className="source-head">
-        <span className="source-when">
-          {showDateTime(source.at)}
-          {day !== null && <span className="tag">第{String(day)}病日</span>}
-        </span>
-        <span className="source-kind">
-          {SOURCE_KIND_LABELS[source.kind]}・{AUTHOR_ROLE_LABELS[source.authorRole]}
-          {CARTE_ONLY_KINDS.includes(source.kind) && <span className="tag">carte だけの記録</span>}
-        </span>
-      </div>
+      {head}
       <SourceText text={source.text} segments={segments} />
       <SourceFacts medications={facts.medications} events={facts.events} observations={facts.observations} edits={edits} userEdits={userEdits} onChanged={onChanged} onLeft={onLeft} />
       <SourceAppend key={source.text} source={source} onChanged={onChanged} onLeft={onLeft} />

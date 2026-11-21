@@ -365,3 +365,27 @@ describe('電話の幅と、端末の保存先', () => {
     expect(problems).toEqual([]);
   });
 });
+
+describe('記録のタブの縮め（段I）', () => {
+  test('いちばん新しい記載だけが開き、ほかは「日時・種類・冒頭の1行」の1行。押すと開く。すべて開く・畳む', async () => {
+    const page = await open('iPhone 15');
+    await newPatient(page);
+    await send(page, '1つ目の記載。午前の回診。\n2行目');
+    await send(page, '2つ目の記載。午後の回診。');
+    await page.getByTestId('tab-notes').click();
+    const rows = page.getByTestId('source');
+    await expect.poll(() => rows.count()).toBe(2);
+    // 新しい順：はじめの1件は開いて全文、2件目は1行
+    expect(await rows.nth(0).getByTestId('source-text').count()).toBe(1);
+    expect(await rows.nth(1).getByTestId('source-text').count()).toBe(0);
+    expect(await rows.nth(1).getByTestId('source-summary').textContent()).toContain('1つ目の記載。午前の回診。');
+    expect(await rows.nth(1).getByTestId('source-summary').textContent()).not.toContain('2行目');
+    await rows.nth(1).getByTestId('source-summary').click();
+    expect(await rows.nth(1).getByTestId('source-text').textContent()).toContain('2行目');
+    await page.getByTestId('sources-open-all').click();
+    expect(await page.getByTestId('source-text').count()).toBe(0);
+    await page.getByTestId('sources-open-all').click();
+    expect(await page.getByTestId('source-text').count()).toBe(2);
+    expect(await fits(page)).toBe(true);
+  });
+});

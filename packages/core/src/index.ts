@@ -19,7 +19,6 @@ export * from './time/day.ts';
 export * from './problems/threads.ts';
 export * from './views/state.ts';
 export * from './record/edits.ts';
-export * from './draft/course.ts';
 export * from './notes/ap.ts';
-export * from './notes/note.ts';
 export * from './views/window.ts';
+export * from './notes/document.ts';

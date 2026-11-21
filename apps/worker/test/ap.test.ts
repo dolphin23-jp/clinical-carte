@@ -1,10 +1,10 @@
-// 段5（CA-030〜035）：A/P の記録（本人・AI の案から採用）・A/P の案・議論・参照元（書籍とネット）。AI と RAG は試験の代役。
-import type { OrganizeAnswer, ProposalAnswer } from '@clinical-carte/core';
+// 段5（CA-030〜035）：A/P の記録（これまでに残したもの）・参照元（書籍）。AI と RAG は試験の代役。カルテ記載（段I）は documents.test.ts
+import type { OrganizeAnswer } from '@clinical-carte/core';
 import { describe, expect, test } from 'vitest';
 
 import { ragSearcherOf } from '../src/index.ts';
 import { type BookHit, type BookSearcher, createRagSearcher } from '../src/references.ts';
-import { EMPTY_ORGANIZE, type FakeApAnswers, fakeOrganizer, fakeSelector, registered, world } from './support.ts';
+import { EMPTY_ORGANIZE, type FakeDocAnswers, fakeOrganizer, fakeSelector, registered, world } from './support.ts';
 
 const NAME = ['架空', '花子'].join('');
 const NOTE = `${NAME}さん。\n#1 市中肺炎\nS) 咳は減った\nO) 体温 37.1\nA) 抗菌薬に反応\nP) セフトリアキソン 2g 継続`;
@@ -37,10 +37,9 @@ class FakeBooks implements BookSearcher {
   }
 }
 
-const BOOK: BookHit = { title: '架空の内科学', path: '呼吸器 > 肺炎', page: '120', snippet: '市中肺炎では、臨床の改善を見て、静注から経口へ切り替える。' };
 
-async function setup(ap: FakeApAnswers = {}, overrides: Parameters<typeof world>[0] = {}) {
-  const organizer = fakeOrganizer(() => ({ ok: true, answer: ANSWER }), undefined, undefined, ap);
+async function setup(docs: FakeDocAnswers = {}, overrides: Parameters<typeof world>[0] = {}) {
+  const organizer = fakeOrganizer(() => ({ ok: true, answer: ANSWER }), undefined, docs);
   const selector = fakeSelector([{ kind: 'person', quote: NAME }]);
   const w = world({ selector, organizer, ...overrides });
   const { cookie } = await registered(w);
@@ -55,24 +54,6 @@ async function setup(ap: FakeApAnswers = {}, overrides: Parameters<typeof world>
   const threadId = (await record()).problemThreads[0]?.id ?? '';
   return { w, cookie, organizer, selector, encounterId: created.encounter.id, patientId: created.patient.id, threadId, record };
 }
-
-const proposal: ProposalAnswer = {
-  problems: [
-    {
-      problem: 'T1',
-      assessment: [
-        { text: '体温 37.1 で、抗菌薬に反応している。', cites: ['Q1', 'Q4'], basis: 'record' },
-        { text: '体温 38.5 まで上がった。', cites: ['Q1'], basis: 'record' }, // 根拠にない数
-      ],
-      plan: [
-        { text: 'セフトリアキソン 2g を継続する。', cites: ['Q2'], basis: 'record', kind: 'tx' },
-        { text: '改善が続けば、経口への切り替えを検討する。', cites: ['B1'], basis: 'source', kind: 'tx' },
-        { text: 'アモキシシリン 500mg に切り替える。', cites: ['B1'], basis: 'source', kind: 'tx' }, // 出典にない用量
-        { text: '根拠のない方針。', cites: [], basis: 'inference', kind: 'other' },
-      ],
-    },
-  ],
-};
 
 describe('A/P を残す', () => {
   test('本人が書いた A/P は、選別を通して残る（名前は置き換わる）。直すと選別をまた通り、消すと履歴に残る（文は残さない）', async () => {
@@ -163,133 +144,6 @@ describe('A/P を残す', () => {
     });
     expect(r.status).toBe(502);
     expect(failing.w.db.raw.prepare('SELECT COUNT(*) AS n FROM ap_notes').get()).toEqual({ n: 0 });
-  });
-});
-
-describe('A/P の案', () => {
-  test('記録の引用と書籍を資料にし、確かめた文だけを返す（根拠にない数・根拠のない文は出さず、数だけ）。何も保存しない', async () => {
-    const books = new FakeBooks([BOOK]);
-    const s = await setup({ propose: () => ({ ok: true, answer: proposal }) }, { books });
-    const before = s.w.db.raw.prepare('SELECT COUNT(*) AS n FROM ap_notes').get();
-    const r = await s.w.call('POST', `/api/encounters/${s.encounterId}/ap-proposal`, { cookie: s.cookie, body: { day: '2026-11-19', threadIds: [s.threadId], web: false } });
-    expect(r.status).toBe(200);
-    const body = (await r.json()) as {
-      proposal: { problems: { assessment: { text: string; basis: string }[]; plan: { text: string; basis: string; kind: string; cites: { id: string; ref: { k: string } }[] }[] }[]; rejected: Record<string, number> };
-      books: number;
-      web: number;
-    };
-    const p = body.proposal.problems[0];
-    expect(p?.assessment.map((x) => x.text)).toEqual(['体温 37.1 で、抗菌薬に反応している。']);
-    expect(p?.plan.map((x) => [x.text, x.basis, x.kind])).toEqual([
-      ['セフトリアキソン 2g を継続する。', 'record', 'tx'],
-      ['改善が続けば、経口への切り替えを検討する。', 'source', 'tx'],
-    ]);
-    expect(p?.plan[1]?.cites[0]?.ref.k).toBe('book');
-    expect(body.proposal.rejected).toEqual({ number: 2, no_cite: 1 });
-    expect(body.books).toBe(1);
-    expect(body.web).toBe(0);
-    // 書籍に送ったのは、問題の名前だけ
-    expect(books.asked).toEqual([['#1 市中肺炎']]);
-    // AI に送った資料：記録の A・P・S・O の区切り（置き換えた後）と書籍の抜き出し。区切りの外の文（名前の行）は送らない
-    const sent = s.organizer.proposed[0] ?? '';
-    expect(sent).toContain('A) 抗菌薬に反応');
-    expect(sent).toContain('O) 体温 37.1');
-    expect(sent).toContain(BOOK.snippet);
-    expect(sent).not.toContain(NAME);
-    expect(sent).not.toContain('〔氏名〕さん');
-    // ウェブ検索は頼まなければ呼ばない
-    expect(s.organizer.researched).toHaveLength(0);
-    expect(s.w.db.raw.prepare('SELECT COUNT(*) AS n FROM ap_notes').get()).toEqual(before);
-  });
-
-  test('ウェブ検索を頼むと、問題の名前だけを検索の係に渡し、引用を W の出典にする。AI の回数は2回に数える', async () => {
-    const s = await setup({
-      research: () => ({ ok: true, hits: [{ title: '架空のガイドライン', url: 'https://example.org/cap', citedText: '臨床的に安定すれば、経口抗菌薬へ切り替える。' }] }),
-      propose: () => ({
-        ok: true,
-        answer: { problems: [{ problem: 'T1', assessment: [], plan: [{ text: '安定すれば経口への切り替えを検討する。', cites: ['W1'], basis: 'source', kind: 'tx' }] }] },
-      }),
-    });
-    const r = await s.w.call('POST', `/api/encounters/${s.encounterId}/ap-proposal`, { cookie: s.cookie, body: { day: '2026-11-19', threadIds: [s.threadId], web: true } });
-    expect(r.status).toBe(200);
-    const body = (await r.json()) as { proposal: { problems: { plan: { cites: { ref: unknown }[] }[] }[] }; web: number; webFailed: boolean };
-    expect(body.web).toBe(1);
-    expect(body.webFailed).toBe(false);
-    expect(body.proposal.problems[0]?.plan[0]?.cites[0]?.ref).toEqual({ k: 'web', title: '架空のガイドライン', url: 'https://example.org/cap' });
-    expect(JSON.parse(s.organizer.researched[0] ?? '{}')).toEqual({ problems: ['#1 市中肺炎'] });
-    expect(s.w.db.raw.prepare('SELECT calls FROM usage_daily').get()).toEqual({ calls: 2 + 2 }); // 取り込みの選別1回・整理1回＋検索1回・案1回
-  });
-
-  test('ウェブ検索が失敗しても、記録だけで案を作り、失敗したことを返す。AI の失敗は名前だけ', async () => {
-    const s = await setup({ research: () => ({ ok: false, reason: 'unavailable' }), propose: () => ({ ok: true, answer: proposal }) });
-    const r = await s.w.call('POST', `/api/encounters/${s.encounterId}/ap-proposal`, { cookie: s.cookie, body: { day: '2026-11-19', threadIds: [s.threadId], web: true } });
-    expect(((await r.json()) as { webFailed: boolean }).webFailed).toBe(true);
-    const bad = await setup({ propose: () => ({ ok: false, reason: 'refused' }) });
-    const b = await bad.w.call('POST', `/api/encounters/${bad.encounterId}/ap-proposal`, { cookie: bad.cookie, body: { day: '2026-11-19', threadIds: [bad.threadId], web: false } });
-    expect(b.status).toBe(422);
-    expect(await b.json()).toEqual({ error: 'ai_refused' });
-  });
-
-  test('記載がまだない日・知らない筋では、AI を呼ばない。上限なら呼ばない', async () => {
-    const s = await setup({ propose: () => ({ ok: true, answer: proposal }) });
-    const early = await s.w.call('POST', `/api/encounters/${s.encounterId}/ap-proposal`, { cookie: s.cookie, body: { day: '2026-11-18', threadIds: [s.threadId], web: false } });
-    expect(early.status).toBe(422);
-    const unknown = await s.w.call('POST', `/api/encounters/${s.encounterId}/ap-proposal`, { cookie: s.cookie, body: { day: '2026-11-19', threadIds: ['01KAAAAAAAAAAAAAAAAAAAAAAA'], web: false } });
-    expect(unknown.status).toBe(404);
-    expect(s.organizer.proposed).toHaveLength(0);
-    const limited = await setup({ propose: () => ({ ok: true, answer: proposal }) }, { dailyAiLimit: 2 }); // 取り込みの選別と整理で、2回を使い切る
-    const r = await limited.w.call('POST', `/api/encounters/${limited.encounterId}/ap-proposal`, { cookie: limited.cookie, body: { day: '2026-11-19', threadIds: [limited.threadId], web: false } });
-    expect(r.status).toBe(429);
-    expect(limited.organizer.proposed).toHaveLength(0);
-  });
-});
-
-describe('議論', () => {
-  test('問いとやりとりを、資料と一緒に送り、確かめた答えだけを返す。何も保存しない。外の検索には問いを渡さない', async () => {
-    const books = new FakeBooks([BOOK]);
-    const s = await setup(
-      {
-        research: () => ({ ok: true, hits: [] }),
-        discuss: () => ({
-          ok: true,
-          answer: {
-            paragraphs: [
-              { text: '改善が続けば、経口への切り替えは選択肢です。', cites: ['B1'], basis: 'source' },
-              { text: '7 日で終えられます。', cites: ['B1'], basis: 'source' },
-            ],
-          },
-        }),
-      },
-      { books },
-    );
-    const question = '経口に切り替えるのは早すぎるか、体温 37.1 で判断してよいか';
-    const r = await s.w.call('POST', `/api/encounters/${s.encounterId}/discuss`, {
-      cookie: s.cookie,
-      body: { threadId: s.threadId, day: '2026-11-19', web: true, question, history: [{ role: 'doctor', text: '前の問い' }, { role: 'ai', text: '前の答え' }] },
-    });
-    expect(r.status).toBe(200);
-    const body = (await r.json()) as { discussion: { paragraphs: { text: string }[]; rejected: Record<string, number> } };
-    expect(body.discussion.paragraphs.map((p) => p.text)).toEqual(['改善が続けば、経口への切り替えは選択肢です。']);
-    expect(body.discussion.rejected).toEqual({ number: 1 });
-    const sent = JSON.parse(s.organizer.discussed[0] ?? '{}') as { question: string; conversation: unknown[] };
-    expect(sent.question).toBe(question);
-    expect(sent.conversation).toHaveLength(2);
-    // 外の検索（RAG・ウェブ）には、問いもやりとりも渡さない（問題の名前だけ）
-    expect(books.asked).toEqual([['#1 市中肺炎']]);
-    expect(s.organizer.researched[0]).not.toContain('37.1');
-    expect(s.w.db.raw.prepare('SELECT COUNT(*) AS n FROM ap_notes').get()).toEqual({ n: 0 });
-  });
-
-  test('問い・やりとりに電話・メールなどの形があれば、送らない', async () => {
-    const s = await setup();
-    const phone = ['090', '1234', '5678'].join('-');
-    const r = await s.w.call('POST', `/api/encounters/${s.encounterId}/discuss`, {
-      cookie: s.cookie,
-      body: { threadId: s.threadId, day: '2026-11-19', web: false, question: `連絡先は ${phone}`, history: [] },
-    });
-    expect(r.status).toBe(422);
-    expect(await r.json()).toEqual({ error: 'shape' });
-    expect(s.organizer.discussed).toHaveLength(0);
   });
 });
 

@@ -1,5 +1,5 @@
 // 整理を頼む先（AI）の形。本物は anthropic.ts、試験では、決まった答えを返す代役を渡す。
-import type { DiscussAnswer, DraftAnswer, LinkAnswer, OrganizeAnswer, ProposalAnswer } from '@clinical-carte/core';
+import type { DocumentAnswer, LinkAnswer, OrganizeAnswer, ReviseAnswer } from '@clinical-carte/core';
 
 import type { OrganizePromptChoice } from './prompt.ts';
 import type { WebHit } from './references.ts';
@@ -7,10 +7,9 @@ import type { WebHit } from './references.ts';
 import type { SelectorFailure } from './selector.ts';
 
 export type OrganizerResult = { readonly ok: true; readonly answer: OrganizeAnswer } | { readonly ok: false; readonly reason: SelectorFailure };
-export type DrafterResult = { readonly ok: true; readonly answer: DraftAnswer } | { readonly ok: false; readonly reason: SelectorFailure };
 export type ResearchResult = { readonly ok: true; readonly hits: readonly WebHit[] } | { readonly ok: false; readonly reason: SelectorFailure };
-export type ProposerResult = { readonly ok: true; readonly answer: ProposalAnswer } | { readonly ok: false; readonly reason: SelectorFailure };
-export type DiscussResult = { readonly ok: true; readonly answer: DiscussAnswer } | { readonly ok: false; readonly reason: SelectorFailure };
+export type DocumentResult = { readonly ok: true; readonly answer: DocumentAnswer } | { readonly ok: false; readonly reason: SelectorFailure };
+export type ReviseResult = { readonly ok: true; readonly answer: ReviseAnswer } | { readonly ok: false; readonly reason: SelectorFailure };
 export type LinkerResult = { readonly ok: true; readonly answer: LinkAnswer } | { readonly ok: false; readonly reason: SelectorFailure };
 
 export interface Organizer {
@@ -19,12 +18,10 @@ export interface Organizer {
   organize(text: string, prompt?: OrganizePromptChoice): Promise<OrganizerResult>;
   /** 問題の筋のつなぎ（段3a）：問題の名前と記載の行（JSON。core の linkRequest が作る）から、同じ問題を記号で指す。例外を投げない */
   link(message: string): Promise<LinkerResult>;
-  /** 草案（段4）：記号つきの引用（JSON。core の courseMaterial が作る）から、問題ごとの文と根拠の記号。例外を投げない */
-  draft(message: string): Promise<DrafterResult>;
   /** 参照元（段5。CA-035）：問題の名前などの一般的な語で、ウェブ検索し、引用（題・URL・引用の字）を集める。例外を投げない */
   research(message: string): Promise<ResearchResult>;
-  /** A/P の案（段5。CA-030）：出典（記号つき）から、問題ごとの評価と方針の文と根拠の記号。例外を投げない */
-  propose(message: string): Promise<ProposerResult>;
-  /** 議論（段5。CA-032）：問題1つについて、出典とやりとりを見て答える。保存しない。例外を投げない */
-  discuss(message: string): Promise<DiscussResult>;
+  /** カルテ記載（段I。CA-054）：資料（JSON。core の documentMessage が作る）から、見出しごとの文と根拠の記号。保存しない。例外を投げない */
+  document(message: string): Promise<DocumentResult>;
+  /** カルテ記載を相談して直す（段I）：いまの記載・やりとり・頼みを見て、答えと直した記載。保存しない。例外を投げない */
+  revise(message: string): Promise<ReviseResult>;
 }

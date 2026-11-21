@@ -109,5 +109,15 @@ export const MIGRATIONS: readonly Migration[] = [
     "statements": [
       "CREATE TABLE IF NOT EXISTS scale_links ( id TEXT PRIMARY KEY, name TEXT NOT NULL CHECK (length(name) BETWEEN 1 AND 60), unit_a TEXT NOT NULL CHECK (length(unit_a) <= 30), unit_b TEXT NOT NULL CHECK (length(unit_b) <= 30), created_at TEXT NOT NULL CHECK (length(created_at) = 16), removed_at TEXT CHECK (removed_at IS NULL OR length(removed_at) = 16) )"
     ]
+  },
+  {
+    "name": "0010_documents",
+    "statements": [
+      "CREATE TABLE IF NOT EXISTS documents ( id TEXT PRIMARY KEY, patient_id TEXT NOT NULL REFERENCES patients (id) ON DELETE CASCADE, encounter_id TEXT NOT NULL REFERENCES encounters (id) ON DELETE CASCADE, type TEXT NOT NULL CHECK (type IN ('er_record', 'outpatient_first', 'outpatient_revisit', 'admission', 'progress', 'interim_summary', 'discharge_summary')), day TEXT NOT NULL CHECK (length(day) = 10), sections TEXT NOT NULL, origin TEXT NOT NULL CHECK (origin IN ('self', 'ai', 'ai_edited')), entered_at TEXT NOT NULL CHECK (length(entered_at) = 16), updated_at TEXT NOT NULL CHECK (length(updated_at) = 16) )",
+      "CREATE INDEX IF NOT EXISTS documents_by_encounter ON documents (encounter_id, day)",
+      "CREATE INDEX IF NOT EXISTS documents_by_patient ON documents (patient_id)",
+      "CREATE TABLE IF NOT EXISTS document_history ( id TEXT PRIMARY KEY, patient_id TEXT NOT NULL REFERENCES patients (id) ON DELETE CASCADE, at TEXT NOT NULL CHECK (length(at) = 16), document_id TEXT NOT NULL, action TEXT NOT NULL CHECK (action IN ('add', 'edit', 'delete')), origin TEXT CHECK (origin IS NULL OR origin IN ('self', 'ai', 'ai_edited')) )",
+      "CREATE INDEX IF NOT EXISTS document_history_by_patient ON document_history (patient_id, at)"
+    ]
   }
 ];
