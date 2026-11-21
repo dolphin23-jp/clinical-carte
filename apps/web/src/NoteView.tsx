@@ -530,6 +530,16 @@ export function NoteView({ record, encounter, onChanged, onLeft }: { record: Pat
           </section>
         );
       })}
+      {nd.shared.length > 0 && (
+        <details className="note-part" open data-testid="note-shared-plan">
+          <summary>記載全体の方針（問題に分けて書かれていない P。{String(nd.shared.length)}）</summary>
+          {nd.shared.map((g, i) => (
+            <p key={i} className="source-text">
+              {textOf(record, g)}
+            </p>
+          ))}
+        </details>
+      )}
       {nd.unassigned.length > 0 && (
         <details className="note-part">
           <summary>どの問題にも入らない S・O（{String(nd.unassigned.length)}）</summary>

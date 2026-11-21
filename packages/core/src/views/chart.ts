@@ -54,7 +54,10 @@ export interface ChartPoint extends ChartTime {
 }
 
 export interface VitalPanel {
-  readonly id: 'bt' | 'hr' | 'bp' | 'rr' | 'spo2';
+  /** 段の種類（色の見分けに使う）。map 以降は、値があるときだけの段 */
+  readonly id: 'bt' | 'hr' | 'bp' | 'rr' | 'spo2' | 'map' | 'o2' | 'jcs' | 'gcs' | 'uo';
+  /** 段ごとに違う鍵（尿量は、書かれた単位ごとに段を分けるため） */
+  readonly key: string;
   readonly name: string;
   readonly unit: string;
   readonly points: readonly ChartPoint[];
@@ -88,7 +91,7 @@ const SINGLE: readonly { id: VitalPanel['id']; name: string; unit: string; item:
   { id: 'spo2', name: 'SpO2', unit: '%', item: 'SpO2' },
 ];
 
-/** 温度板の段（体温・心拍数・血圧・呼吸数・SpO2 の順）。値のない段も返す（空の段として描く） */
+/** 温度板の段（体温・心拍数・血圧・呼吸数・SpO2 の順）。この5つは、値のない段も返す（空の段として描く）。MAP・酸素流量・JCS・GCS・尿量は、値があるときだけ */
 export function vitalPanels(observations: readonly ChartObservation[]): VitalPanel[] {
   const point = (o: ChartObservation & { value: number; at: string }, extra: Partial<ChartPoint> = {}): ChartPoint | null => {
     const time = chartTime(o.at);
@@ -113,9 +116,27 @@ export function vitalPanels(observations: readonly ChartObservation[]): VitalPan
     if (p !== null) bp.push(p);
   }
 
-  const panels: VitalPanel[] = SINGLE.map((s) => ({ id: s.id, name: s.name, unit: s.unit, points: single(s.item) }));
-  panels.splice(2, 0, { id: 'bp', name: '血圧', unit: 'mmHg', points: bp.sort(byTime) });
-  return panels;
+  const panels: VitalPanel[] = SINGLE.map((s) => ({ id: s.id, key: s.id, name: s.name, unit: s.unit, points: single(s.item) }));
+  panels.splice(2, 0, { id: 'bp', key: 'bp', name: '血圧', unit: 'mmHg', points: bp.sort(byTime) });
+
+  // 値があるときだけの段（2026-11-21 の本人の決定）：MAP・酸素流量・JCS・GCS・尿量。判定しない（範囲の帯・色分けなし）
+  const extra = (id: VitalPanel['id'], name: string, unit: string, item: string): VitalPanel => ({ id, key: id, name, unit, points: single(item) });
+  const optional: VitalPanel[] = [extra('map', 'MAP', 'mmHg', 'MAP'), extra('o2', '酸素流量', 'L/分', '酸素流量'), extra('jcs', 'JCS', '', 'JCS'), extra('gcs', 'GCS', '点', 'GCS')];
+  // 尿量：書かれた単位ごとに段を分ける（合計・時間あたり・体重あたりを、同じ目盛りに混ぜない。換算しない）
+  const urine = new Map<string, { unit: string; points: ChartPoint[] }>();
+  for (const o of observations) {
+    if (o.name !== '尿量' || !plottable(o)) continue;
+    const p = point(o);
+    if (p === null) continue;
+    const k = o.unit === null ? '' : unitKey(o.unit);
+    const group = urine.get(k) ?? { unit: o.unit ?? '', points: [] };
+    group.points.push(p);
+    urine.set(k, group);
+  }
+  for (const [k, g] of urine) optional.push({ id: 'uo', key: `uo:${k}`, name: g.unit === '' ? '尿量（単位の記載なし）' : '尿量', unit: g.unit, points: g.points.sort(byTime) });
+  // MAP は血圧の下、酸素流量は SpO2 の下、意識と尿量は最後
+  const order: VitalPanel['id'][] = ['bt', 'hr', 'bp', 'map', 'rr', 'spo2', 'o2', 'jcs', 'gcs', 'uo'];
+  return [...panels, ...optional.filter((p) => p.points.length > 0)].sort((a, b) => order.indexOf(a.id) - order.indexOf(b.id));
 }
 
 export interface LabTrend {

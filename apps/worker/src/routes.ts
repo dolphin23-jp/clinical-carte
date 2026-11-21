@@ -57,6 +57,7 @@ import {
   patchPatient,
   saveSource,
   setEncounterEnd,
+  setEncounterKind,
   type Source,
 } from './records.ts';
 import type { Runtime } from './runtime.ts';
@@ -180,6 +181,11 @@ export async function recordApi(request: Request, path: string, deps: RecordDeps
     if (body === null) return bad();
     const encounter = await getEncounter(db, id);
     if (encounter === null) return missing();
+    // 種類を変える（救急・外来 → 入院 など）。開始・終わりの日時は、そのまま
+    if ('kind' in body) {
+      await setEncounterKind(db, id, body.kind);
+      return reply(200, { encounter: { ...encounter, kind: body.kind } });
+    }
     // 終わりは、始まりより前にできない（日だけと、日時を比べるときは、日で比べる）
     if (body.end !== null && compareDateTime(body.end.slice(0, 10), encounter.start.slice(0, 10)) < 0) return bad();
     await setEncounterEnd(db, id, body.end);

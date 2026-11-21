@@ -469,6 +469,43 @@ export interface ProblemNote {
 const SOAP: readonly SegmentLabel[] = ['subjective', 'objective', 'assessment', 'plan', 'assessment_plan'];
 const AP: readonly SegmentLabel[] = ['assessment', 'plan', 'assessment_plan'];
 
+const keyOf = (s: { readonly sourceId: string; readonly start: number }): string => `${s.sourceId}:${String(s.start)}`;
+
+/**
+ * 記載全体の P（問題に分けて書かれていない A・P。2026-11-21 の本人の決定）：同じ記載に「#問題」の見出しが2つ以上あり、
+ * A・P・A/P の区切りが、最後の見出しのあとにだけ続く（前の見出しには、どれも続かない）とき、その A・P の区切り。
+ * 「#1 … #7 の段落 → P)（Dx・Tx・Ex）」の形の P を、最後の問題（#7）のものにしないため。決定論で、推し量らない
+ * （どの行がどの問題の方針かを、AI に振り分けさせない。CD-022）。
+ */
+export function sharedPlanSegments(segments: readonly NoteSegment[]): NoteSegment[] {
+  const bySource = new Map<string, NoteSegment[]>();
+  for (const s of segments) {
+    const list = bySource.get(s.sourceId) ?? [];
+    list.push(s);
+    bySource.set(s.sourceId, list);
+  }
+  const out: NoteSegment[] = [];
+  for (const list of bySource.values()) {
+    list.sort((a, b) => a.start - b.start);
+    const headings = list.map((s, i) => (s.label === 'problem_heading' ? i : -1)).filter((i) => i >= 0);
+    if (headings.length < 2) continue;
+    /** 見出しのあとに続く S・O・A・P の区切りのうち、A・P のもの */
+    const apAfter = (i: number): NoteSegment[] => {
+      const run: NoteSegment[] = [];
+      for (let j = i + 1; j < list.length; j += 1) {
+        const next = list[j];
+        if (next === undefined || !SOAP.includes(next.label)) break;
+        if (AP.includes(next.label)) run.push(next);
+      }
+      return run;
+    };
+    const last = headings.at(-1) ?? -1;
+    if (headings.slice(0, -1).some((i) => apAfter(i).length > 0)) continue;
+    out.push(...apAfter(last));
+  }
+  return out;
+}
+
 /**
  * 問題ごとの記載：その問題の記載が、
  *  - 「#問題」の見出しの区切りにあれば、その見出しから次の見出しまで（S・O・A・P が続くあいだ）の A・P・A/P の区切り（なければ、見出しの区切りそのもの）
@@ -483,6 +520,7 @@ export function problemNotes(mentions: readonly ThreadMention[], segments: reado
     bySource.set(s.sourceId, list);
   }
   for (const list of bySource.values()) list.sort((a, b) => a.start - b.start);
+  const shared = new Set(sharedPlanSegments(segments).map(keyOf));
   const out: ProblemNote[] = [];
   const seen = new Set<string>();
   const push = (m: ThreadMention, s: NoteSegment): void => {
@@ -500,13 +538,13 @@ export function problemNotes(mentions: readonly ThreadMention[], segments: reado
       const block: NoteSegment[] = [];
       for (let j = i + 1; j < list.length; j += 1) {
         const next = list[j];
-        if (next === undefined || !SOAP.includes(next.label)) break;
+        if (next === undefined || !SOAP.includes(next.label) || shared.has(keyOf(next))) break;
         block.push(next);
       }
       const ap = block.filter((s) => AP.includes(s.label));
       if (ap.length > 0) for (const s of ap) push(m, s);
       else push(m, seg);
-    } else if (AP.includes(seg.label)) push(m, seg);
+    } else if (AP.includes(seg.label) && !shared.has(keyOf(seg))) push(m, seg);
   }
   return out;
 }
@@ -522,7 +560,7 @@ export interface Block {
 
 /**
  * 問題の記載の範囲：その問題の記載が
- *  - 「#問題」の見出しの区切りにあれば、見出しから、続く S・O・A・P・A/P の区切りの終わりまで
+ *  - 「#問題」の見出しの区切りにあれば、見出しから、続く S・O・A・P・A/P の区切りの終わりまで（記載全体の P〔sharedPlanSegments〕の手前まで）
  *  - S・O・A・P・A/P の区切りの中にあれば、その区切り
  * （ほかの区切り・区切りのない文の中の記載は、範囲を持たない。推し量らない）
  */
@@ -534,6 +572,7 @@ export function problemBlocks(mentions: readonly ThreadMention[], segments: read
     bySource.set(s.sourceId, list);
   }
   for (const list of bySource.values()) list.sort((a, b) => a.start - b.start);
+  const shared = new Set(sharedPlanSegments(segments).map(keyOf));
   const out: Block[] = [];
   const seen = new Set<string>();
   for (const m of mentions) {
@@ -546,11 +585,11 @@ export function problemBlocks(mentions: readonly ThreadMention[], segments: read
       let end = seg.end;
       for (let j = i + 1; j < list.length; j += 1) {
         const next = list[j];
-        if (next === undefined || !SOAP.includes(next.label)) break;
+        if (next === undefined || !SOAP.includes(next.label) || shared.has(keyOf(next))) break;
         end = next.end;
       }
       block = { sourceId: seg.sourceId, start: seg.start, end };
-    } else if (SOAP.includes(seg.label)) block = { sourceId: seg.sourceId, start: seg.start, end: seg.end };
+    } else if (SOAP.includes(seg.label) && !shared.has(keyOf(seg))) block = { sourceId: seg.sourceId, start: seg.start, end: seg.end };
     if (block === null) continue;
     const key = `${block.sourceId}:${String(block.start)}`;
     if (seen.has(key)) continue;

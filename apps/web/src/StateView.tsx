@@ -1,6 +1,6 @@
 // 「いまの状態」（段3b。CA-023・CA-026・CA-027）：患者の現在地を1画面に。作文しない：1行の要約は決定論のひな形、
 // ほかは整理した事実と、保存した文の区切りの字そのもの。「いま」は記録の上での最後の日時で、端末の時計ではない。判定しない。
-import { EVENT_KIND_NAMES, MEDICATION_ACTION_NAMES, PROBLEM_ACTIVITY_NAMES, PROBLEM_STATUS_NAMES, type PatientState, type RecentItem, SEGMENT_LABEL_NAMES } from '@clinical-carte/core';
+import { EVENT_KIND_NAMES, MEDICATION_ACTION_NAMES, PROBLEM_ACTIVITY_NAMES, PROBLEM_STATUS_NAMES, type PatientState, type RecentItem, recentGroups, SEGMENT_LABEL_NAMES } from '@clinical-carte/core';
 
 import { showDateTime } from './format.ts';
 import type { Source } from './net/api.ts';
@@ -18,6 +18,72 @@ function recentText(item: RecentItem): { tag: string; text: string } {
     case 'lab':
       return { tag: '検査', text: `${item.name} ${item.valueText}${item.unit === null ? '' : ` ${item.unit}`}` };
   }
+}
+
+/** 1つのまとまりで、はじめに見せる数（残りは畳む） */
+const FIRST = 6;
+
+function RecentRows({ items }: { items: readonly RecentItem[] }) {
+  return (
+    <>
+      {items.map((item, i) => {
+        const t = recentText(item);
+        return (
+          <li key={i} className="fact-row" data-testid="state-recent-item">
+            <span className="fact-when">{showDateTime(item.at)}</span>
+            <span className="fact-main">
+              <span className="tag">{t.tag}</span>
+              {t.text}
+            </span>
+          </li>
+        );
+      })}
+    </>
+  );
+}
+
+/** 24時間の一覧を、種類ごとのまとまりで出す（中身は同じ。1日の濃い記録でも読めるように、新しいものから少しずつ見せる） */
+function RecentList({ items }: { items: readonly RecentItem[] }) {
+  const g = recentGroups(items);
+  const groups: readonly (readonly [string, string, readonly RecentItem[]])[] = [
+    ['problems', '問題', g.problems],
+    ['medications', '投薬の動き', g.medications],
+    ['events', 'できごと', g.events],
+  ];
+  return (
+    <>
+      {groups.map(([id, name, list]) =>
+        list.length === 0 ? null : (
+          <div key={id} className="recent-group" data-testid={`state-recent-${id}`}>
+            <h4 className="part-label">
+              {name}（{String(list.length)}）
+            </h4>
+            <ul className="fact-list">
+              <RecentRows items={list.slice(0, FIRST)} />
+            </ul>
+            {list.length > FIRST && (
+              <details>
+                <summary>ほか {String(list.length - FIRST)} 件</summary>
+                <ul className="fact-list">
+                  <RecentRows items={list.slice(FIRST)} />
+                </ul>
+              </details>
+            )}
+          </div>
+        ),
+      )}
+      {g.labs.length > 0 && (
+        <div className="recent-group" data-testid="state-recent-labs">
+          <h4 className="part-label">検査値（項目ごとのいちばん新しい値。{String(g.labs.length)} 項目）</h4>
+          <p className="thread-sub">
+            {g.labs
+              .map((l) => `${l.name} ${l.latest.valueText}${l.latest.unit === null ? '' : ` ${l.latest.unit}`}（${showDateTime(l.latest.at)}${l.count > 1 ? `・この間に ${String(l.count)} 件` : ''}）`)
+              .join('　')}
+          </p>
+        </div>
+      )}
+    </>
+  );
 }
 
 export function StateView({ state, sources, onProblems }: { state: PatientState; sources: readonly Source[]; onProblems: () => void }) {
@@ -74,6 +140,17 @@ export function StateView({ state, sources, onProblems }: { state: PatientState;
             ))}
           </ul>
         )}
+        {state.sharedPlan !== null && (
+          <div className="thread-note" data-testid="state-shared-plan">
+            <span className="part-label">記載全体の方針（問題に分けて書かれていない P）・{showDateTime(state.sharedPlan.at)}</span>
+            {state.sharedPlan.parts.map((n) => (
+              <p key={`${n.sourceId}:${String(n.start)}`} className="source-text">
+                <span className="sr-only">{SEGMENT_LABEL_NAMES[n.label]}：</span>
+                {textOf(n.sourceId, n.start, n.end)}
+              </p>
+            ))}
+          </div>
+        )}
         {(state.closed.length > 0 || state.ruledOut.length > 0) && (
           <p className="thread-sub" data-testid="state-closed">
             {state.closed.length > 0 && `解決・非活動と書かれたもの：${state.closed.map((t) => t.name).join('、')}。`}
@@ -94,20 +171,7 @@ export function StateView({ state, sources, onProblems }: { state: PatientState;
           {state.recent.items.length === 0 ? (
             <p className="note">この間に、問題・投薬の動き・できごと・検査値の記載はありません（バイタルは上の帯と経過表）。</p>
           ) : (
-            <ul className="fact-list">
-              {state.recent.items.map((item, i) => {
-                const t = recentText(item);
-                return (
-                  <li key={i} className="fact-row" data-testid="state-recent-item">
-                    <span className="fact-when">{showDateTime(item.at)}</span>
-                    <span className="fact-main">
-                      <span className="tag">{t.tag}</span>
-                      {t.text}
-                    </span>
-                  </li>
-                );
-              })}
-            </ul>
+            <RecentList items={state.recent.items} />
           )}
         </section>
       )}

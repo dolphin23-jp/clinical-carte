@@ -5,7 +5,7 @@
 // - 判定しない：並べるだけ。投薬は「薬ごとの最後の記載」で、いま続いているかを補わない。
 import { type EventKind, type MedicationAction, type SegmentLabel, SEGMENT_LABEL_NAMES } from '../organize/answer.ts';
 import { medicationTimeline, nameKey } from '../organize/views.ts';
-import { type ProblemNote, problemNotes, relatedFacts, type ThreadMention, type ThreadRow, type ThreadView, threadViews } from '../problems/threads.ts';
+import { type ProblemNote, problemNotes, relatedFacts, sharedPlanSegments, type ThreadMention, type ThreadRow, type ThreadView, threadViews } from '../problems/threads.ts';
 import { ageNow, hospitalDay } from '../record/headline.ts';
 import { ENCOUNTER_KIND_LABELS, type EncounterKind, type Sex } from '../record/schema.ts';
 import { compareDateTime } from '../time/datetime.ts';
@@ -18,6 +18,8 @@ export const BACKGROUND_LABELS: readonly SegmentLabel[] = ['past_history', 'home
 
 /** 「この期間に入ったこと」の幅（時間） */
 export const RECENT_HOURS = 24;
+/** 1行の要約に名前を出す、いまの問題の数（残りは「ほか N」。2026-11-21：1日の濃い記録で、要約が問題の羅列になったため） */
+export const ONE_LINER_PROBLEMS = 5;
 
 export interface StateSource {
   readonly id: string;
@@ -130,6 +132,8 @@ export interface PatientState {
   /** 最後に入れた日時（この受診の文を入れた日時の最大） */
   readonly lastEntered: string | null;
   readonly current: readonly CurrentProblem[];
+  /** 記載全体の P（問題に分けて書かれていない A・P）の、この受診でいちばん新しい記載のもの。なければ null */
+  readonly sharedPlan: { readonly sourceId: string; readonly at: string | null; readonly parts: readonly ProblemNote[] } | null;
   readonly closed: readonly ThreadView[];
   readonly ruledOut: readonly ThreadView[];
   /** まだ筋につないでいない問題の記載の数 */
@@ -181,7 +185,9 @@ export function oneLinerOf(input: OneLinerInput): string {
   const span = encounter.kind === 'inpatient' ? `${start}〜${encounter.end === null ? '' : encounter.end.slice(0, 10)}` : start;
   const day = dayOnRecord(encounter, input.asOf);
   const dayText = day === null ? '' : `（記録の上では ${String(day)}病日まで）`;
-  const problemText = input.problems.length === 0 ? 'いまの問題の記載なし' : `いまの問題：${input.problems.join('、')}`;
+  const shown = input.problems.slice(0, ONE_LINER_PROBLEMS);
+  const rest = input.problems.length - shown.length;
+  const problemText = input.problems.length === 0 ? 'いまの問題の記載なし' : `いまの問題：${shown.join('、')}${rest > 0 ? ` ほか ${String(rest)}` : ''}`;
   return `${who}。${ENCOUNTER_KIND_LABELS[encounter.kind]} ${span}${dayText}。${problemText}。`;
 }
 
@@ -257,6 +263,17 @@ export function patientState(input: StateInput): PatientState {
         medications: medsLast.filter((m) => medKeys.has(nameKey(m.name))),
       };
     });
+  // 記載全体の P：この受診の記載のうち、いちばん新しいもの（同じ日時なら、あとに入れたもの）
+  const sharedSegs = sharedPlanSegments(input.segments.filter((g) => encounterSources.some((src) => src.id === g.sourceId)));
+  const sharedSource = [...new Set(sharedSegs.map((g) => g.sourceId))]
+    .map((id) => encounterSources.find((src) => src.id === id))
+    .filter((src): src is StateSource => src !== undefined)
+    .sort((a, b) => compareDateTime(a.at, b.at) || a.enteredAt.localeCompare(b.enteredAt))
+    .at(-1);
+  const sharedPlan =
+    sharedSource === undefined
+      ? null
+      : { sourceId: sharedSource.id, at: sharedSource.at, parts: sharedSegs.filter((g) => g.sourceId === sharedSource.id).map((g) => ({ sourceId: g.sourceId, at: sharedSource.at, label: g.label, start: g.start, end: g.end })) };
   const closed = views.threads.filter((t) => t.group === 'closed');
   const ruledOut = views.threads.filter((t) => t.group === 'ruled_out');
 
@@ -316,6 +333,7 @@ export function patientState(input: StateInput): PatientState {
     asOf,
     lastEntered,
     current,
+    sharedPlan,
     closed,
     ruledOut,
     unlinked: views.unlinked.length,
@@ -323,5 +341,33 @@ export function patientState(input: StateInput): PatientState {
     medications: medsLast.filter((m) => m.action !== 'stop'),
     stoppedMedications: medsLast.filter((m) => m.action === 'stop'),
     background,
+  };
+}
+
+/** 24時間の一覧を、種類ごとにまとめたもの（見せ方だけ。中身は items と同じ。新しい順） */
+export interface RecentGroups {
+  readonly problems: readonly RecentItem[];
+  readonly medications: readonly RecentItem[];
+  readonly events: readonly RecentItem[];
+  /** 検査値は、項目ごとに、いちばん新しい値と、この間の件数 */
+  readonly labs: readonly { readonly name: string; readonly latest: Extract<RecentItem, { type: 'lab' }>; readonly count: number }[];
+}
+
+export function recentGroups(items: readonly RecentItem[]): RecentGroups {
+  const labs = new Map<string, { name: string; latest: Extract<RecentItem, { type: 'lab' }>; count: number }>();
+  for (const item of items) {
+    if (item.type !== 'lab') continue;
+    const found = labs.get(item.name);
+    if (found === undefined) labs.set(item.name, { name: item.name, latest: item, count: 1 });
+    else {
+      found.count += 1;
+      if (compareDateTime(item.at, found.latest.at) > 0) found.latest = item;
+    }
+  }
+  return {
+    problems: items.filter((i) => i.type === 'problem_new' || i.type === 'problem_activity'),
+    medications: items.filter((i) => i.type === 'medication'),
+    events: items.filter((i) => i.type === 'event'),
+    labs: [...labs.values()].sort((a, b) => compareDateTime(b.latest.at, a.latest.at)),
   };
 }

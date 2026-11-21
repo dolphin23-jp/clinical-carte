@@ -190,14 +190,14 @@ describe('測定値：数は、AI に写させない', () => {
   });
 
   test('「値として読めない部分」に数えるのは、値を読めなかった引用だけ（項目でない語の残りは数えない）', () => {
-    const text = 'SpO2 96%（室内気） BT 38.4℃ HR はやい JCS 10';
+    const text = 'SpO2 96%（室内気） BT 38.4℃ HR はやい CRT 3秒';
     const r = applyOrganization(
       answer({
         measurements: [
           { quote: 'SpO2 96%（室内気）', when: null },
           { quote: 'BT 38.4℃', when: null },
           { quote: 'HR はやい', when: null },
-          { quote: 'JCS 10', when: null },
+          { quote: 'CRT 3秒', when: null },
         ],
       }),
       { ...ctx, text },

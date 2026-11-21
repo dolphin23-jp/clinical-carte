@@ -2,7 +2,7 @@
 // 本人が残した A/P を並べる。AI の案の資料（記録の引用 Q）も、ここで作る。純関数。保存しない。
 import { type SegmentLabel, SEGMENT_LABEL_NAMES } from '../organize/answer.ts';
 import { medicationTimeline, nameKey } from '../organize/views.ts';
-import { type NoteSegment, problemBlocks, problemNotes, relatedFacts, type ThreadView } from '../problems/threads.ts';
+import { type NoteSegment, problemBlocks, problemNotes, relatedFacts, sharedPlanSegments, type ThreadView } from '../problems/threads.ts';
 import { hospitalDay } from '../record/headline.ts';
 import { compareDateTime } from '../time/datetime.ts';
 import type { MaterialProblem, RefSource } from './ap.ts';
@@ -116,6 +116,8 @@ export interface NoteDay {
   readonly vitals: readonly NoteObservation[];
   /** その日の、どの問題の範囲にも入らない S・O の区切り */
   readonly unassigned: readonly NotePart[];
+  /** その日の記載の、記載全体の P（問題に分けて書かれていない A・P。sharedPlanSegments） */
+  readonly shared: readonly NotePart[];
 }
 
 const onDay = (at: string | null, day: string): boolean => at !== null && at.slice(0, 10) === day;
@@ -162,6 +164,7 @@ export function noteDay(input: NoteInput): NoteDay {
     problems,
     vitals: latestByName(obs.filter((x) => x.kind === 'vital' && onDay(x.at, input.day))),
     unassigned,
+    shared: sharedPlanSegments(segs.filter((g) => todayIds.has(g.sourceId))).map((g) => ({ sourceId: g.sourceId, label: g.label, start: g.start, end: g.end })),
   };
 }
 
@@ -217,6 +220,8 @@ export function recordSources(input: NoteInput, problems: readonly MaterialProbl
       out.push({ kind: 'record', problem: p.ref, text: `${line.name}${last.doseText === null ? '' : ` ${last.doseText}`}${action}`, at: last.at, day: dayOf(last.at), label: '投薬', ref: { k: 'record', sourceId: last.sourceId, start: last.start, end: last.end } });
     }
   }
+  // 記載全体の P は、どの問題にも結びつけず、どの問題にも使える引用にする
+  for (const part of day.shared) quote(null, part);
   for (const t of observationTexts(day.vitals)) {
     const v = t.items[0];
     if (v === undefined) continue;

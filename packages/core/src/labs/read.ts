@@ -9,7 +9,7 @@
 // **黙って捨てない**：読めなかった部分は、理由つきで unread に返す。文のすべての文字は、行の範囲・読めなかった部分の範囲・区切りのどれかに入る（試験が確かめる）。
 import { foldSameLength, lowerAscii } from '../text/fold.ts';
 import { LAB_NAMES } from './catalog.gen.ts';
-import { EXTRA_LAB_NAMES } from './extra-names.ts';
+import { EXTRA_ALIASES, EXTRA_LAB_NAMES, EXTRA_UNITS } from './extra-names.ts';
 
 export type Comparator = '<' | '>' | '<=' | '>=';
 
@@ -94,6 +94,12 @@ function buildVocabulary(): Vocabulary {
     for (const n of [entry.name, ...entry.aliases]) for (const key of nameKeysOf(n)) candidates.push({ key, name: entry.name, kind: entry.kind, pair: null });
     for (const u of entry.units) for (const key of unitKeysOf(u)) units.add(key);
   }
+  for (const extra of EXTRA_ALIASES) {
+    const entry = LAB_NAMES.find((e) => e.name === extra.name);
+    if (entry === undefined) continue;
+    for (const n of extra.aliases) for (const key of nameKeysOf(n)) candidates.push({ key, name: entry.name, kind: entry.kind, pair: null });
+  }
+  for (const u of EXTRA_UNITS) for (const key of unitKeysOf(u)) units.add(key);
   for (const p of PAIRS) for (const n of p.names) for (const key of nameKeysOf(n)) candidates.push({ key, name: p.parts[0], kind: 'vital', pair: p.parts });
   candidates.sort((a, b) => b.key.length - a.key.length);
   const sortedUnits = [...units].sort((a, b) => b.length - a.length);
@@ -120,6 +126,12 @@ const COMPARATOR = /<=|>=|[<>≤≥≦≧]/uy;
 const QUALITATIVE = /\((?:-|\+|±|\+-|\+\/-|[1-4]\+)\)|[1-4]\+|±|\+\/-|\+{1,4}|-(?![\d.])|陰性|陽性|negative|positive/uy;
 
 const COMPARATORS: Readonly<Record<string, Comparator>> = { '<': '<', '>': '>', '<=': '<=', '>=': '>=', '≤': '<=', '≦': '<=', '≥': '>=', '≧': '>=' };
+
+/** 値の前に置かれる、決まった書き方（項目の正規の名前ごと）。そろえた文（半角・小文字）で探す */
+const VALUE_PREFIX: ReadonlyMap<string, RegExp> = new Map([
+  ['GCS', /e ?[1-4] ?v ?(?:[1-5]|t) ?m ?[1-6] ?[=:(]? ?/uy],
+  ['JCS', /(?:iii|ii|i|Ⅲ|Ⅱ|Ⅰ) ?- ?/uy],
+]);
 
 /** 量の単位を「/」でつないだ語（μg/kg/min・mL/hr・U/min）。表にない単位でも、項目の名前にしない */
 const UNIT_LIKE = /^(?:[mμnk]?g|[mμd]?l|[mμ]?mol|m?eq|i?u|mu)(?:\/[a-zμ]+)+$/u;
@@ -321,7 +333,16 @@ export function readLabText(text: string): LabRead {
       pos = q;
       continue;
     }
-    const v = readValue(lower, p);
+    // 値の前に、決まった書き方がある項目（「GCS E3V4M6＝13」の E3V4M6＝、「JCS Ⅱ-10」の Ⅱ-）は、それを飛ばして、書かれた数を読む。
+    // 合計が書かれていなければ、読まない（E・V・M から足し算しない）
+    let from = p;
+    const prefix = VALUE_PREFIX.get(m.candidate.name);
+    if (prefix !== undefined) {
+      prefix.lastIndex = p;
+      const pm = prefix.exec(lower);
+      if (pm !== null) from = p + pm[0].length;
+    }
+    const v = readValue(lower, from);
     if (!v.ok) {
       const stop = Math.max(v.end, nameEnd);
       unread.push({ reason: v.reason, start: pos, end: stop });

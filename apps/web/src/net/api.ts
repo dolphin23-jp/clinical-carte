@@ -407,6 +407,11 @@ export async function createEncounter(patientId: string, input: NewEncounter): P
   return field<Encounter>(await call('POST', `patients/${encodeURIComponent(patientId)}/encounters`, input), 'encounter');
 }
 
+/** 受診の種類を変える（救急・外来 → 入院 など）。開始・終わりの日時は、そのまま */
+export async function setEncounterKind(encounterId: string, kind: EncounterKind): Promise<Result<Encounter>> {
+  return field<Encounter>(await call('PATCH', `encounters/${encodeURIComponent(encounterId)}`, { kind }), 'encounter');
+}
+
 export async function setEncounterEnd(encounterId: string, end: string | null): Promise<Result<Encounter>> {
   return field<Encounter>(await call('PATCH', `encounters/${encodeURIComponent(encounterId)}`, { end }), 'encounter');
 }

@@ -2,7 +2,7 @@
 import fc from 'fast-check';
 import { describe, expect, test } from 'vitest';
 
-import { EXTRA_LAB_NAMES, LAB_NAMES, type LabRow, readLabText } from '../src/index.ts';
+import { EXTRA_ALIASES, EXTRA_LAB_NAMES, LAB_NAMES, type LabRow, readLabText } from '../src/index.ts';
 
 const brief = (rows: readonly LabRow[]): string[] => rows.map((r) => `${r.name ?? `?${r.nameRaw}`}=${r.comparator ?? ''}${r.valueText}${r.unit === null ? '' : ` ${r.unit}`}`);
 
@@ -81,10 +81,23 @@ describe('読めるもの', () => {
   });
 
   test('時刻・比・式の「:」「=」と、単位だけの語を、カタログにない名前と読まない', () => {
-    for (const text of ['【腎臓内科の意見（11:35、電話）】', '次回は翌日11:00、23:20', 'GCS E3V4M6＝13', '0.05 μg/kg/min ＝ 3.2 mL/hr', 'mL/hr: 40']) {
+    for (const text of ['【腎臓内科の意見（11:35、電話）】', '次回は翌日11:00、23:20', 'E3V4M6＝13', '0.05 μg/kg/min ＝ 3.2 mL/hr', 'mL/hr: 40']) {
       expect(readLabText(text).rows, text).toEqual([]);
     }
     expect(brief(readLabText('架空マーカー: 12.3 P/F比: 200').rows)).toEqual(['?架空マーカー=12.3', '?P/F比=200']);
+  });
+
+  test('経過表のための名前：MAP・JCS（「Ⅱ-10」の書き方も）・GCS（合計が書かれていれば、その数。E・V・M から足さない）', () => {
+    expect(brief(readLabText('BP 98/52（MAP 67） JCS Ⅱ-10 JCS 3 GCS E3V4M6＝13 GCS 14').rows)).toEqual(['収縮期血圧=98', '拡張期血圧=52', 'MAP=67', 'JCS=10', 'JCS=3', 'GCS=13', 'GCS=14']);
+    const noTotal = readLabText('GCS E4V4M6');
+    expect(noTotal.rows).toEqual([]);
+    expect(noTotal.unread.map((u) => u.reason)).toContain('no_value');
+  });
+
+  test('酸素の器具の名前に続く流量を、酸素流量として読む（器具の名前は、書かれた名前に残る）。尿量は、書かれた単位のまま', () => {
+    const r = readLabText('SpO2 96%（鼻カニュラ2 L/min） 尿量 25 mL 尿量 0.43 mL/kg/hr');
+    expect(brief(r.rows)).toEqual(['SpO2=96 %', '酸素流量=2 L/min', '尿量=25 mL', '尿量=0.43 mL/kg/hr']);
+    expect(r.rows[1]?.nameRaw).toBe('鼻カニュラ');
   });
 
   test('カタログにない名前は、「名前: 値」「名前=値」と書いたときだけ読む（書かれた名前のまま）', () => {
@@ -181,6 +194,18 @@ describe('取り込んだ名前（Playbook のカタログ）', () => {
       }
     }
     expect(failed).toEqual([]);
+  });
+
+  test('carte で足した別名（酸素の器具）は、取り込んだ名前に付き、ほかの名前・別名と重ならない', () => {
+    const key = (n: string): string => n.normalize('NFKC').trim().replace(/\s+/g, ' ').toLowerCase();
+    const all = new Set([...LAB_NAMES, ...EXTRA_LAB_NAMES].flatMap((e) => [e.name, ...e.aliases].map(key)));
+    for (const extra of EXTRA_ALIASES) {
+      expect(LAB_NAMES.some((e) => e.name === extra.name), extra.name).toBe(true);
+      for (const a of extra.aliases) {
+        expect(all.has(key(a)), a).toBe(false);
+        expect(readLabText(`${a} 2`).rows[0]?.name, a).toBe(extra.name);
+      }
+    }
   });
 
   test('carte で足した名前は、取り込んだ名前・別名と重ならない', () => {
