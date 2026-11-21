@@ -52,6 +52,8 @@ import {
   type UserEdit,
 } from './net/api.ts';
 import { organizeSummary, reportText } from './organizeText.ts';
+import { ScaleLinks } from './ScaleLinks.tsx';
+import { SourceAppend } from './SourceAppend.tsx';
 import { SourceEdit } from './SourceEdit.tsx';
 import { SourceFacts } from './SourceFacts.tsx';
 import { SourceText } from './SourceText.tsx';
@@ -148,6 +150,7 @@ export function PatientPage({ patientId, onBack, onLeft }: { patientId: string; 
   const shownSources = kindFilter === 'all' || !kindsHere.includes(kindFilter) ? sources : sources.filter((s) => s.kind === kindFilter);
 
   const panels = vitalPanels(observations);
+  const trends = labTrends(observations, record.scaleLinks);
   // いまの問題の見出し（経過のひな形。書かれた名前のまま。番号のない名前には「#」だけを付ける）
   const problemHeadings = threadViews(record.problemThreads, record.problems)
     .threads.filter((t) => t.group === 'current')
@@ -310,7 +313,8 @@ export function PatientPage({ patientId, onBack, onLeft }: { patientId: string; 
         )}
         {tab === 'values' && (
           <>
-            <TrendGrid trends={labTrends(observations)} />
+            <TrendGrid trends={trends} />
+            <ScaleLinks trends={trends} links={record.scaleLinks} onChanged={load} onLeft={onLeft} />
             <h3 className="sub-title">表（書かれたとおり）</h3>
             <LabTable observations={observations} />
             {foldedHere > 0 && (
@@ -514,6 +518,7 @@ function SourceCard({
       </div>
       <SourceText text={source.text} segments={segments} />
       <SourceFacts medications={facts.medications} events={facts.events} observations={facts.observations} edits={edits} userEdits={userEdits} onChanged={onChanged} onLeft={onLeft} />
+      <SourceAppend key={source.text} source={source} onChanged={onChanged} onLeft={onLeft} />
       <SourceEdit source={source} segments={segments} edits={userEdits} onChanged={onChanged} onLeft={onLeft} />
       {unread.length > 0 && (
         <div className="unread" data-testid="unread">

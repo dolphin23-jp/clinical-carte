@@ -207,6 +207,30 @@ describe('検査値の推移', () => {
   });
 });
 
+describe('単位の「同じ目盛り」（CA-051）', () => {
+  test('同じ項目で単位の書き方が違う推移は別に並び、先生が「同じ目盛り」と決めるとつながる。分けると戻る', async () => {
+    const page = await openPatient();
+    await page.getByTestId('kind-chip-lab').click();
+    await when(page, '2026-11-17', '06:00');
+    await page.getByTestId('text').fill('WBC 12300');
+    await sendAndWait(page);
+    await page.getByTestId('kind-chip-lab').click();
+    await when(page, '2026-11-18', '06:00');
+    await page.getByTestId('text').fill('WBC 9800 /μL');
+    await sendAndWait(page);
+    await page.getByTestId('tab-values').click();
+    const trends = page.getByTestId('trend');
+    await expect.poll(() => trends.count()).toBe(2);
+    expect(await page.getByTestId('scale-candidate').textContent()).toContain('WBC：単位の記載なし と /μL');
+    await page.getByTestId('scale-join').click();
+    await expect.poll(() => trends.count()).toBe(1);
+    expect(await page.getByTestId('trend-joined').textContent()).toContain('単位の記載なし・/μL：先生が同じ目盛りと決めた');
+    await page.getByTestId('scale-split').click();
+    await expect.poll(() => trends.count()).toBe(2);
+    expect(problems).toEqual([]);
+  });
+});
+
 describe('入れやすさ', () => {
   test('種類・著者・日時のチップと、ひな形の挿入。数で読めない欄は、文に入れない', async () => {
     const page = await openPatient();

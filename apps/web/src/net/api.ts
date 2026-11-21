@@ -69,11 +69,13 @@ export type ApiError =
   | 'draft_empty'
   | 'ap_empty'
   | 'shape'
-  | 'bad_span';
+  | 'bad_span'
+  | 'too_long';
 
 export type Result<T> = { readonly ok: true; readonly value: T } | { readonly ok: false; readonly error: ApiError; readonly left?: number };
 
 const KNOWN: readonly ApiError[] = [
+  'too_long',
   'no_key',
   'unregistered',
   'wrong_key',
@@ -347,6 +349,8 @@ export interface PatientRecord {
   readonly userEdits: readonly UserEdit[];
   /** A/P（段5。本人が書いた・AI の案から採用した、決まったことだけ） */
   readonly apNotes: readonly ApNote[];
+  /** 単位の「同じ目盛り」（CA-051。全患者に共通） */
+  readonly scaleLinks: readonly ScaleLinkView[];
   /** サーバーの、今日（日本の日） */
   readonly today: string;
 }
@@ -372,8 +376,8 @@ export async function createPatient(input: NewPatient): Promise<Result<Patient>>
 export async function getRecord(patientId: string): Promise<Result<PatientRecord>> {
   const result = await call('GET', `patients/${encodeURIComponent(patientId)}`);
   if (!result.ok) return result;
-  const { patient, encounters, sources, observations, segments, medications, events, problems, problemThreads, history, factEdits, userEdits, apNotes, today } = result.value;
-  const lists = [encounters, sources, observations, segments, medications, events, problems, problemThreads, history, factEdits, userEdits, apNotes];
+  const { patient, encounters, sources, observations, segments, medications, events, problems, problemThreads, history, factEdits, userEdits, apNotes, scaleLinks, today } = result.value;
+  const lists = [encounters, sources, observations, segments, medications, events, problems, problemThreads, history, factEdits, userEdits, apNotes, scaleLinks];
   if (!isRecord(patient) || lists.some((l) => !Array.isArray(l)) || typeof today !== 'string') return { ok: false, error: 'network' };
   return {
     ok: true,
@@ -391,6 +395,7 @@ export async function getRecord(patientId: string): Promise<Result<PatientRecord
       factEdits: factEdits as FactEdit[],
       userEdits: userEdits as UserEdit[],
       apNotes: apNotes as ApNote[],
+      scaleLinks: scaleLinks as ScaleLinkView[],
       today,
     },
   };
@@ -575,6 +580,11 @@ export async function addFact(sourceId: string, add: AddFact): Promise<Result<nu
   return done(await call('POST', `sources/${encodeURIComponent(sourceId)}/facts`, add));
 }
 
+/** 続きを足す（CA-050。足す文だけを選別に通し、記載の末尾に足す） */
+export async function appendSource(sourceId: string, text: string, nextDay?: boolean): Promise<Result<null>> {
+  return done(await call('POST', `sources/${encodeURIComponent(sourceId)}/append`, nextDay === undefined ? { text } : { text, nextDay }));
+}
+
 /** 文を打ち直す（選別を通す）。引き継げなかった本人の直しの数が返る */
 export async function retypeSource(sourceId: string, text: string, nextDay?: boolean): Promise<Result<{ lost: number }>> {
   const result = await call('PUT', `sources/${encodeURIComponent(sourceId)}/text`, nextDay === undefined ? { text } : { text, nextDay });
@@ -593,6 +603,24 @@ export async function addApNotes(encounterId: string, notes: readonly ApNoteNew[
 /** A/P を直す（文は選別を通す。AI 案から採用したものは「AI 案を直した」になる）・方針の種類を選び直す */
 export async function patchApNote(id: string, patch: ApNotePatch): Promise<Result<null>> {
   return done(await call('PATCH', `ap-notes/${encodeURIComponent(id)}`, patch));
+}
+
+export interface ScaleLinkView {
+  readonly id: string;
+  readonly name: string;
+  readonly unitA: string;
+  readonly unitB: string;
+  readonly createdAt: string;
+}
+
+/** 単位の「同じ目盛り」を決める（CA-051。全患者に共通。'' は単位の記載なし） */
+export async function addScaleLink(link: { name: string; unitA: string; unitB: string }): Promise<Result<null>> {
+  return done(await call('POST', 'scale-links', link));
+}
+
+/** 単位の「同じ目盛り」を外す */
+export async function removeScaleLink(id: string): Promise<Result<null>> {
+  return done(await call('DELETE', `scale-links/${encodeURIComponent(id)}`));
 }
 
 export async function deleteApNote(id: string): Promise<Result<null>> {

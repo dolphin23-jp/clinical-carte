@@ -169,6 +169,22 @@ describe('文を入れる', () => {
   });
 });
 
+describe('続きを足す（CA-050）', () => {
+  test('保存した記載の末尾に文を足せる。足す文も選別を通り、氏名は置き換わる。前の文はそのまま', async () => {
+    const page = await open();
+    await newPatient(page);
+    await send(page, '午前の回診。解熱傾向。', '経過（プログレスノート）');
+    await page.getByTestId('composer-done').waitFor();
+    const card = page.getByTestId('source').first();
+    await card.getByTestId('append').locator(':scope > summary').click();
+    await card.getByTestId('append-text').fill(`夕方、${NAME}さんの家族に説明。`);
+    await card.getByTestId('append-save').click();
+    await expect.poll(() => page.getByTestId('source-text').first().textContent()).toBe(`午前の回診。解熱傾向。\n夕方、${IDENTIFIER_TOKENS.person}さんの家族に説明。`);
+    expect(await page.content()).not.toContain(NAME);
+    expect(problems).toEqual([]);
+  });
+});
+
 describe('日をまたいだ記載（CA-047）', () => {
   test('時刻が大きくさかのぼると、入れる前に1回だけ確かめる。答えるまで入れられず、答えは記録の札に出る', async () => {
     const page = await open();

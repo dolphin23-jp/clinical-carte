@@ -1,6 +1,7 @@
 // 記載を直す（CA-029）：種類・日時・書いた人（選ぶ）、区切りの見出し（選ぶ）、文をなぞって足す（打たない）、
 // 文を打ち直す（C-1：サーバーで選別を通す。AI の1回。続けて整理し直す）。どれも、直した記録が残る。
 import {
+  APPEND_MARK,
   ADD_TYPES,
   type AddFact,
   type AddType,
@@ -167,7 +168,7 @@ export function SourceEdit({ source, segments, edits, onChanged, onLeft }: { sou
                 <li key={e.id} className="fact-row">
                   <span className="fact-when">{showDateTime(e.at)}</span>
                   <span className="fact-main">
-                    {USER_EDIT_FIELD_NAMES[e.field]}
+                    {e.field === 'text' && e.after === APPEND_MARK ? '続きを足した' : USER_EDIT_FIELD_NAMES[e.field]}
                     {e.field !== 'text' && e.after !== null && `：${editLabel(e)}`}
                   </span>
                 </li>

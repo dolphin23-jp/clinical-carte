@@ -39,8 +39,16 @@ function MiniChart({ trend, domain, unitless }: { trend: LabTrend; domain: [numb
       <div className="trend-head">
         <span className="trend-name">
           {trend.name}
-          {trend.unit !== null && <span className="trend-unit">（{trend.unit}）</span>}
-          {unitless && <span className="trend-unit">（単位の記載なし）</span>}
+          {trend.joined !== undefined ? (
+            <span className="trend-unit" data-testid="trend-joined">
+              （{trend.joined.units.map((u) => u ?? '単位の記載なし').join('・')}：先生が同じ目盛りと決めた）
+            </span>
+          ) : (
+            <>
+              {trend.unit !== null && <span className="trend-unit">（{trend.unit}）</span>}
+              {unitless && <span className="trend-unit">（単位の記載なし）</span>}
+            </>
+          )}
         </span>
         {shown !== null && (
           <span className="trend-value" data-testid="trend-value">

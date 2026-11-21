@@ -2,6 +2,9 @@
 // （打った文は選別を通す決まり。docs/01 の 2）。API の本文の形と、直した値を整理し直しで引き継ぐための鍵は、ここの1か所。
 import { z } from 'zod';
 
+import { EXTRA_LAB_NAMES, EXTRA_UNITS } from '../labs/extra-names.ts';
+import { LAB_NAMES } from '../labs/catalog.gen.ts';
+import { scaleUnitKey } from '../views/chart.ts';
 import { findShapes } from '../guard/shapes.ts';
 import { readLabText } from '../labs/read.ts';
 import { EVENT_KINDS, MEDICATION_ACTIONS, PROBLEM_STATUSES, SEGMENT_LABELS } from '../organize/answer.ts';
@@ -120,6 +123,12 @@ export type SegmentPatch = z.infer<typeof SegmentPatch>;
 export const SourceTextPut = z.strictObject({ text: z.string().min(1).max(TEXT_LIMIT), nextDay: z.boolean().optional() });
 export type SourceTextPut = z.infer<typeof SourceTextPut>;
 
+/** 続きを足す（CA-050）：足す文だけを、入れるときと同じ選別に通して、記載の末尾に足す。nextDay は、足したあとの文について本人が確かめた答え（CA-047） */
+export const SourceAppend = z.strictObject({ text: z.string().min(1).max(TEXT_LIMIT), nextDay: z.boolean().optional() });
+export type SourceAppend = z.infer<typeof SourceAppend>;
+/** 続きを足したことの印（user_edits の field = text の after。足した文そのものは残さない） */
+export const APPEND_MARK = 'append';
+
 /** 本人の調節の記録（user_edits）の欄 */
 export const USER_EDIT_FIELDS = ['kind', 'at', 'author_role', 'label', 'status', 'activity', 'ord', 'excluded', 'unmerge', 'typed_name', 'name', 'text', 'added'] as const;
 export type UserEditField = (typeof USER_EDIT_FIELDS)[number];
@@ -140,3 +149,25 @@ export const USER_EDIT_FIELD_NAMES: Readonly<Record<UserEditField, string>> = {
 };
 export const USER_EDIT_TARGETS = ['source', 'segment', 'thread', 'problem', 'medication', 'event', 'observation'] as const;
 export type UserEditTarget = (typeof USER_EDIT_TARGETS)[number];
+
+// --- 単位の「同じ目盛り」（CA-051。全患者に共通）
+
+/** 先生が決める「同じ目盛り」の組。字は打たない（項目は検査名の表から、単位は表にある書き方か、記載なし '' から選ぶ） */
+export const ScaleLinkNew = z.strictObject({ name: z.string().min(1).max(60), unitA: z.string().max(30), unitB: z.string().max(30) });
+export type ScaleLinkNew = z.infer<typeof ScaleLinkNew>;
+
+const knownUnits = (): Set<string> => {
+  const out = new Set<string>();
+  for (const entry of [...LAB_NAMES, ...EXTRA_LAB_NAMES]) for (const u of entry.units) out.add(scaleUnitKey(u));
+  for (const u of EXTRA_UNITS) out.add(scaleUnitKey(u));
+  return out;
+};
+
+/** 組を確かめる：項目は検査（バイタルでない）の名前、単位は表にある書き方か記載なし、2つの単位は違う。通れば null */
+export function scaleLinkProblem(link: ScaleLinkNew): 'name' | 'unit' | 'same' | null {
+  if (![...LAB_NAMES, ...EXTRA_LAB_NAMES].some((e) => e.name === link.name && e.kind === 'lab')) return 'name';
+  const units = knownUnits();
+  for (const u of [link.unitA, link.unitB]) if (u !== '' && !units.has(scaleUnitKey(u))) return 'unit';
+  if (scaleUnitKey(link.unitA === '' ? null : link.unitA) === scaleUnitKey(link.unitB === '' ? null : link.unitB)) return 'same';
+  return null;
+}
