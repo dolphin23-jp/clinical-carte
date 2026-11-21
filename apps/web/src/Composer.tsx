@@ -1,5 +1,6 @@
 // 文を入れる（docs/00 の 5）。先に患者と受診を選んである（CA-015）。どの患者に入るかを、送るボタンのすぐ上に出す。
 // 送った文は、サーバーで AI の選別と置き換えを通ったものだけが保存される。通らなければ、打った文は、この欄に残る。
+// 手軽にするための部品：種類・書いた人・日時のチップ、見出しのひな形、バイタル・検査値の入力欄（欄の値から文を作り、文の欄に入れる。送る文は、いつも文の欄の文）。
 import {
   AUTHOR_ROLE_LABELS,
   AUTHOR_ROLES,
@@ -11,15 +12,35 @@ import {
   type SourceKind,
   TEXT_LIMIT,
 } from '@clinical-carte/core';
-import { type SyntheticEvent, useState } from 'react';
+import { type SyntheticEvent, useRef, useState } from 'react';
 
 import { joinDateTime, nowLocal, replacedSummary } from './format.ts';
 import { errorMessage } from './messages.ts';
 import { addSource, type Observation, organizeSource, type Source } from './net/api.ts';
 import { organizeSummary } from './organizeText.ts';
+import { QuickValues } from './QuickValues.tsx';
+import { COMMON_KINDS, insertAt, KIND_CHIP_LABELS, TEMPLATES } from './templates.ts';
 
-export function Composer({ encounterId, target, onSaved, onLeft }: { encounterId: string; target: string; onSaved: (source?: Source, observations?: readonly Observation[]) => void; onLeft: () => void }) {
-  const [kind, setKind] = useState<SourceKind>('unsorted');
+/** 端末の日付から、n 日前の日（YYYY-MM-DD） */
+function dayBefore(n: number): string {
+  const d = new Date();
+  d.setDate(d.getDate() - n);
+  const two = (v: number): string => String(v).padStart(2, '0');
+  return `${String(d.getFullYear())}-${two(d.getMonth() + 1)}-${two(d.getDate())}`;
+}
+
+export function Composer({
+  encounterId,
+  target,
+  onSaved,
+  onLeft,
+}: {
+  encounterId: string;
+  target: string;
+  onSaved: (source?: Source, observations?: readonly Observation[]) => void;
+  onLeft: () => void;
+}) {
+  const [kind, setKind] = useState<SourceKind>('progress_note');
   const [authorRole, setAuthorRole] = useState<AuthorRole>('self');
   const [day, setDay] = useState(() => nowLocal().day);
   const [time, setTime] = useState(() => nowLocal().time);
@@ -30,10 +51,37 @@ export function Composer({ encounterId, target, onSaved, onLeft }: { encounterId
   const [done, setDone] = useState<string | null>(null);
   /** 保存のあとの整理（段2）の知らせ */
   const [organizing, setOrganizing] = useState<string | null>(null);
+  const area = useRef<HTMLTextAreaElement>(null);
 
   const readsValues = READ_VALUES_KINDS.includes(kind);
   const tooLong = text.length > TEXT_LIMIT;
   const ready = text.trim() !== '' && !tooLong && (unknownTime || day !== '');
+  const templates = TEMPLATES[kind] ?? [];
+
+  /** 文の欄の、カーソルの位置に差し込む */
+  const insert = (snippet: string) => {
+    const el = area.current;
+    const start = el?.selectionStart ?? text.length;
+    const end = el?.selectionEnd ?? text.length;
+    const next = insertAt(text, start, end, snippet);
+    setText(next.text);
+    requestAnimationFrame(() => {
+      el?.focus();
+      el?.setSelectionRange(next.cursor, next.cursor);
+    });
+  };
+
+  const setWhen = (which: 'now' | 'today' | 'yesterday') => {
+    setUnknownTime(false);
+    if (which === 'now') {
+      const now = nowLocal();
+      setDay(now.day);
+      setTime(now.time);
+    } else {
+      setDay(dayBefore(which === 'today' ? 0 : 1));
+      setTime('');
+    }
+  };
 
   const submit = (event: SyntheticEvent) => {
     event.preventDefault();
@@ -74,11 +122,30 @@ export function Composer({ encounterId, target, onSaved, onLeft }: { encounterId
 
   return (
     <form className="form" onSubmit={submit} data-testid="composer">
-      <div className="field-row">
-        <label className="field">
-          <span className="field-label">種類</span>
+      <fieldset className="field">
+        <legend className="field-label">種類</legend>
+        <div className="chips" role="radiogroup" aria-label="種類">
+          {COMMON_KINDS.map((k) => (
+            <button
+              key={k}
+              type="button"
+              role="radio"
+              aria-checked={kind === k}
+              className={kind === k ? 'chip on' : 'chip'}
+              onClick={() => {
+                setKind(k);
+              }}
+              disabled={busy}
+              data-testid={`kind-chip-${k}`}
+            >
+              {KIND_CHIP_LABELS[k] ?? SOURCE_KIND_LABELS[k]}
+            </button>
+          ))}
+        </div>
+        <label className="inline-select">
+          <span className="note">ほかの種類</span>
           <select
-            className="input"
+            className="input compact"
             value={kind}
             onChange={(e) => {
               setKind(e.target.value as SourceKind);
@@ -93,66 +160,83 @@ export function Composer({ encounterId, target, onSaved, onLeft }: { encounterId
             ))}
           </select>
         </label>
-        <label className="field">
-          <span className="field-label">書いた人</span>
-          <select
-            className="input"
-            value={authorRole}
-            onChange={(e) => {
-              setAuthorRole(e.target.value as AuthorRole);
+      </fieldset>
+
+      <fieldset className="field">
+        <legend className="field-label">書いた人</legend>
+        <div className="chips" role="radiogroup" aria-label="書いた人">
+          {AUTHOR_ROLES.map((r) => (
+            <button
+              key={r}
+              type="button"
+              role="radio"
+              aria-checked={authorRole === r}
+              className={authorRole === r ? 'chip small on' : 'chip small'}
+              onClick={() => {
+                setAuthorRole(r);
+              }}
+              disabled={busy}
+              data-testid={`author-chip-${r}`}
+            >
+              {AUTHOR_ROLE_LABELS[r]}
+            </button>
+          ))}
+        </div>
+      </fieldset>
+
+      <fieldset className="field">
+        <legend className="field-label">記載・測定の日時</legend>
+        <div className="chips">
+          <button type="button" className="chip small" onClick={() => { setWhen('now'); }} disabled={busy} data-testid="when-now">
+            今
+          </button>
+          <button type="button" className="chip small" onClick={() => { setWhen('today'); }} disabled={busy} data-testid="when-today">
+            今日（時刻なし）
+          </button>
+          <button type="button" className="chip small" onClick={() => { setWhen('yesterday'); }} disabled={busy} data-testid="when-yesterday">
+            昨日
+          </button>
+          <button
+            type="button"
+            role="switch"
+            aria-checked={unknownTime}
+            className={unknownTime ? 'chip small on' : 'chip small'}
+            onClick={() => {
+              setUnknownTime(!unknownTime);
             }}
             disabled={busy}
+            data-testid="when-unknown"
           >
-            {AUTHOR_ROLES.map((r) => (
-              <option key={r} value={r}>
-                {AUTHOR_ROLE_LABELS[r]}
-              </option>
-            ))}
-          </select>
-        </label>
-      </div>
-      <div className="field-row">
-        <label className="field">
-          <span className="field-label">記載・測定の日</span>
-          <input
-            className="input"
-            type="date"
-            value={day}
-            onChange={(e) => {
-              setDay(e.target.value);
-            }}
-            disabled={busy || unknownTime}
-            data-testid="at-day"
-          />
-        </label>
-        <label className="field">
-          <span className="field-label">時刻（分かれば）</span>
-          <input
-            className="input"
-            type="time"
-            value={time}
-            onChange={(e) => {
-              setTime(e.target.value);
-            }}
-            disabled={busy || unknownTime}
-            data-testid="at-time"
-          />
-        </label>
-      </div>
-      <label className="check">
-        <input
-          type="checkbox"
-          checked={unknownTime}
-          onChange={(e) => {
-            setUnknownTime(e.target.checked);
-          }}
-          disabled={busy}
-        />
-        <span>日時が分からない（日時なしで入れる）</span>
-      </label>
+            日時不明
+          </button>
+        </div>
+        <div className="field-row">
+          <label className="field">
+            <span className="sr-only">日</span>
+            <input className="input" type="date" value={day} onChange={(e) => { setDay(e.target.value); }} disabled={busy || unknownTime} data-testid="at-day" />
+          </label>
+          <label className="field">
+            <span className="sr-only">時刻（分かれば）</span>
+            <input className="input" type="time" value={time} onChange={(e) => { setTime(e.target.value); }} disabled={busy || unknownTime} data-testid="at-time" />
+          </label>
+        </div>
+      </fieldset>
+
+      {(kind === 'vital' || kind === 'lab') && <QuickValues kind={kind} disabled={busy} onCompose={insert} />}
+
       <label className="field">
         <span className="field-label">文</span>
+        {templates.length > 0 && (
+          <span className="chips">
+            {templates.map((t, i) => (
+              <button key={t.label} type="button" className="chip small outline" onClick={() => { insert(t.text); }} disabled={busy} data-testid={`template-${String(i)}`}>
+                ＋ {t.label}
+              </button>
+            ))}
+          </span>
+        )}
         <textarea
+          ref={area}
           className="input area"
           value={text}
           onChange={(e) => {
@@ -163,13 +247,14 @@ export function Composer({ encounterId, target, onSaved, onLeft }: { encounterId
           autoCapitalize="none"
           autoCorrect="off"
           spellCheck={false}
+          placeholder={readsValues ? '例：WBC 12.3 Hb 8.2 CRP <0.1 BP 120/80（上の欄から入れることもできます）' : '写した文を、そのまま入れます'}
           data-testid="text"
         />
       </label>
       {readsValues ? (
-        <p className="note">名前と値を並べて書きます（例：WBC 12.3 Hb 8.2 CRP &lt;0.1 BP 78/40 尿潜血 (-)）。値は、AI を使わずに読みます。読めなかった部分も、文には残ります。</p>
+        <p className="note">名前と値を並べて書きます。値は、AI を使わずに読みます。読めなかった部分も、文には残ります。</p>
       ) : (
-        <p className="note">写した文を、そのまま入れます。保存したあと、AI が整理します（見出しの区切り・投薬・できごと・問題・測定値）。整理は、文に書かれたことだけで、文そのものは変えません。</p>
+        <p className="note">保存したあと、AI が整理します（見出しの区切り・投薬・できごと・問題・測定値）。整理は、文に書かれたことだけで、文そのものは変えません。</p>
       )}
       <p className={tooLong ? 'note over' : 'note'}>
         {String(text.length)} / {String(TEXT_LIMIT)} 字
@@ -192,7 +277,7 @@ export function Composer({ encounterId, target, onSaved, onLeft }: { encounterId
       <p className="target" data-testid="target">
         入れる先：<strong>{target}</strong>
       </p>
-      <button className="button primary" type="submit" disabled={busy || !ready} data-testid="send">
+      <button className="button primary block" type="submit" disabled={busy || !ready} data-testid="send">
         {busy ? '識別情報を選別しています…' : 'この患者に入れる'}
       </button>
     </form>
