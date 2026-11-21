@@ -2,7 +2,7 @@
 import fc from 'fast-check';
 import { describe, expect, test } from 'vitest';
 
-import { applyOrganization, eventTimeline, medicationTimeline, type OrganizeAnswer, type OrganizeContext, problemKey, problemList, reportTotal } from '../src/index.ts';
+import { applyOrganization, eventTimeline, foldedEventIds, foldedMedicationIds, medicationTimeline, type OrganizeAnswer, type OrganizeContext, problemKey, problemList, reportTotal } from '../src/index.ts';
 
 const NOTE = [
   '#1 市中肺炎',
@@ -155,8 +155,8 @@ describe('測定値：数は、AI に写させない', () => {
     const r = applyOrganization(
       answer({
         measurements: [
-          { quote: 'BT 37.2 SpO2 96%', when: null },
-          { quote: 'BT 38.4', when: '昨日' },
+          { quote: 'BT 37.2 SpO2 96%', when: null, specimen: null },
+          { quote: 'BT 38.4', when: '昨日', specimen: null },
         ],
       }),
       ctx,
@@ -174,8 +174,8 @@ describe('測定値：数は、AI に写させない', () => {
     const r = applyOrganization(
       answer({
         measurements: [
-          { quote: 'BT 37.5', when: null },
-          { quote: 'BT 37.5', when: '昨夜' },
+          { quote: 'BT 37.5', when: null, specimen: null },
+          { quote: 'BT 37.5', when: '昨夜', specimen: null },
         ],
       }),
       { ...ctx, text },
@@ -184,7 +184,7 @@ describe('測定値：数は、AI に写させない', () => {
   });
 
   test('AI が、値でない所（測定でない数）を指しても、読めなければ事実にならない', () => {
-    const r = applyOrganization(answer({ measurements: [{ quote: 'を目標に補正', when: null }] }), ctx);
+    const r = applyOrganization(answer({ measurements: [{ quote: 'を目標に補正', when: null, specimen: null }] }), ctx);
     expect(r.observations).toEqual([]);
     expect(r.report).toEqual({ measurement: { unread: 1 } });
   });
@@ -194,10 +194,10 @@ describe('測定値：数は、AI に写させない', () => {
     const r = applyOrganization(
       answer({
         measurements: [
-          { quote: 'SpO2 96%（室内気）', when: null },
-          { quote: 'BT 38.4℃', when: null },
-          { quote: 'HR はやい', when: null },
-          { quote: 'CRT 3秒', when: null },
+          { quote: 'SpO2 96%（室内気）', when: null, specimen: null },
+          { quote: 'BT 38.4℃', when: null, specimen: null },
+          { quote: 'HR はやい', when: null, specimen: null },
+          { quote: 'CRT 3秒', when: null, specimen: null },
         ],
       }),
       { ...ctx, text },
@@ -206,9 +206,34 @@ describe('測定値：数は、AI に写させない', () => {
     expect(r.report).toEqual({ measurement: { unread: 2 } });
   });
 
+  test('尿の検査と指された引用（specimen = urine）は、尿の項目の名前で読む。経過の文でも、検査結果の文でも（CD-023）', () => {
+    const text = '【血ガス】pH 7.31 Lac 3.6\n【尿】\n比重 1.012、pH 5.5、白血球 1+\n【血算】WBC 18,200';
+    const answer1 = answer({
+      measurements: [
+        { quote: 'pH 7.31 Lac 3.6', when: null, specimen: null },
+        { quote: '比重 1.012、pH 5.5、白血球 1+', when: null, specimen: 'urine' },
+        { quote: 'WBC 18,200', when: null, specimen: null },
+      ],
+    });
+    const er = applyOrganization(answer1, { ...ctx, text, kind: 'er_note' });
+    expect(er.observations.map((o) => o.row.name)).toEqual(['pH', 'Lac', '尿比重', '尿pH', '尿白血球反応', 'WBC']);
+    const lab = applyOrganization(answer1, { ...ctx, text, kind: 'lab' });
+    expect(lab.observations.map((o) => [o.row.name, o.origin])).toEqual([
+      ['pH', 'parser'],
+      ['Lac', 'parser'],
+      ['尿比重', 'parser'],
+      ['尿pH', 'parser'],
+      ['尿白血球反応', 'parser'],
+      ['WBC', 'parser'],
+    ]);
+    // 尿と指されなければ、これまでどおり（血液の項目として読む）
+    const plain = applyOrganization(answer({}), { ...ctx, text, kind: 'lab' });
+    expect(plain.observations.filter((o) => o.row.name === 'pH')).toHaveLength(2);
+  });
+
   test('検査結果・バイタルの文：文全体を決定論で読む（AI の指した場所は使わない）', () => {
     const text = 'WBC 12.3 CRP 8.5';
-    const r = applyOrganization(answer({ measurements: [{ quote: 'WBC 12.3', when: null }] }), { ...ctx, text, kind: 'lab' });
+    const r = applyOrganization(answer({ measurements: [{ quote: 'WBC 12.3', when: null, specimen: null }] }), { ...ctx, text, kind: 'lab' });
     expect(r.observations.map((o) => [o.row.name, o.origin])).toEqual([
       ['WBC', 'parser'],
       ['CRP', 'parser'],
@@ -254,7 +279,7 @@ describe('性質', () => {
             medications: quotes.map((q) => ({ name: q, dose: q, action: null, when: q })),
             events: quotes.map((q) => ({ kind: 'other' as const, title: q, when: null })),
             problems: quotes.map((q) => ({ name: q, status: 'problem' as const, activity: null })),
-            measurements: quotes.map((q) => ({ quote: q, when: null })),
+            measurements: quotes.map((q) => ({ quote: q, when: null, specimen: null })),
             segments: quotes.map((q) => ({ label: 'other' as const, start: q })),
           },
           { ...ctx, text },
@@ -309,5 +334,32 @@ describe('見方（保存しない）', () => {
       { id: '3', sourceId: 's', kind: 'test', title: 'a', at: '2026-11-19T08:00' },
     ]);
     expect(list.map((e) => e.title)).toEqual(['a', 'c', 'b']);
+  });
+});
+
+describe('同じ日の二重をたたむ（見せ方だけ）', () => {
+  test('時刻のない投薬で、同じ日の時刻つきの同じ薬・同じ動きがあれば、たたむ。動きが違う・日が違う・時刻つきは、たたまない', () => {
+    const med = (id: string, name: string, action: 'start' | 'continue' | 'stop' | null, at: string | null) => ({ id, sourceId: 's', name, doseText: null, action, at });
+    const facts = [
+      med('a', 'セフトリアキソン', 'start', '2026-11-21'),
+      med('b', 'セフトリアキソン', 'start', '2026-11-21T11:05'),
+      med('c', 'NE', 'continue', '2026-11-21'),
+      med('d', 'NE', 'start', '2026-11-21T11:10'),
+      med('e', 'ミノサイクリン', 'start', '2026-11-22'),
+      med('f', 'ミノサイクリン', 'start', '2026-11-21T11:20'),
+      med('g', 'ＡＲＢ', 'stop', null),
+    ];
+    expect([...foldedMedicationIds(facts)]).toEqual(['a']);
+  });
+
+  test('時刻のないできごとで、同じ日の時刻つきの、同じ種類・題の頭の字が同じものがあれば、たたむ', () => {
+    const ev = (id: string, kind: 'test' | 'procedure', title: string, at: string | null) => ({ id, sourceId: 's', kind, title, at });
+    const facts = [
+      ev('a', 'test', '血液培養2セット：提出済み', '2026-11-21'),
+      ev('b', 'test', '血液培養2セット・尿培養（提出済み、10:45）', '2026-11-21T10:45'),
+      ev('c', 'test', '胸部X線', '2026-11-21'),
+      ev('d', 'procedure', '血液培養2セットを採取', '2026-11-21T10:40'),
+    ];
+    expect([...foldedEventIds(facts)]).toEqual(['a']);
   });
 });

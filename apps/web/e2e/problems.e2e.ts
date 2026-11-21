@@ -61,7 +61,7 @@ ANSWERS[D4] = {
     { name: '#2 低Na血症', status: 'problem', activity: null },
   ],
   medications: [{ name: 'セフトリアキソン', dose: '2g', action: 'continue', when: null }],
-  measurements: [{ quote: 'CRP 6.8 WBC 10.1', when: null }, { quote: 'Na 132', when: null }],
+  measurements: [{ quote: 'CRP 6.8 WBC 10.1', when: null, specimen: null }, { quote: 'Na 132', when: null, specimen: null }],
 };
 
 // 問題ごとの段落のあとに、全体で1つの P が続く記載（記載全体の P）と、MAP・JCS・酸素の書かれたバイタル
@@ -79,7 +79,7 @@ ANSWERS[D5] = {
     { name: '#1 ショック', status: 'problem', activity: null },
     { name: '#2 急性腎障害', status: 'problem', activity: null },
   ],
-  measurements: [{ quote: 'BP 96/54（MAP 65）、JCS 3、鼻カニュラ 2 L/min', when: '12:00' }],
+  measurements: [{ quote: 'BP 96/54（MAP 65）、JCS 3、鼻カニュラ 2 L/min', when: '12:00', specimen: null }],
 };
 
 /** つなぎの代役：「市中肺炎」を「発熱」の筋につなぐ（つなげる設定のときだけ） */

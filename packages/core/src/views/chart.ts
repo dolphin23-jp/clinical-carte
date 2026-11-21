@@ -1,6 +1,7 @@
 // グラフのための計算（保存しない。判定しない）。温度板・検査の推移・投薬の時間軸が、同じ時間の軸を使う。
 // 正常範囲・基準・色分けは、ここにない（AGENTS.md の 1）。グラフに置くのは、数で書かれ、不等号のない値だけ。
 // 単位は、書かれた単位がカタログの単位と違う値を、温度板に置かない（換算しない。表には残る）。
+import { compareDateTime } from '../time/datetime.ts';
 import { LAB_NAMES } from '../labs/catalog.gen.ts';
 
 /** グラフの上の位置（ミリ秒。日本の時刻を、時刻帯の変換なしで数にしたもの）。日だけの値は、その日の正午に置き、印を付ける */
@@ -171,7 +172,17 @@ export function labTrends(observations: readonly ChartObservation[]): LabTrend[]
     }
     group.points.push({ ...time, at: o.at, value: o.value, text: o.valueText });
   }
-  return [...groups.entries()].map(([key, g]) => ({ key, name: g.name, unit: g.unit, points: g.points.sort(byTime), hidden: g.hidden }));
+  // 同じ項目の推移（単位の違うもの・単位の書かれていないもの）は、隣どうしに並べる。単位の書かれていない値を、書かれた単位の推移に入れない
+  // （「WBC 12.3」と「WBC 12300 /μL」のように、単位がないことは同じ目盛りであることを意味しない。桁を当てない・換算しない）
+  const entries = [...groups.entries()];
+  const firstIndex = new Map<string, number>();
+  entries.forEach(([, g], i) => {
+    if (!firstIndex.has(g.name)) firstIndex.set(g.name, i);
+  });
+  return entries
+    .map(([key, g], i) => ({ key, g, i }))
+    .sort((a, b) => (firstIndex.get(a.g.name) ?? 0) - (firstIndex.get(b.g.name) ?? 0) || a.i - b.i)
+    .map(({ key, g }) => ({ key, name: g.name, unit: g.unit, points: g.points.sort(byTime), hidden: g.hidden }));
 }
 
 /** 時間の範囲：値の最初から最後まで。受診の開始・終わりも含める。値が1つ・同じ時刻だけのときは、前後に半日ずつ広げる */
@@ -242,8 +253,19 @@ export function niceTicks(min: number, max: number, count = 4): { min: number; m
 }
 
 /** いちばん新しい値（日時のある値のうち） */
+/**
+ * いちばん新しい値。日時の比べ方は、どの画面でも同じ（compareDateTime：同じ日なら、時刻のない値〔日だけ〕は、時刻のある値より前）。
+ * グラフの上では日だけの値を日の真ん中に置くが、「最新」はその位置で決めない（2026-11-21：画面ごとに「最新」が食い違ったため）
+ */
 export function latestPoint(points: readonly ChartPoint[]): ChartPoint | null {
-  return points.length === 0 ? null : (points[points.length - 1] ?? null);
+  let best: ChartPoint | null = null;
+  for (const p of points) if (best === null || compareDateTime(p.at, best.at) >= 0) best = p;
+  return best;
+}
+
+/** 「最新」が時刻のある値で、同じ日に時刻のない（日だけの）値もある：どちらが新しいかは、記録から分からない */
+export function untimedSameDay(points: readonly ChartPoint[], latest: ChartPoint | null): boolean {
+  return latest !== null && !latest.dateOnly && points.some((p) => p.dateOnly && p.at === latest.at.slice(0, 10));
 }
 
 export interface MedicationSpan {

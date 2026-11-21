@@ -256,6 +256,25 @@ describe('記載全体の P（sharedPlanSegments）', () => {
   });
 });
 
+describe('一覧の形の A（1つの区切りに別の問題が並ぶ）', () => {
+  const seg = (label: string, start: number, end: number, sourceId = 's1') => ({ sourceId, label: label as never, start, end });
+  // 「A)\n#1 ショック\n#2 急性腎障害\n#3 低K血症」の1つの A の区切り（0〜60）
+  const segments = [seg('assessment', 0, 60), seg('other', 60, 80)];
+  const a1 = m({ threadId: 'T1', start: 3, end: 10 });
+  const a2 = m({ threadId: 'T2', start: 20, end: 26 });
+  const a3 = m({ threadId: 'T3', start: 40, end: 45 });
+  test('ほかの問題の記載を渡すと、その問題の名前から、次の別の問題の名前の手前まで', () => {
+    const all = [a1, a2, a3];
+    expect(problemNotes([a1], segments, all).map((x) => [x.start, x.end])).toEqual([[3, 20]]);
+    expect(problemNotes([a2], segments, all).map((x) => [x.start, x.end])).toEqual([[20, 40]]);
+    expect(problemNotes([a3], segments, all).map((x) => [x.start, x.end])).toEqual([[40, 60]]);
+  });
+  test('渡さなければ・ほかの問題がなければ、これまでどおり区切り全体', () => {
+    expect(problemNotes([a1], segments).map((x) => [x.start, x.end])).toEqual([[0, 60]]);
+    expect(problemNotes([a1], segments, [a1]).map((x) => [x.start, x.end])).toEqual([[0, 60]]);
+  });
+});
+
 describe('本人の操作の形', () => {
   const id = '01JD0000000000000000000000';
   test('移す・分ける・統合・表示の名前', () => {

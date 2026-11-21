@@ -20,6 +20,8 @@ function recentText(item: RecentItem): { tag: string; text: string } {
   }
 }
 
+const labText = (item: Extract<RecentItem, { type: 'lab' }>): string => `${item.name} ${item.valueText}${item.unit === null ? '' : ` ${item.unit}`}`;
+
 /** 1つのまとまりで、はじめに見せる数（残りは畳む） */
 const FIRST = 6;
 
@@ -75,11 +77,17 @@ function RecentList({ items }: { items: readonly RecentItem[] }) {
       {g.labs.length > 0 && (
         <div className="recent-group" data-testid="state-recent-labs">
           <h4 className="part-label">検査値（項目ごとのいちばん新しい値。{String(g.labs.length)} 項目）</h4>
-          <p className="thread-sub">
-            {g.labs
-              .map((l) => `${l.name} ${l.latest.valueText}${l.latest.unit === null ? '' : ` ${l.latest.unit}`}（${showDateTime(l.latest.at)}${l.count > 1 ? `・この間に ${String(l.count)} 件` : ''}）`)
-              .join('　')}
-          </p>
+          {g.repeatedLabs.length > 0 && (
+            <p className="thread-sub" data-testid="state-recent-labs-repeated">
+              この間に2回以上：{g.repeatedLabs.map((l) => `${labText(l.latest)}（${showDateTime(l.latest.at)}・${String(l.count)} 件）`).join('　')}
+            </p>
+          )}
+          {g.singleLabs.length > 0 && (
+            <details data-testid="state-recent-labs-single">
+              <summary>この間に1回だけの項目（{String(g.singleLabs.length)}）</summary>
+              <p className="thread-sub">{g.singleLabs.map((l) => `${labText(l.latest)}（${showDateTime(l.latest.at)}）`).join('　')}</p>
+            </details>
+          )}
         </div>
       )}
     </>

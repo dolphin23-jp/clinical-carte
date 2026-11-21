@@ -20,7 +20,7 @@ const ANSWER: OrganizeAnswer = {
     { name: '#1 発熱', status: 'problem', activity: null },
     { name: '#2 低K血症', status: 'problem', activity: null },
   ],
-  measurements: [{ quote: 'K 3.1', when: null }],
+  measurements: [{ quote: 'K 3.1', when: null, specimen: null }],
 };
 
 interface Rec {

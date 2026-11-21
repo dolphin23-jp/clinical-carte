@@ -256,7 +256,26 @@ export function applyOrganization(answer: OrganizeAnswer, ctx: OrganizeContext):
   // ほかの文は、AI が指した場所だけを、決定論で読む（「K 3.5 を目標に」のような、測定でない数を、AI が指さないことに頼る）
   const observations: OrganizedObservation[] = [];
   if (READ_VALUES_KINDS.includes(kind)) {
-    for (const row of readLabText(text).rows) observations.push({ row, at, origin: 'parser' });
+    // 文全体を決定論で読む。ただし AI が尿の検査と指した範囲（CD-023）は、その範囲だけを尿の項目の名前で読み直す
+    const urine: Span[] = [];
+    for (const m of capped('measurement', answer.measurements)) {
+      if (m.specimen !== 'urine' || !quoteShapeOk(m.quote)) continue;
+      for (let from = 0; ; ) {
+        const found = locate(text, folded, m.quote, from);
+        if (found === null) break;
+        if (!urine.some((u) => u.start === found.start)) {
+          urine.push(found);
+          break;
+        }
+        from = found.start + 1;
+      }
+    }
+    const inUrine = (row: LabRow): boolean => urine.some((u) => row.start >= u.start && row.end <= u.end);
+    for (const row of readLabText(text).rows) if (!inUrine(row)) observations.push({ row, at, origin: 'parser' });
+    for (const u of urine) {
+      for (const row of readLabText(text.slice(u.start, u.end), { specimen: 'urine' }).rows) observations.push({ row: { ...row, start: row.start + u.start, end: row.end + u.start }, at, origin: 'parser' });
+    }
+    observations.sort((a, b) => a.row.start - b.row.start);
   } else {
     const used: Span[] = [];
     for (const m of capped('measurement', answer.measurements)) {
@@ -277,7 +296,7 @@ export function applyOrganization(answer: OrganizeAnswer, ctx: OrganizeContext):
       } else count(report, 'measurement', 'bad_quote');
       if (span === null) continue;
       used.push(span);
-      const read = readLabText(text.slice(span.start, span.end));
+      const read = readLabText(text.slice(span.start, span.end), { specimen: m.specimen });
       // 数えるのは、何も読めなかった引用と、項目の名前は読めたのに値を読めなかった引用だけ。
       // 「SpO2 96%（室内気）」の「室内気」のような、項目でない語が残っただけの引用は数えない（数が、ほぼすべての記載に付いて、意味をなくすため）
       if (read.rows.length === 0 || read.unread.some((u) => u.reason !== 'unknown')) count(report, 'measurement', 'unread');

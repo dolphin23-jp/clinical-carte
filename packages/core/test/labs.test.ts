@@ -76,6 +76,7 @@ describe('読めるもの', () => {
     const r = readLabText('BP 84/40（MAP 約55） ALP 597（IFCC法） WBC 20,500/μL（Neut 91%） PT 62%(PT-INR 1.38)');
     expect(brief(r.rows)).toEqual(['収縮期血圧=84', '拡張期血圧=40', 'ALP=597', 'WBC=20,500 /μL', 'Neut=91 %', 'PT=62 %', 'PT-INR=1.38']);
     expect(brief(readLabText('HBs抗原（−） 顆粒円柱(+)').rows)).toEqual(['HBs抗原=（−）', '顆粒円柱=(+)']);
+    expect(brief(readLabText('【血ガス】pH 7.31【血算】WBC 18,200').rows)).toEqual(['pH=7.31', 'WBC=18,200']);
     // 括弧のあとの「：」は、つなぎの字
     expect(brief(readLabText('健診（2026年6月）：Cr 0.86、Plt 21万（紹介状）').rows)).toEqual(['Cr=0.86', 'Plt=21 万']);
   });
@@ -98,6 +99,13 @@ describe('読めるもの', () => {
     const r = readLabText('SpO2 96%（鼻カニュラ2 L/min） 尿量 25 mL 尿量 0.43 mL/kg/hr');
     expect(brief(r.rows)).toEqual(['SpO2=96 %', '酸素流量=2 L/min', '尿量=25 mL', '尿量=0.43 mL/kg/hr']);
     expect(r.rows[1]?.nameRaw).toBe('鼻カニュラ');
+  });
+
+  test('尿の検査の引用（specimen = urine）は、「尿」のない名前も尿の項目として読む。ふだんは血液の項目（CD-023）', () => {
+    const text = '比重 1.012、pH 5.5、蛋白 2+、潜血 2+、糖 1+、白血球 1+、Na 58、K 32';
+    expect(brief(readLabText(text, { specimen: 'urine' }).rows)).toEqual(['尿比重=1.012', '尿pH=5.5', '尿蛋白=2+', '尿潜血=2+', '尿糖=1+', '尿白血球反応=1+', '尿Na=58', '尿K=32']);
+    expect(brief(readLabText('pH 7.31 WBC 18,200 Na 131').rows)).toEqual(['pH=7.31', 'WBC=18,200', 'Na=131']);
+    expect(brief(readLabText('沈渣：RBC 5 WBC 10', { specimen: 'urine' }).rows)).toEqual(['尿沈渣RBC=5', '尿沈渣WBC=10']);
   });
 
   test('カタログにない名前は、「名前: 値」「名前=値」と書いたときだけ読む（書かれた名前のまま）', () => {
@@ -145,7 +153,7 @@ describe('性質', () => {
         const covered = new Array<boolean>(text.length).fill(false);
         for (const s of [...r.rows, ...r.unread]) for (let i = s.start; i < s.end; i++) covered[i] = true;
         for (let i = 0; i < text.length; i++) {
-          if (!covered[i]) expect([' ', '\n', ',', '、', ';', '。', ':', '=', '　', '(', ')'], `位置 ${String(i)}「${text}」`).toContain(text[i]);
+          if (!covered[i]) expect([' ', '\n', ',', '、', ';', '。', ':', '=', '　', '(', ')', '【', '】'], `位置 ${String(i)}「${text}」`).toContain(text[i]);
         }
       }),
       { numRuns: 500 },
