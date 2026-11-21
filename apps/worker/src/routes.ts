@@ -3,6 +3,9 @@
 import {
   compareDateTime,
   EncounterPatch,
+  FACT_KINDS,
+  type FactKind,
+  FactPatch,
   isUlid,
   japanDateTime,
   japanDay,
@@ -19,6 +22,8 @@ import {
 import type { z } from 'zod';
 
 import type { Db } from './db.ts';
+import { draftCourse, draftMaterialFor } from './draft.ts';
+import { patchFact } from './facts.ts';
 import { intake } from './intake.ts';
 import { organizeSource } from './organize.ts';
 import type { Organizer } from './organizer.ts';
@@ -235,6 +240,37 @@ export async function recordApi(request: Request, path: string, deps: RecordDeps
     const body = await readBody(request, ProblemMove);
     if (body === null) return bad();
     return edited(await moveMention(db, id, body, runtime));
+  }
+
+  // 草案（段4。CA-023）：入院後経過（問題ごと）。保存しない。資料が空なら、AI を呼ばない
+  const draft = /^\/api\/encounters\/([^/]+)\/draft$/.exec(path);
+  if (draft && method === 'POST') {
+    const encounterId = draft[1] ?? '';
+    if (!isUlid(encounterId)) return bad();
+    const material = await draftMaterialFor(db, encounterId);
+    if (material === null) return missing();
+    if (material.quotes.length === 0) return reply(422, { error: 'draft_empty' });
+    if (deps.organizer === null) return reply(503, { error: 'no_ai' });
+    if (deps.dailyAiLimit > 0 && (await callsOn(db, today)) >= deps.dailyAiLimit) return reply(429, { error: 'ai_limit' });
+    await countCall(db, today);
+    const result = await draftCourse(material, deps.organizer);
+    if (!result.ok) {
+      if (result.reason === 'ai') return result.failure === 'refused' ? reply(422, { error: 'ai_refused' }) : reply(502, { error: result.failure === 'unavailable' ? 'ai_unavailable' : 'ai_bad_answer' });
+      return reply(422, { error: 'draft_empty' });
+    }
+    return reply(200, { draft: result.draft, quotes: result.quotes, dropped: result.dropped });
+  }
+
+  // 問題以外の事実を直す（段3e）：外す・戻す、投薬の動き・できごとの種類・日時を選び直す
+  const oneFact = /^\/api\/facts\/([a-z]+)\/([^/]+)$/.exec(path);
+  if (oneFact && method === 'PATCH') {
+    const fact = oneFact[1] ?? '';
+    const id = oneFact[2] ?? '';
+    if (!(FACT_KINDS as readonly string[]).includes(fact) || !isUlid(id)) return bad();
+    const body = await readBody(request, FactPatch);
+    if (body === null) return bad();
+    const outcome = await patchFact(db, fact as FactKind, id, body, runtime);
+    return outcome.ok ? reply(200, { ok: true }) : outcome.error === 'not_found' ? missing() : bad();
   }
 
   // 筋を直す：統合する・表示の名前を選ぶ

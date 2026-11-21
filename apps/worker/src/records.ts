@@ -1,6 +1,7 @@
 // 記録の読み書き（段1：患者・受診・取り込んだ文・測定値）。書く表は、docs/04 の 6 の一覧のとおり。
 // ここは、形を確かめた後の値だけを受け取る（形の確かめは handler.ts、文の選別は intake.ts）。
 import { roundSummary, type RoundSummary } from '@clinical-carte/core';
+import type { FactField, FactKind } from '@clinical-carte/core';
 import type { AuthorRole, Comparator, EncounterKind, EventKind, HistoryAction, LabRow, MedicationAction, OrganizeReport, ProblemActivity, ProblemStatus, SegmentLabel, Sex, SourceKind } from '@clinical-carte/core';
 
 import { type Db, int, real, type Statement, text } from './db.ts';
@@ -58,6 +59,10 @@ export interface Medication {
   readonly at: string | null;
   readonly start: number;
   readonly end: number;
+  /** 本人が外した（見方から除く。戻せる） */
+  readonly excluded: boolean;
+  /** 本人が直した（整理し直しでも引き継ぐ） */
+  readonly edited: boolean;
 }
 
 export interface Event {
@@ -69,6 +74,8 @@ export interface Event {
   readonly at: string | null;
   readonly start: number;
   readonly end: number;
+  readonly excluded: boolean;
+  readonly edited: boolean;
 }
 
 export interface Problem {
@@ -117,6 +124,18 @@ export interface Observation {
   readonly unit: string | null;
   readonly start: number;
   readonly end: number;
+  readonly excluded: boolean;
+  readonly edited: boolean;
+}
+
+export interface FactEdit {
+  readonly id: string;
+  readonly at: string;
+  readonly fact: FactKind;
+  readonly target: string;
+  readonly field: FactField;
+  readonly before: string | null;
+  readonly after: string | null;
 }
 
 type Row = Record<string, unknown>;
@@ -226,7 +245,25 @@ function toObservation(row: Row | null): Observation | null {
     unit: text(row, 'unit'),
     start,
     end,
+    ...editState(row),
   };
+}
+
+/** 外した印と、本人が直したか（列がない古い読み出しでは、どちらも false） */
+function editState(row: Row | null): { excluded: boolean; edited: boolean } {
+  return { excluded: int(row, 'excluded') === 1, edited: text(row, 'origin') === 'self' };
+}
+
+function toFactEdit(row: Row): FactEdit | null {
+  const id = text(row, 'id');
+  const at = text(row, 'at');
+  const fact = text(row, 'fact');
+  const target = text(row, 'target');
+  const field = text(row, 'field');
+  if (id === null || at === null || target === null) return null;
+  if (fact !== 'medication' && fact !== 'event' && fact !== 'observation') return null;
+  if (field !== 'excluded' && field !== 'action' && field !== 'kind' && field !== 'at') return null;
+  return { id, at, fact, target, field, before: text(row, 'before'), after: text(row, 'after') };
 }
 
 function spanOf(row: Row): { start: number; end: number } | null {
@@ -252,7 +289,7 @@ function toMedication(row: Row): Medication | null {
   const span = spanOf(row);
   if (id === null || sourceId === null || encounterId === null || name === null || span === null) return null;
   const action = text(row, 'action');
-  return { id, sourceId, encounterId, name, doseText: text(row, 'dose_text'), action: action as MedicationAction | null, at: text(row, 'at'), ...span };
+  return { id, sourceId, encounterId, name, doseText: text(row, 'dose_text'), action: action as MedicationAction | null, at: text(row, 'at'), ...span, ...editState(row) };
 }
 
 function toEvent(row: Row): Event | null {
@@ -263,7 +300,7 @@ function toEvent(row: Row): Event | null {
   const title = text(row, 'title');
   const span = spanOf(row);
   if (id === null || sourceId === null || encounterId === null || kind === null || title === null || span === null) return null;
-  return { id, sourceId, encounterId, kind: kind as EventKind, title, at: text(row, 'at'), ...span };
+  return { id, sourceId, encounterId, kind: kind as EventKind, title, at: text(row, 'at'), ...span, ...editState(row) };
 }
 
 function toProblem(row: Row): Problem | null {
@@ -390,6 +427,8 @@ export interface PatientRecord {
   readonly problemThreads: ProblemThread[];
   /** 本人が直した記録（新しい順） */
   readonly history: HistoryEntry[];
+  /** 本人が事実を直した記録（新しい順。段3e） */
+  readonly factEdits: FactEdit[];
 }
 
 /** 問題の列（読み出し） */
@@ -398,19 +437,20 @@ export const PROBLEM_COLUMNS = 'id, source_id, encounter_id, name, status, activ
 export async function getRecord(db: Db, id: string): Promise<PatientRecord | null> {
   const patient = await getPatient(db, id);
   if (patient === null) return null;
-  const [encounters, sources, observations, segments, medications, events, problems, threads, history] = await Promise.all([
+  const [encounters, sources, observations, segments, medications, events, problems, threads, history, factEdits] = await Promise.all([
     db.prepare('SELECT id, patient_id, kind, started, ended FROM encounters WHERE patient_id = ? ORDER BY started, id').bind(id).all(),
     db.prepare('SELECT id, patient_id, encounter_id, kind, author_role, at, entered_at, text, replaced, organized, organized_version, organize_report FROM sources WHERE patient_id = ? ORDER BY id').bind(id).all(),
     db
-      .prepare('SELECT id, source_id, encounter_id, at, name, name_raw, kind, value, comparator, value_text, unit, span_start, span_end FROM observations WHERE patient_id = ? ORDER BY source_id, ord')
+      .prepare('SELECT id, source_id, encounter_id, at, name, name_raw, kind, value, comparator, value_text, unit, span_start, span_end, excluded, origin FROM observations WHERE patient_id = ? ORDER BY source_id, ord')
       .bind(id)
       .all(),
     db.prepare('SELECT id, source_id, label, span_start, span_end FROM segments WHERE patient_id = ? ORDER BY source_id, span_start').bind(id).all(),
-    db.prepare('SELECT id, source_id, encounter_id, name, dose_text, action, at, span_start, span_end FROM medications WHERE patient_id = ? ORDER BY source_id, span_start').bind(id).all(),
-    db.prepare('SELECT id, source_id, encounter_id, kind, title, at, span_start, span_end FROM events WHERE patient_id = ? ORDER BY source_id, span_start').bind(id).all(),
+    db.prepare('SELECT id, source_id, encounter_id, name, dose_text, action, at, span_start, span_end, excluded, origin FROM medications WHERE patient_id = ? ORDER BY source_id, span_start').bind(id).all(),
+    db.prepare('SELECT id, source_id, encounter_id, kind, title, at, span_start, span_end, excluded, origin FROM events WHERE patient_id = ? ORDER BY source_id, span_start').bind(id).all(),
     db.prepare(`SELECT ${PROBLEM_COLUMNS} FROM problems WHERE patient_id = ? ORDER BY source_id, span_start`).bind(id).all(),
     db.prepare('SELECT id, display_name, merged_into FROM problem_threads WHERE patient_id = ? ORDER BY id').bind(id).all(),
     db.prepare('SELECT id, at, action, target, before, after FROM history WHERE patient_id = ? ORDER BY at DESC, id DESC LIMIT 200').bind(id).all(),
+    db.prepare('SELECT id, at, fact, target, field, before, after FROM fact_edits WHERE patient_id = ? ORDER BY at DESC, id DESC LIMIT 500').bind(id).all(),
   ]);
   return {
     patient,
@@ -423,6 +463,7 @@ export async function getRecord(db: Db, id: string): Promise<PatientRecord | nul
     problems: problems.results.map(toProblem).filter(present),
     problemThreads: threads.results.map(toThread).filter(present),
     history: history.results.map(toHistory).filter(present),
+    factEdits: factEdits.results.map(toFactEdit).filter(present),
   };
 }
 
@@ -462,7 +503,7 @@ export async function setEncounterEnd(db: Db, id: string, end: string | null): P
 export const FACT_TABLES = ['observations', 'segments', 'medications', 'events', 'problems'] as const;
 
 /** 患者に付く、文からではない行の表（患者を消すと、一緒に消える。文を消しても残る：筋は、記載がなくなると見えなくなるだけ） */
-export const PATIENT_TABLES = ['problem_threads', 'history'] as const;
+export const PATIENT_TABLES = ['problem_threads', 'history', 'fact_edits'] as const;
 
 /** 問題の行を、表から読む */
 export function problemOf(row: Record<string, unknown>): Problem | null {
@@ -497,7 +538,7 @@ export async function saveSource(db: Db, source: Source, observations: readonly 
 }
 
 export function observationOf(source: Source, { id, row }: NewObservation): Observation {
-  return { id, sourceId: source.id, encounterId: source.encounterId, at: source.at, name: row.name, nameRaw: row.nameRaw, kind: row.kind, value: row.value, comparator: row.comparator, valueText: row.valueText, unit: row.unit, start: row.start, end: row.end };
+  return { id, sourceId: source.id, encounterId: source.encounterId, at: source.at, name: row.name, nameRaw: row.nameRaw, kind: row.kind, value: row.value, comparator: row.comparator, valueText: row.valueText, unit: row.unit, start: row.start, end: row.end, excluded: false, edited: false };
 }
 
 export async function getSource(db: Db, id: string): Promise<Source | null> {

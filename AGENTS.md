@@ -2,7 +2,7 @@
 
 このリポジトリで作業するエージェント（と人）へのルールです。clinical-carte は、自分用のカルテです。病院のカルテにある患者の情報を、本人が自分の手で写して持ち、AI が整理します。メインは記録で、本人専用です。
 
-状態：段2（AI の整理：文の区切り・投薬・できごと・問題・測定値の取り出しと、その見方）と、見方の洗練（経過表・検査の推移・入力のチップ。[docs/03-architecture.md](docs/03-architecture.md) の 3）、段3a（問題の筋：つなぎ・名前の移り変わり・解決と非活動・問題ごとの A/P と、筋を直す操作・履歴）、段3b（いまの状態：1行の要約〔決定論〕・いまの問題と最後の A/P・24時間・投薬・背景）、段3c（問題の記載の範囲に書かれた値・薬・できごと。決定論）、段3d（回診リスト）まで実装した。問題以外の事実を直す操作は、まだない（[docs/03-architecture.md](docs/03-architecture.md) の 5）。
+状態：段2（AI の整理：文の区切り・投薬・できごと・問題・測定値の取り出しと、その見方）と、見方の洗練（経過表・検査の推移・入力のチップ。[docs/03-architecture.md](docs/03-architecture.md) の 3）、段3a（問題の筋：つなぎ・名前の移り変わり・解決と非活動・問題ごとの A/P と、筋を直す操作・履歴）、段3b（いまの状態：1行の要約〔決定論〕・いまの問題と最後の A/P・24時間・投薬・背景）、段3c（問題の記載の範囲に書かれた値・薬・できごと。決定論）、段3d（回診リスト）、段3e（記録の種類の絞り込み・問題以外の事実を直す操作と履歴）、段4 のはじめ（AI の草案：入院後経過。保存しない）まで実装した（[docs/03-architecture.md](docs/03-architecture.md) の 5）。
 
 作業の前に、次の順で読んでください。
 
@@ -22,6 +22,7 @@
 - **実データの置き場所**：実在の患者に由来するデータは、リポジトリの作業ツリーに置かない。.gitignore に頼らない。テストと見本は架空症例だけ（`synthetic: true`）。
 - **貼った・打った原文は、保存もログもしない**。保存するのは、識別情報を置き換えた後の文と、そこから整理した事実だけ（docs/01 の 2）。
 - **AI は、保存する文を書き換えない**。識別情報は、AI が場所を指し、サーバーが決定論で置き換える。**数値は AI に写させない**（決定論で読む）。AI の答えは、機械で確かめられたものだけを事実にし、確かめられなかったものは黙って捨てず、「整理できなかった部分」として残す。
+- **AI の文は、記録に入れない**。AI が文を書くのは、段4 の草案（CA-023）だけ：保存しない・ログに残さない・画面のメモリだけ。文ごとに根拠の引用の記号を付けさせ、core の `checkDraft` が、記号・その問題の引用か・文の中の数が根拠の引用にあるか・識別情報の形を確かめ、通らない文は出さずに数だけを出す。病院のカルテへ戻す向き（コピーのボタンなど）は作らない（CA-001）。
 - **書かれていないことを補わない**。入れていない項目は空欄のまま。陰性・正常にしない。
 - **判定しない**：値の色分け、正常範囲の判定、警告、診断の提案を作らない。carte は記録で、正本は病院のカルテ。画面に常時「写し・最新とは限らない」を出す。
 - **外へ出るのは、Anthropic の API だけ**。解析、テレメトリ、外部フォント、CDN は使わない。共有・公開は作らない。API キーは、サーバーの側だけ。
@@ -48,7 +49,9 @@
 - **取り込み**（`apps/worker/src/intake.ts`）：打った文 → 整え → AI の選別 → 決定論の置き換え（core の `applySelection`）→ 形の検査（`replaceShapes`）→ 測定値の読み取り（`readLabText`。種類が検査結果・バイタルのときだけ）。**保存するのは、この流れが返した文だけ**。選別なしで保存する道を作らない（AI の鍵がないときは、文を入れられない）。変えるときは、同じ変更で `apps/worker/test/records.test.ts` と、core の `selection.test.ts`・`shapes.test.ts` を直す。
 - **整理**（段2。`apps/worker/src/organize.ts`、core の `organize/`）：保存した文（識別情報を置き換えた後）を AI が整理し、core の `applyOrganization` が確かめた行だけを入れる。AI が返すのは、分類と、文の中の引用だけ。**事実の文字は、保存した文の、その場所の字そのもの**。**数は引用を決定論で読み（`readLabText`）、日時は引用を決定論で読む（`parseWhen`）**。確かめられないものは事実にせず、種類と理由ごとの件数だけを `sources.organize_report` に残す。文そのものは変えない。整理し直すと、その文の行が入れ替わる。失敗したら、それまでの行を残す。変えるときは、同じ変更で core の `organize.test.ts`・`when.test.ts` と、`apps/worker/test/organize.test.ts` を直す。
 - **問題の筋**（段3a。`apps/worker/src/problems.ts`、core の `problems/threads.ts`）：記載ごとの問題を、患者ごとの筋につなぐ。名前が同じなら決定論、それ以外は AI が記号で指し、core の `resolveLinks` が確かめる。**AI に送るのは、保存した問題の名前と、その記載の1行だけ**。AI は名前を作らない。本人の直す操作（移す・分ける・統合・表示の名前）は、`history` に残し、**表示の名前は書かれた名前からだけ選ぶ**（打った名前を使わない）。解決・非活動は、書かれたときだけ（CA-025）。変えるときは、同じ変更で core の `threads.test.ts` と、`apps/worker/test/problems.test.ts` を直す。
-- **AI**：呼ぶのは `apps/worker/src/anthropic.ts` の1か所。指示は `apps/worker/src/prompt.ts` の1か所で、変えるときは版（`SELECT_PROMPT_VERSION`・`ORGANIZE_PROMPT_VERSION`・`LINK_PROMPT_VERSION`）を上げ、`apps/worker/test/prompt.test.ts` を同じ変更で直し、変更の前後で評価（`apps/worker/eval/`。本物の API で動かすのは本人）を見る。AI に文を書かせない（返させるのは、場所と種類だけ）。指示に書く種類・見出しの一覧は、core の表から差し込む（指示と答えの型を食い違わせない）。
+- **事実を直す**（段3e。`apps/worker/src/facts.ts`、core の `record/edits.ts`）：投薬・できごと・測定値を、外す・戻すと、選ぶだけの直し（投薬の動き・できごとの種類・日時）。**打つ欄を作らない**（打った文は選別を通す決まり）。直した行は origin を self にし、整理し直しでも、同じ場所・同じ字の行に引き継ぐ（`organize.ts`）。直すたびに `fact_edits` に残す（値・印・日時だけ）。外した事実は、見方（経過表・検査・投薬・問題・いま・草案）から除く。変えるときは、同じ変更で `apps/worker/test/facts.test.ts` を直す。
+- **草案**（段4。`apps/worker/src/draft.ts`、core の `draft/course.ts`）：資料は、保存した文から決定論で切り出した引用だけ（問題ごとの A・P と、その問題の記載に書かれた投薬・できごと）。資料が空なら AI を呼ばない。草案は保存しない。変えるときは、同じ変更で core の `draft.test.ts` と、`apps/worker/test/draft.test.ts` を直す。
+- **AI**：呼ぶのは `apps/worker/src/anthropic.ts` の1か所。指示は `apps/worker/src/prompt.ts` の1か所で、変えるときは版（`SELECT_PROMPT_VERSION`・`ORGANIZE_PROMPT_VERSION`・`LINK_PROMPT_VERSION`・`DRAFT_PROMPT_VERSION`）を上げ、`apps/worker/test/prompt.test.ts` を同じ変更で直し、変更の前後で評価（`apps/worker/eval/`。本物の API で動かすのは本人）を見る。整理・選別・つなぎでは、AI に文を書かせない（返させるのは、場所と種類だけ）。文を書かせるのは草案だけ（上の決まり）。指示に書く種類・見出しの一覧は、core の表から差し込む（指示と答えの型を食い違わせない）。
 - **評価の道具**（`apps/worker/eval/`。文は `eval/cases.ts`）：架空の文だけ。名前・番号・連絡先は、実行時に組み立てる（ファイルに置かない）。実在の文を入れない。**本人は、carte の画面の「選別の評価」から動かす**（`apps/worker/src/selfcheck.ts`・`apps/web/src/SelfCheck.tsx`。配ってあるサーバーの鍵・指示・モデルで、数と id だけを出す。文・結果を保存しない）。エージェントは、本物の API では動かさない（`--dry-run`・`--oracle` と試験だけ）。
 - **検査項目の名前**（`packages/core/src/labs/catalog.gen.ts`）は、`node scripts/import_lab_names.mjs <clinical-playbook の作業ツリー>` が作る。**手で直さない**（`--check` で古さを確かめる）。基準範囲・ありうる範囲・換算の倍率を取り込まない。carte で足す名前は `labs/extra-names.ts`。
 - **測定値は、書かれたとおりに持つ**：補わない・換算しない・判定しない。読めなかった部分は、黙って捨てず、理由つきで出す（`packages/core/test/labs.test.ts` の性質の試験）。

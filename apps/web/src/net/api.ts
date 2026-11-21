@@ -11,6 +11,10 @@ import type {
   NewPatient,
   NewSource,
   OrganizeReport,
+  CheckedDraft,
+  FactField,
+  FactKind,
+  FactPatch,
   HistoryAction,
   PatientPatch,
   ProblemActivity,
@@ -46,7 +50,8 @@ export type ApiError =
   | 'ai_unavailable'
   | 'ai_bad_answer'
   | 'selection_failed'
-  | 'conflict';
+  | 'conflict'
+  | 'draft_empty';
 
 export type Result<T> = { readonly ok: true; readonly value: T } | { readonly ok: false; readonly error: ApiError; readonly left?: number };
 
@@ -66,6 +71,7 @@ const KNOWN: readonly ApiError[] = [
   'ai_bad_answer',
   'selection_failed',
   'conflict',
+  'draft_empty',
 ];
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -183,6 +189,10 @@ export interface Medication {
   readonly at: string | null;
   readonly start: number;
   readonly end: number;
+  /** 本人が外した（段3e。見方から除く） */
+  readonly excluded: boolean;
+  /** 本人が直した（段3e） */
+  readonly edited: boolean;
 }
 
 export interface ClinicalEvent {
@@ -194,6 +204,10 @@ export interface ClinicalEvent {
   readonly at: string | null;
   readonly start: number;
   readonly end: number;
+  /** 本人が外した（段3e。見方から除く） */
+  readonly excluded: boolean;
+  /** 本人が直した（段3e） */
+  readonly edited: boolean;
 }
 
 export interface Problem {
@@ -208,6 +222,16 @@ export interface Problem {
   readonly end: number;
   readonly threadId: string | null;
   readonly threadOrigin: 'rule' | 'ai' | 'self' | null;
+}
+
+export interface FactEdit {
+  readonly id: string;
+  readonly at: string;
+  readonly fact: FactKind;
+  readonly target: string;
+  readonly field: FactField;
+  readonly before: string | null;
+  readonly after: string | null;
 }
 
 export interface ProblemThread {
@@ -239,6 +263,10 @@ export interface Observation {
   readonly unit: string | null;
   readonly start: number;
   readonly end: number;
+  /** 本人が外した（段3e。見方から除く） */
+  readonly excluded: boolean;
+  /** 本人が直した（段3e） */
+  readonly edited: boolean;
 }
 
 export interface PatientSummary {
@@ -260,6 +288,7 @@ export interface PatientRecord {
   readonly problems: readonly Problem[];
   readonly problemThreads: readonly ProblemThread[];
   readonly history: readonly HistoryEntry[];
+  readonly factEdits: readonly FactEdit[];
   /** サーバーの、今日（日本の日） */
   readonly today: string;
 }
@@ -285,8 +314,8 @@ export async function createPatient(input: NewPatient): Promise<Result<Patient>>
 export async function getRecord(patientId: string): Promise<Result<PatientRecord>> {
   const result = await call('GET', `patients/${encodeURIComponent(patientId)}`);
   if (!result.ok) return result;
-  const { patient, encounters, sources, observations, segments, medications, events, problems, problemThreads, history, today } = result.value;
-  const lists = [encounters, sources, observations, segments, medications, events, problems, problemThreads, history];
+  const { patient, encounters, sources, observations, segments, medications, events, problems, problemThreads, history, factEdits, today } = result.value;
+  const lists = [encounters, sources, observations, segments, medications, events, problems, problemThreads, history, factEdits];
   if (!isRecord(patient) || lists.some((l) => !Array.isArray(l)) || typeof today !== 'string') return { ok: false, error: 'network' };
   return {
     ok: true,
@@ -301,6 +330,7 @@ export async function getRecord(patientId: string): Promise<Result<PatientRecord
       problems: problems as Problem[],
       problemThreads: problemThreads as ProblemThread[],
       history: history as HistoryEntry[],
+      factEdits: factEdits as FactEdit[],
       today,
     },
   };
@@ -397,4 +427,27 @@ export async function mergeThread(threadId: string, into: string): Promise<Resul
 export async function nameThread(threadId: string, displayName: string | null): Promise<Result<null>> {
   const result = await call('PATCH', `threads/${encodeURIComponent(threadId)}`, { displayName });
   return result.ok ? { ok: true, value: null } : result;
+}
+
+// --- 事実を直す（段3e）
+
+export async function patchFact(fact: FactKind, id: string, patch: FactPatch): Promise<Result<null>> {
+  const result = await call('PATCH', `facts/${fact}/${encodeURIComponent(id)}`, patch);
+  return result.ok ? { ok: true, value: null } : result;
+}
+
+// --- 草案（段4。保存しない）
+
+export interface DraftResult {
+  readonly draft: CheckedDraft;
+  /** 資料にした引用の数と、長さの上限で落とした数 */
+  readonly quotes: number;
+  readonly dropped: number;
+}
+
+export async function requestDraft(encounterId: string): Promise<Result<DraftResult>> {
+  const result = await call('POST', `encounters/${encodeURIComponent(encounterId)}/draft`, {});
+  if (!result.ok) return result;
+  const { draft, quotes, dropped } = result.value;
+  return isRecord(draft) && typeof quotes === 'number' && typeof dropped === 'number' ? { ok: true, value: { draft: draft as unknown as CheckedDraft, quotes, dropped } } : { ok: false, error: 'network' };
 }
