@@ -10,7 +10,8 @@ import { findShapes } from '../guard/shapes.ts';
 import { type LabRow, readLabText } from '../labs/read.ts';
 import { READ_VALUES_KINDS, type SourceKind } from '../record/schema.ts';
 import { foldSameLength } from '../text/fold.ts';
-import { parseWhen } from '../time/when.ts';
+import { daysBetween } from '../time/datetime.ts';
+import { lineHeadWhen, parseWhen, shiftDay, type WhenContext } from '../time/when.ts';
 import type { EventKind, MedicationAction, OrganizeAnswer, ProblemActivity, ProblemStatus, SegmentLabel } from './answer.ts';
 
 export const ORGANIZE_QUOTE_MAX = 200;
@@ -26,7 +27,12 @@ export interface OrganizeContext {
   readonly at: string | null;
   /** 受診の開始の日時（病日を読むため） */
   readonly encounterStart: string;
+  /** 記載の中で日をまたいだと本人が確かめた場所（文の中の位置）。ここより後ろの、日の書かれていない時刻は翌日（CA-047）。なければ null */
+  readonly nextDayFrom?: number | null;
 }
+
+/** 行頭の日時で、日だけのものを使う、記載の日からの幅（日）。これより離れた「1/2 …」のような行は、日時にしない */
+const LINE_DAY_RANGE = 31;
 
 export interface Span {
   readonly start: number;
@@ -112,6 +118,12 @@ function quoteShapeOk(quote: string): boolean {
   return quote.length >= 1 && quote.length <= ORGANIZE_QUOTE_MAX && quote === quote.trim() && !quote.includes('\n');
 }
 
+/** 場所が行の頭か（前に、同じ行の空白しかない） */
+function atLineStart(text: string, pos: number): boolean {
+  const lineStart = text.lastIndexOf('\n', pos - 1) + 1;
+  return text.slice(lineStart, pos).trim() === '';
+}
+
 /** 引用の、文の中の場所（from より後の、最初の場所）。そのまま探し、なければ、そろえて探す */
 function locate(text: string, folded: string, quote: string, from = 0): Span | null {
   let at = text.indexOf(quote, from);
@@ -150,10 +162,14 @@ export function applyOrganization(answer: OrganizeAnswer, ctx: OrganizeContext):
   // （2026-11-21 の本人の決定：文に書かれた時刻を、AI が場所を指し、決定論で読んで、自動で記録の時刻にする）
   let at = ctx.at;
   const encounterStart = ctx.encounterStart.slice(0, 10);
+  const nextDayFrom = ctx.nextDayFrom ?? null;
+  /** 場所ごとの読み方：日をまたいだ場所より後ろの、時刻だけの言い方は翌日 */
+  const withDay = (base: WhenContext, pos: number): WhenContext =>
+    nextDayFrom !== null && pos >= nextDayFrom && base.refDay !== null ? { ...base, timeDay: shiftDay(base.refDay, 1) } : base;
   if ((ctx.at === null || ctx.at.length === 10) && answer.when !== null) {
     const span = place('when', answer.when);
     if (span !== null) {
-      const parsed = parseWhen(text.slice(span.start, span.end), { refDay: ctx.at, encounterStart });
+      const parsed = parseWhen(text.slice(span.start, span.end), withDay({ refDay: ctx.at, encounterStart }, span.start));
       if (parsed === null) count(report, 'when', 'when_unread');
       else if (ctx.at === null) at = parsed;
       // 日だけで入れた記載：同じ日の、時刻のある日時のときだけ使う（本人の選んだ日は変えない）
@@ -164,14 +180,32 @@ export function applyOrganization(answer: OrganizeAnswer, ctx: OrganizeContext):
 
   /** 区切りの時刻（区切りの見出しや最初の行に書かれた時刻。区切りの中の、自分の日時のない事実の日時になる） */
   const segmentTimes: { start: number; end: number; at: string }[] = [];
-  const atOfSpan = (pos: number): string | null => segmentTimes.find((g) => pos >= g.start && pos < g.end)?.at ?? at;
+  /** 行頭に書かれた日時（「16:00 BT 39.0 …」「3:00 BT 37.4 …」）。温度板・経過の行を写した文で、その行の値・できごとの日時にする（決定論。AI に頼らない） */
+  const lineWhen = (pos: number): string | null => {
+    const lineStart = text.lastIndexOf('\n', pos - 1) + 1;
+    const lineEnd = text.indexOf('\n', pos);
+    const quote = lineHeadWhen(text.slice(lineStart, lineEnd < 0 ? text.length : lineEnd));
+    if (quote === null) return null;
+    const parsed = parseWhen(quote, withDay(whenCtx, lineStart));
+    if (parsed === null) return null;
+    if (parsed.length === 10 && (whenCtx.refDay === null || Math.abs(daysBetween(whenCtx.refDay, parsed)) > LINE_DAY_RANGE)) return null;
+    return parsed;
+  };
+  /** 自分の日時の書かれていない事実の日時：行頭の日時、区切りの時刻、記載の日時の順。行頭が日だけで、同じ日の時刻が分かっていれば、その時刻 */
+  const atOfSpan = (pos: number): string | null => {
+    const fallback = segmentTimes.find((g) => pos >= g.start && pos < g.end)?.at ?? at;
+    const line = lineWhen(pos);
+    if (line === null) return fallback;
+    if (line.length === 10 && fallback !== null && fallback.slice(0, 10) === line) return fallback;
+    return line;
+  };
 
   /** 事実の日時：引用があれば、それを読む（読めなければ null と数える）。なければ、区切りの時刻、それもなければ記載の日時 */
   const factAt = (category: ReportCategory, when: string | null, pos: number | null = null): string | null => {
     if (when === null) return pos === null ? at : atOfSpan(pos);
     const span = place(category, when);
     if (span === null) return null;
-    const parsed = parseWhen(text.slice(span.start, span.end), whenCtx);
+    const parsed = parseWhen(text.slice(span.start, span.end), withDay(whenCtx, span.start));
     if (parsed === null) count(report, category, 'when_unread');
     return parsed;
   };
@@ -183,7 +217,7 @@ export function applyOrganization(answer: OrganizeAnswer, ctx: OrganizeContext):
   };
 
   // 区切り：文の順に、前の区切りより後ろで見つかったものだけ
-  const starts: { label: SegmentLabel; start: number; when: string | null }[] = [];
+  const starts: { label: SegmentLabel; start: number; when: string | null; quote: string }[] = [];
   let cursor = 0;
   for (const s of capped('segment', answer.segments)) {
     const span = place('segment', s.start, cursor);
@@ -192,15 +226,31 @@ export function applyOrganization(answer: OrganizeAnswer, ctx: OrganizeContext):
       count(report, 'segment', 'order');
       continue;
     }
-    starts.push({ label: s.label, start: span.start, when: s.when });
+    starts.push({ label: s.label, start: span.start, when: s.when, quote: s.start });
     cursor = span.start + 1;
+  }
+  // 「#問題」の見出しの区切り：同じ字が、その前の問題の一覧にもあるとき（「【プロブレムリスト】#1 敗血症…#6 …」のあとに「#1 敗血症…」の見出し）、
+  // 前から探すと一覧の側に置かれ、一覧から見出しまでが1つの区切りになる（別の問題の A・P が、みな #1 の範囲に入った）。
+  // 後ろの区切りから順に、次の区切りの手前にある、いちばん後ろの行頭の場所に置き直す（字は同じなので、変わるのは場所だけ）
+  for (let i = starts.length - 1; i >= 0; i -= 1) {
+    const s = starts[i];
+    if (s?.label !== 'problem_heading') continue;
+    const bound = starts[i + 1]?.start ?? text.length;
+    let best = s.start;
+    for (let from = s.start + 1; ; ) {
+      const found = locate(text, folded, s.quote, from);
+      if (found === null || found.start >= bound) break;
+      if (atLineStart(text, found.start)) best = found.start;
+      from = found.start + 1;
+    }
+    starts[i] = { ...s, start: best };
   }
   const segments: OrganizedSegment[] = starts.map((s, i) => ({ label: s.label, start: s.start, end: starts[i + 1]?.start ?? text.length }));
   for (const [i, s] of starts.entries()) {
     if (s.when === null) continue;
     const span = place('segment', s.when);
     if (span === null) continue;
-    const parsed = parseWhen(text.slice(span.start, span.end), whenCtx);
+    const parsed = parseWhen(text.slice(span.start, span.end), withDay(whenCtx, span.start));
     if (parsed === null) {
       count(report, 'segment', 'when_unread');
       continue;
@@ -216,17 +266,20 @@ export function applyOrganization(answer: OrganizeAnswer, ctx: OrganizeContext):
    *  2. その中で、同じ種類の前の項目より後ろの、最初の場所（AI は、文の順に返すことが多い）
    *  3. なければ、手がかりの合う最初の場所。手がかりがどこにも合わなければ、すべての場所から同じ順で選ぶ
    */
-  const placeFact = (category: ReportCategory, quote: string, anchors: readonly (string | null)[], cursor: number): Span | null => {
+  const placeFact = (category: ReportCategory, quote: string, anchors: readonly (string | null)[], cursor: number, prefer?: (span: Span) => boolean): Span | null => {
     const first = place(category, quote);
     if (first === null) return null;
-    const all: Span[] = [];
+    const found: Span[] = [];
     for (let from = 0; ; ) {
-      const found = locate(text, folded, quote, from);
-      if (found === null) break;
-      all.push(found);
-      from = found.start + 1;
+      const next = locate(text, folded, quote, from);
+      if (next === null) break;
+      found.push(next);
+      from = next.start + 1;
     }
-    if (all.length === 1) return first;
+    if (found.length === 1) return first;
+    // 優先する場所（問題なら「#問題」の見出しの行）があれば、その中から選ぶ
+    const preferred = prefer === undefined ? [] : found.filter(prefer);
+    const all = preferred.length > 0 ? preferred : found;
     const lineOf = (span: Span): string => {
       const start = text.lastIndexOf('\n', span.start - 1) + 1;
       const end = text.indexOf('\n', span.end);
@@ -262,10 +315,16 @@ export function applyOrganization(answer: OrganizeAnswer, ctx: OrganizeContext):
     events.push({ ...span, kind: e.kind, title: text.slice(span.start, span.end), at: factAt('event', e.when, span.start) });
   }
 
+  // 問題の名前が、問題の一覧と「#問題」の見出しの両方にあるときは、見出しの行の場所にする（その問題の範囲は、見出しから続く S・O・A・P。段3c）
+  const headingLines = segments.filter((g) => g.label === 'problem_heading').map((g) => {
+    const lineEnd = text.indexOf('\n', g.start);
+    return { start: g.start, end: lineEnd < 0 ? g.end : Math.min(lineEnd, g.end) };
+  });
+  const onHeadingLine = (span: Span): boolean => headingLines.some((h) => span.start >= h.start && span.end <= h.end);
   const problems: OrganizedProblem[] = [];
   let problemCursor = 0;
   for (const p of capped('problem', answer.problems)) {
-    const span = placeFact('problem', p.name, [], problemCursor);
+    const span = placeFact('problem', p.name, [], problemCursor, onHeadingLine);
     if (span === null) continue;
     problemCursor = span.start;
     problems.push({ ...span, name: text.slice(span.start, span.end), status: p.status, activity: p.activity, at });

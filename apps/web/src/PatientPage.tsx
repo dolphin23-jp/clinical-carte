@@ -54,6 +54,7 @@ import { SourceEdit } from './SourceEdit.tsx';
 import { SourceFacts } from './SourceFacts.tsx';
 import { SourceText } from './SourceText.tsx';
 import { StateView } from './StateView.tsx';
+import { nextDayLabel } from './NextDayAsk.tsx';
 import { DraftView } from './DraftView.tsx';
 import { NoteView } from './NoteView.tsx';
 
@@ -460,6 +461,7 @@ function SourceCard({
   const [message, setMessage] = useState<string | null>(null);
   const [organizing, setOrganizing] = useState(false);
   const report = source.organized === 'done' ? reportText(source.organizeReport) : null;
+  const nextDay = nextDayLabel(source.text, source.nextDayFrom);
 
   const organize = () => {
     setOrganizing(true);
@@ -514,6 +516,7 @@ function SourceCard({
           {replaced !== null && `・置き換えた場所：${replaced}`}
           {source.organized === null && '・まだ整理していません'}
           {source.organized === 'failed' && '・整理できませんでした'}
+          {nextDay !== null && `・${nextDay === '' ? '途中' : nextDay} からあとの、日の書かれていない時刻は翌日として読んでいます`}
           {report !== null && `・確かめられず記録に入れなかったもの：${report}`}
         </span>
         <span className="row-actions">

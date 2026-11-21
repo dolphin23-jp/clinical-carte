@@ -29,6 +29,7 @@ import { useRef, useState } from 'react';
 
 import { joinDateTime, showDateTime } from './format.ts';
 import { errorMessage } from './messages.ts';
+import { NextDayAsk, type NextDayAnswer, nextDayKey } from './NextDayAsk.tsx';
 import { addFact, organizeSource, patchSegment, patchSource, type Result, retypeSource, type Segment, type Source, type UserEdit } from './net/api.ts';
 
 const ADD_NAMES: Readonly<Record<AddType, string>> = { problem: '問題', medication: '投薬', event: 'できごと', observation: '値', segment: 'ここから区切り' };
@@ -145,9 +146,9 @@ export function SourceEdit({ source, segments, edits, onChanged, onLeft }: { sou
           key={source.text}
           source={source}
           busy={busy}
-          onRetype={(text) => {
+          onRetype={(text: { body: string; nextDay: boolean | undefined }) => {
             run(async () => {
-              const r = await retypeSource(source.id, text);
+              const r = await retypeSource(source.id, text.body, text.nextDay);
               if (!r.ok) return r;
               // 打ち直した文を、続けて整理し直す（整理に失敗しても、文は保存されている）
               const organized = await organizeSource(source.id);
@@ -307,8 +308,17 @@ function Picker({ source, busy, onAdd }: { source: Source; busy: boolean; onAdd:
 }
 
 /** 文を打ち直す（C-1）：入れるときと同じ選別を通す */
-function Retype({ source, busy, onRetype }: { source: Source; busy: boolean; onRetype: (text: string) => void }) {
+function Retype({ source, busy, onRetype }: { source: Source; busy: boolean; onRetype: (text: { body: string; nextDay: boolean | undefined }) => void }) {
   const [text, setText] = useState(source.text);
+  // 日をまたいだかの答え（CA-047）。はじめは、いまの読み方
+  const [nextAnswer, setNextAnswer] = useState<NextDayAnswer | null>(() => {
+    const key = nextDayKey(source.text);
+    return key === null ? null : { key, next: source.nextDayFrom !== null };
+  });
+  const turnKey = nextDayKey(text);
+  const answered = turnKey === null || nextAnswer?.key === turnKey;
+  const nextDay = turnKey === null ? false : nextAnswer?.key === turnKey ? nextAnswer.next : undefined;
+  const changed = text !== source.text || (nextDay ?? false) !== (source.nextDayFrom !== null);
   return (
     <details className="picker" data-testid="retype">
       <summary>文を打ち直す（打ち間違い・紛れた名前を消す）</summary>
@@ -316,7 +326,8 @@ function Retype({ source, busy, onRetype }: { source: Source; busy: boolean; onR
         直した文は、入れるときと同じく AI の選別（氏名などの置き換え）を通してから保存し、続けて整理し直します（AI の2回）。前の文は残りません。先生が足した・直したものは、新しい文に同じ字があれば引き継ぎます。
       </p>
       <textarea className="input area" value={text} maxLength={TEXT_LIMIT} disabled={busy} onChange={(e) => { setText(e.target.value); }} data-testid="retype-text" />
-      <button type="button" className="button small primary" disabled={busy || text.trim() === '' || text === source.text} onClick={() => { onRetype(text); }} data-testid="retype-save">
+      <NextDayAsk text={text} day={source.at === null ? null : source.at.slice(0, 10)} answer={nextAnswer} onAnswer={setNextAnswer} disabled={busy} />
+      <button type="button" className="button small primary" disabled={busy || text.trim() === '' || !changed || !answered} onClick={() => { onRetype({ body: text, nextDay }); }} data-testid="retype-save">
         直した文を保存する
       </button>
     </details>

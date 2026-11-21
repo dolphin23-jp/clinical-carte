@@ -117,7 +117,7 @@ export const SegmentPatch = z.strictObject({ label: z.enum(SEGMENT_LABELS) });
 export type SegmentPatch = z.infer<typeof SegmentPatch>;
 
 /** 文の打ち直し：文を入れるときと同じ選別を通す（C-1） */
-export const SourceTextPut = z.strictObject({ text: z.string().min(1).max(TEXT_LIMIT) });
+export const SourceTextPut = z.strictObject({ text: z.string().min(1).max(TEXT_LIMIT), nextDay: z.boolean().optional() });
 export type SourceTextPut = z.infer<typeof SourceTextPut>;
 
 /** 本人の調節の記録（user_edits）の欄 */

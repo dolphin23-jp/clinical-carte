@@ -229,5 +229,7 @@ export const DiscussRequest = z.strictObject({
 export type DiscussRequest = z.infer<typeof DiscussRequest>;
 
 /** A/P の案を頼む */
-export const ProposalRequest = z.strictObject({ day: Day, threadIds: z.array(Ulid).min(1).max(10), web: z.boolean() });
+/** 1回の A/P の案に入れる問題の数の上限。超えるときは、画面が数を出して選んでもらう（黙って切らない） */
+export const PROPOSAL_PROBLEMS_MAX = 10;
+export const ProposalRequest = z.strictObject({ day: Day, threadIds: z.array(Ulid).min(1).max(PROPOSAL_PROBLEMS_MAX), web: z.boolean() });
 export type ProposalRequest = z.infer<typeof ProposalRequest>;

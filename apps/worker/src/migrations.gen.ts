@@ -97,5 +97,11 @@ export const MIGRATIONS: readonly Migration[] = [
       "CREATE TABLE IF NOT EXISTS ap_history ( id TEXT PRIMARY KEY, patient_id TEXT NOT NULL REFERENCES patients (id) ON DELETE CASCADE, at TEXT NOT NULL CHECK (length(at) = 16), note_id TEXT NOT NULL, action TEXT NOT NULL CHECK (action IN ('add', 'edit', 'kind', 'delete')), origin TEXT CHECK (origin IS NULL OR origin IN ('self', 'ai', 'ai_edited')) )",
       "CREATE INDEX IF NOT EXISTS ap_history_by_patient ON ap_history (patient_id, at)"
     ]
+  },
+  {
+    "name": "0008_next_day",
+    "statements": [
+      "ALTER TABLE sources ADD COLUMN next_day_from INTEGER CHECK (next_day_from IS NULL OR next_day_from >= 0)"
+    ]
   }
 ];

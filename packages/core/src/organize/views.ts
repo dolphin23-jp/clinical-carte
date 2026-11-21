@@ -13,9 +13,20 @@ export function problemKey(name: string): string {
   return nameKey(name.normalize('NFKC').replace(/^#\s*\d*[.)．:]?\s*/u, ''));
 }
 
+/**
+ * 事実の並び：日時の順。同じ日時なら、同じ記載の中では書かれた順（文の中の場所）、別の記載どうしは入れた順（id の順）。
+ * 入院時記載の「【内服】アジルサルタン（継続）」と「P）アジルサルタンは中止」は同じ日時になる。id（同じミリ秒の中は乱数の順）で決めると、
+ * 「薬ごとの最後の記載」が、記載の順と逆になりうる（2026-11-21）。
+ */
+export function compareFacts(a: { readonly id: string; readonly sourceId: string; readonly at: string | null; readonly start?: number }, b: { readonly id: string; readonly sourceId: string; readonly at: string | null; readonly start?: number }): number {
+  return compareDateTime(a.at, b.at) || a.sourceId.localeCompare(b.sourceId) || (a.start ?? 0) - (b.start ?? 0) || a.id.localeCompare(b.id);
+}
+
 export interface MedicationFact {
   readonly id: string;
   readonly sourceId: string;
+  /** 文の中の場所（同じ日時の並びに使う） */
+  readonly start?: number;
   readonly name: string;
   readonly doseText: string | null;
   readonly action: MedicationAction | null;
@@ -38,7 +49,7 @@ export function medicationTimeline(facts: readonly MedicationFact[]): Medication
     groups.set(key, list);
   }
   const lines = [...groups.values()].map((list) => {
-    const entries = [...list].sort((a, b) => compareDateTime(a.at, b.at) || a.id.localeCompare(b.id));
+    const entries = [...list].sort(compareFacts);
     return { name: entries[0]?.name ?? '', entries };
   });
   return lines.sort((a, b) => compareDateTime(a.entries[0]?.at ?? null, b.entries[0]?.at ?? null) || a.name.localeCompare(b.name));
@@ -47,6 +58,7 @@ export function medicationTimeline(facts: readonly MedicationFact[]): Medication
 export interface ProblemFact {
   readonly id: string;
   readonly sourceId: string;
+  readonly start?: number;
   readonly name: string;
   readonly status: ProblemStatus;
   readonly at: string | null;
@@ -72,7 +84,7 @@ export function problemList(facts: readonly ProblemFact[]): ProblemLine[] {
     groups.set(key, list);
   }
   const lines = [...groups.values()].map((list) => {
-    const sorted = [...list].sort((a, b) => compareDateTime(a.at, b.at) || a.id.localeCompare(b.id));
+    const sorted = [...list].sort(compareFacts);
     const dated = sorted.filter((f) => f.at !== null);
     const latest = dated.at(-1) ?? sorted.at(-1);
     return {
@@ -89,6 +101,7 @@ export function problemList(facts: readonly ProblemFact[]): ProblemLine[] {
 export interface EventFact {
   readonly id: string;
   readonly sourceId: string;
+  readonly start?: number;
   readonly kind: EventKind;
   readonly title: string;
   readonly at: string | null;
@@ -96,7 +109,7 @@ export interface EventFact {
 
 /** できごとの並び：日時の順（日時のないものは最後） */
 export function eventTimeline(facts: readonly EventFact[]): EventFact[] {
-  return [...facts].sort((a, b) => compareDateTime(a.at, b.at) || a.id.localeCompare(b.id));
+  return [...facts].sort(compareFacts);
 }
 
 const dayOf = (at: string | null): string | null => (at === null ? null : at.slice(0, 10));

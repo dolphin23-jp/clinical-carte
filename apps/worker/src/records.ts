@@ -39,6 +39,8 @@ export interface Source {
   readonly organizedVersion: string | null;
   /** 整理で確かめられなかった件数（種類と理由ごと） */
   readonly organizeReport: OrganizeReport;
+  /** 日をまたいだ場所（CA-047）。ここより後ろの、日の書かれていない時刻は翌日。なければ null */
+  readonly nextDayFrom: number | null;
 }
 
 export interface Segment {
@@ -249,6 +251,7 @@ function toSource(row: Row | null): Source | null {
     organized: organized === 'done' || organized === 'failed' ? organized : null,
     organizedVersion: text(row, 'organized_version'),
     organizeReport: toReport(text(row, 'organize_report')),
+    nextDayFrom: typeof row?.['next_day_from'] === 'number' ? row['next_day_from'] : null,
   };
 }
 
@@ -530,7 +533,7 @@ export async function getRecord(db: Db, id: string): Promise<PatientRecord | nul
   if (patient === null) return null;
   const [encounters, sources, observations, segments, medications, events, problems, threads, history, factEdits, userEdits, apNotes] = await Promise.all([
     db.prepare('SELECT id, patient_id, kind, started, ended FROM encounters WHERE patient_id = ? ORDER BY started, id').bind(id).all(),
-    db.prepare('SELECT id, patient_id, encounter_id, kind, author_role, at, entered_at, text, replaced, organized, organized_version, organize_report FROM sources WHERE patient_id = ? ORDER BY id').bind(id).all(),
+    db.prepare('SELECT id, patient_id, encounter_id, kind, author_role, at, entered_at, text, replaced, organized, organized_version, organize_report, next_day_from FROM sources WHERE patient_id = ? ORDER BY id').bind(id).all(),
     db
       .prepare('SELECT id, source_id, encounter_id, at, name, name_raw, kind, value, comparator, value_text, unit, span_start, span_end, excluded, origin FROM observations WHERE patient_id = ? ORDER BY source_id, ord')
       .bind(id)
@@ -626,8 +629,8 @@ export interface NewObservation {
 export async function saveSource(db: Db, source: Source, observations: readonly NewObservation[]): Promise<void> {
   await db.batch([
     db
-      .prepare('INSERT INTO sources (id, patient_id, encounter_id, kind, author_role, at, entered_at, text, replaced) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)')
-      .bind(source.id, source.patientId, source.encounterId, source.kind, source.authorRole, source.at, source.enteredAt, source.text, JSON.stringify(source.replaced)),
+      .prepare('INSERT INTO sources (id, patient_id, encounter_id, kind, author_role, at, entered_at, text, replaced, next_day_from) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
+      .bind(source.id, source.patientId, source.encounterId, source.kind, source.authorRole, source.at, source.enteredAt, source.text, JSON.stringify(source.replaced), source.nextDayFrom),
     ...observations.map(({ id, row }, index) =>
       db
         .prepare(
@@ -643,7 +646,7 @@ export function observationOf(source: Source, { id, row }: NewObservation): Obse
 }
 
 export async function getSource(db: Db, id: string): Promise<Source | null> {
-  return toSource(await db.prepare('SELECT id, patient_id, encounter_id, kind, author_role, at, entered_at, text, replaced, organized, organized_version, organize_report FROM sources WHERE id = ?').bind(id).first());
+  return toSource(await db.prepare('SELECT id, patient_id, encounter_id, kind, author_role, at, entered_at, text, replaced, organized, organized_version, organize_report, next_day_from FROM sources WHERE id = ?').bind(id).first());
 }
 
 /** 整理に失敗した印を付ける（それまでの整理の行は、残す） */

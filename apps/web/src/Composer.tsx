@@ -16,6 +16,7 @@ import {
 import { type SyntheticEvent, useRef, useState } from 'react';
 
 import { joinDateTime, nowLocal, replacedSummary, showDateTime } from './format.ts';
+import { NextDayAsk, type NextDayAnswer, nextDayKey } from './NextDayAsk.tsx';
 import { errorMessage } from './messages.ts';
 import { addSource, type Observation, organizeSource, type Source } from './net/api.ts';
 import { organizeSummary } from './organizeText.ts';
@@ -55,10 +56,14 @@ export function Composer({
   /** 保存のあとの整理（段2）の知らせ */
   const [organizing, setOrganizing] = useState<string | null>(null);
   const area = useRef<HTMLTextAreaElement>(null);
+  /** 日をまたいだかの答え（CA-047。文に大きな時刻の逆戻りがあるときだけ聞く） */
+  const [nextAnswer, setNextAnswer] = useState<NextDayAnswer | null>(null);
 
   const readsValues = READ_VALUES_KINDS.includes(kind);
   const tooLong = text.length > TEXT_LIMIT;
-  const ready = text.trim() !== '' && !tooLong && (unknownTime || day !== '');
+  const turnKey = unknownTime ? null : nextDayKey(text);
+  const turnAnswered = turnKey === null || nextAnswer?.key === turnKey;
+  const ready = text.trim() !== '' && !tooLong && (unknownTime || day !== '') && turnAnswered;
   const templates = TEMPLATES[kind] ?? [];
   /** 文に書かれた日時（選ぶ手がかり。自動では使わない） */
   const candidates = text.trim() === '' ? [] : whenCandidates(text, { refDay: day === '' ? nowLocal().day : day, encounterStart: null });
@@ -105,7 +110,8 @@ export function Composer({
     setMessage(null);
     setDone(null);
     setOrganizing(null);
-    void addSource(encounterId, { kind, authorRole, at: unknownTime ? null : joinDateTime(day, time), text }).then((result) => {
+    const nextDay = turnKey !== null && nextAnswer?.key === turnKey && nextAnswer.next;
+    void addSource(encounterId, { kind, authorRole, at: unknownTime ? null : joinDateTime(day, time), text, ...(nextDay ? { nextDay: true } : {}) }).then((result) => {
       setBusy(false);
       if (!result.ok) {
         // 打った文は、欄に残す（もう一度送れる）
@@ -125,6 +131,7 @@ export function Composer({
       setText('');
       setTime('');
       setUnknownTime(false);
+      setNextAnswer(null);
       onSaved(source, observations);
       // 続けて整理する（段2）。整理に失敗しても、文は保存されている
       setOrganizing('整理しています…（30 秒ほどかかることがあります）');
@@ -270,6 +277,8 @@ export function Composer({
           </p>
         )}
       </fieldset>
+
+      <NextDayAsk text={text} day={unknownTime || day === '' ? null : day} answer={nextAnswer} onAnswer={setNextAnswer} disabled={busy || unknownTime} />
 
       {(kind === 'vital' || kind === 'lab') && <QuickValues kind={kind} disabled={busy} onCompose={insert} />}
 
