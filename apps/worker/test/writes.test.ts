@@ -4,6 +4,7 @@ import { readdirSync, readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { describe, expect, test } from 'vitest';
 
+import { FACT_TABLES } from '../src/records.ts';
 import { MIGRATIONS, openDb, registered, TEST_KEY, world } from './support.ts';
 
 const SRC = resolve(import.meta.dirname, '..', 'src');
@@ -18,7 +19,7 @@ const code = (text: string): string =>
     .join('\n');
 
 /** いまある表（段0・段1）。docs/04 の 6 の一覧のうち、作った分 */
-const TABLES = ['devices', 'entrance_daily', 'patients', 'encounters', 'sources', 'observations', 'usage_daily', 'schema_migrations'];
+const TABLES = ['devices', 'entrance_daily', 'patients', 'encounters', 'sources', 'observations', 'usage_daily', 'schema_migrations', 'segments', 'medications', 'events', 'problems'];
 
 describe('書き込みの一覧', () => {
   test('migrations が作る表は、一覧のとおり', () => {
@@ -33,6 +34,10 @@ describe('書き込みの一覧', () => {
       for (const m of code(text).matchAll(/\b(?:INSERT\s+(?:OR\s+IGNORE\s+)?INTO|(?<!\bDO\s+)UPDATE|DELETE\s+FROM)\s+([a-z_]+)/gi)) written.add((m[1] ?? '').toLowerCase());
     }
     expect([...written].sort()).toEqual([...TABLES].sort());
+  });
+
+  test('文から作った行の表（文を消すと、一緒に消える）は、一覧の表', () => {
+    for (const table of FACT_TABLES) expect(TABLES).toContain(table);
   });
 
   test('表を作る・変える SQL は、migrations にだけある（ソースにない）', () => {

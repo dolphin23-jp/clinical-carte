@@ -17,7 +17,19 @@ import { Composer } from './Composer.tsx';
 import { joinDateTime, nowLocal, replacedSummary, showDateTime } from './format.ts';
 import { LabTable } from './LabTable.tsx';
 import { errorMessage } from './messages.ts';
-import { createEncounter, deletePatient, deleteSource, type Encounter, getRecord, type PatientRecord, setEncounterEnd, type Source } from './net/api.ts';
+import { EventView, MedicationView, ProblemView } from './Facts.tsx';
+import { createEncounter, deletePatient, deleteSource, type Encounter, getRecord, organizeSource, type PatientRecord, type Segment, setEncounterEnd, type Source } from './net/api.ts';
+import { organizeSummary, reportText } from './organizeText.ts';
+import { SourceText } from './SourceText.tsx';
+
+type Tab = 'notes' | 'values' | 'medications' | 'problems' | 'events';
+const TABS: readonly (readonly [Tab, string])[] = [
+  ['notes', '記録'],
+  ['values', '検査・バイタル'],
+  ['medications', '投薬'],
+  ['problems', '問題'],
+  ['events', 'できごと'],
+];
 
 const encounterLabel = (e: Encounter): string => {
   const start = e.start.slice(0, 10);
@@ -36,7 +48,7 @@ export function PatientPage({ patientId, onBack, onLeft }: { patientId: string; 
   const [record, setRecord] = useState<PatientRecord | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [encounterId, setEncounterId] = useState<string | null>(null);
-  const [tab, setTab] = useState<'notes' | 'values'>('notes');
+  const [tab, setTab] = useState<Tab>('notes');
   const [panel, setPanel] = useState<'none' | 'encounter' | 'end' | 'delete'>('none');
 
   const load = useCallback(() => {
@@ -73,6 +85,10 @@ export function PatientPage({ patientId, onBack, onLeft }: { patientId: string; 
   const title = headline({ ...record.patient, encounter: latest }, record.today);
   const sources = record.sources.filter((s) => s.encounterId === current?.id).sort(newestFirst);
   const observations = record.observations.filter((o) => o.encounterId === current?.id);
+  const encounterSources = record.sources.filter((s) => s.encounterId === current?.id);
+  const medications = record.medications.filter((m) => m.encounterId === current?.id);
+  const events = record.events.filter((e) => e.encounterId === current?.id);
+  const problems = record.problems.filter((p) => p.encounterId === current?.id);
 
   return (
     <main className="page" data-testid="patient-page">
@@ -161,22 +177,33 @@ export function PatientPage({ patientId, onBack, onLeft }: { patientId: string; 
         <div className="card-head">
           <h2 id="record-title">{current === null ? '記録' : encounterLabel(current)}</h2>
           <div className="tabs" role="tablist">
-            <button type="button" role="tab" aria-selected={tab === 'notes'} className={tab === 'notes' ? 'chip on' : 'chip'} onClick={() => { setTab('notes'); }} data-testid="tab-notes">
-              記録 {String(sources.length)}
-            </button>
-            <button type="button" role="tab" aria-selected={tab === 'values'} className={tab === 'values' ? 'chip on' : 'chip'} onClick={() => { setTab('values'); }} data-testid="tab-values">
-              検査・バイタル
-            </button>
+            {TABS.map(([id, name]) => (
+              <button
+                key={id}
+                type="button"
+                role="tab"
+                aria-selected={tab === id}
+                className={tab === id ? 'chip on' : 'chip'}
+                onClick={() => {
+                  setTab(id);
+                }}
+                data-testid={`tab-${id}`}
+              >
+                {id === 'notes' ? `${name} ${String(sources.length)}` : name}
+              </button>
+            ))}
           </div>
         </div>
-        {tab === 'values' ? (
-          <LabTable observations={observations} />
-        ) : sources.length === 0 ? (
+        {tab === 'values' && <LabTable observations={observations} />}
+        {tab === 'medications' && <MedicationView medications={medications} sources={encounterSources} />}
+        {tab === 'problems' && <ProblemView problems={problems} sources={encounterSources} />}
+        {tab === 'events' && <EventView events={events} sources={encounterSources} />}
+        {tab !== 'notes' ? null : sources.length === 0 ? (
           <p className="note">この受診には、まだ、記録がありません。</p>
         ) : (
           <ul className="sources" data-testid="sources">
             {sources.map((s) => (
-              <SourceCard key={s.id} source={s} encounter={current} onDeleted={load} onLeft={onLeft} />
+              <SourceCard key={s.id} source={s} segments={record.segments.filter((g) => g.sourceId === s.id)} encounter={current} onChanged={load} onLeft={onLeft} />
             ))}
           </ul>
         )}
@@ -230,9 +257,27 @@ export function PatientPage({ patientId, onBack, onLeft }: { patientId: string; 
   );
 }
 
-function SourceCard({ source, encounter, onDeleted, onLeft }: { source: Source; encounter: Encounter | null; onDeleted: () => void; onLeft: () => void }) {
+function SourceCard({ source, segments, encounter, onChanged, onLeft }: { source: Source; segments: readonly Segment[]; encounter: Encounter | null; onChanged: () => void; onLeft: () => void }) {
   const [asking, setAsking] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
+  const [organizing, setOrganizing] = useState(false);
+  const report = source.organized === 'done' ? reportText(source.organizeReport) : null;
+
+  const organize = () => {
+    setOrganizing(true);
+    setMessage(null);
+    void organizeSource(source.id).then((result) => {
+      setOrganizing(false);
+      if (result.ok) {
+        setMessage(organizeSummary(result.value));
+        onChanged();
+      } else if (result.error === 'unregistered') onLeft();
+      else {
+        setMessage(`整理できませんでした（${errorMessage(result.error).replace('文は保存していません。', '')}）。`);
+        onChanged();
+      }
+    });
+  };
   const day = source.at !== null && encounter?.kind === 'inpatient' ? hospitalDay(encounter.start, source.at) : null;
   const replaced = replacedSummary(source.replaced);
   // 読めなかった部分は、保存した文から、同じ決まりで読み直して出す（保存していない）
@@ -249,9 +294,7 @@ function SourceCard({ source, encounter, onDeleted, onLeft }: { source: Source; 
           {SOURCE_KIND_LABELS[source.kind]}・{AUTHOR_ROLE_LABELS[source.authorRole]}
         </span>
       </div>
-      <p className="source-text" data-testid="source-text">
-        {source.text}
-      </p>
+      <SourceText text={source.text} segments={segments} />
       {unread.length > 0 && (
         <div className="unread" data-testid="unread">
           <span className="unread-title">値として読めなかった部分（文には残っています）</span>
@@ -268,6 +311,14 @@ function SourceCard({ source, encounter, onDeleted, onLeft }: { source: Source; 
         <span className="row-sub">
           入れた日時 {showDateTime(source.enteredAt)}
           {replaced !== null && `・置き換えた場所：${replaced}`}
+          {source.organized === null && '・まだ整理していません'}
+          {source.organized === 'failed' && '・整理できませんでした'}
+          {report !== null && `・確かめられず記録に入れなかったもの：${report}`}
+        </span>
+        <span className="row-actions">
+          <button className="button small" type="button" disabled={organizing} onClick={organize} data-testid="organize-source">
+            {organizing ? '整理しています…' : source.organized === 'done' ? '整理し直す' : '整理する'}
+          </button>
         </span>
         {asking ? (
           <span className="row-actions">
@@ -276,7 +327,7 @@ function SourceCard({ source, encounter, onDeleted, onLeft }: { source: Source; 
               type="button"
               onClick={() => {
                 void deleteSource(source.id).then((result) => {
-                  if (result.ok || result.error === 'not_found') onDeleted();
+                  if (result.ok || result.error === 'not_found') onChanged();
                   else if (result.error === 'unregistered') onLeft();
                   else setMessage(errorMessage(result.error));
                 });

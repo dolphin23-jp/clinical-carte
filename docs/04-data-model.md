@@ -1,6 +1,6 @@
 # 04 データモデル
 
-状態：段1 まで実装した（患者・受診・取り込んだ文・測定値）。3.5 より後の表は、まだ案。**実装した分と、案との違いは 7**。変えてはいけないのは、2 の約束と、6 の書き込みの一覧の考え方。
+状態：段2 まで実装した（患者・受診・取り込んだ文・区切り・測定値・投薬・できごと・問題）。訂正の履歴・問題の結びつきは、まだ案。**実装した分と、案との違いは 7・8**。変えてはいけないのは、2 の約束と、6 の書き込みの一覧の考え方。
 
 ## 1. 実体の一覧
 
@@ -184,11 +184,12 @@ AI が返すのは、次の3つだけ（構造化した出力）。
 | `devices` | 端末の登録・外すとき・その日はじめて使ったとき（1日に1回） |
 | `entrance_daily` | 合鍵を間違えたとき |
 | `usage_daily` | AI を呼んだとき |
+| `segments`・`medications`・`events`・`problems` | 整理（段2）のとき（その文の行を入れ替える）・文を消すとき・患者を消すとき |
 | `schema_migrations` | サーバーが、表を用意したとき（適用した migrations の名前だけ。docs/03 の 1） |
 
 - 打った原文・AI へ送った文・AI の答えそのものは、どの表にも書かない。ログにも出さない。
 - 表を足すときは、先にこの一覧を直す。
-- いまある表（段0・段1）は `devices`・`entrance_daily`・`patients`・`encounters`・`sources`・`observations`・`usage_daily`・`schema_migrations`。`apps/worker/test/writes.test.ts` が、migrations が作る表と、ソースの SQL が書く表を、この一覧と突き合わせる。
+- いまある表（段0〜段2）は `devices`・`entrance_daily`・`patients`・`encounters`・`sources`・`observations`・`usage_daily`・`schema_migrations`・`segments`・`medications`・`events`・`problems`。`apps/worker/test/writes.test.ts` が、migrations が作る表と、ソースの SQL が書く表を、この一覧と突き合わせる。
 
 ## 7. 段1 で作ったものと、案との違い
 
@@ -208,3 +209,19 @@ AI が返すのは、次の3つだけ（構造化した出力）。
 - **版（`rev`）と、訂正の履歴（`history`）は、まだない**：段1 では、文と測定値は「入れる」と「消す」だけで、直す操作がない。消したものは、残らない（入れ間違い・別の患者に入れた文を、残さないため）。直す操作は、段3 で、履歴と一緒に足す。
 - **測定値を読むのは、種類が「検査結果」「バイタル」の文だけ**：ほかの種類の文（経過の記載など）の中の数は、段1 では測定値にしない（「K 3.5 を目標に」のような、測定でない数を、測定値にしないため）。段2 で、AI が場所を指し、数が引用の数字そのものであることを確かめて、測定値にする。
 - **検査項目の名前**は、clinical-playbook のカタログから、`scripts/import_lab_names.mjs` で取り込む（`packages/core/src/labs/catalog.gen.ts`。名前・別名・単位の書き方・群だけ。基準範囲・ありうる範囲・換算の倍率は取り込まない）。定性だけの項目（尿潜血・便潜血・迅速の抗原など）は、carte で足した（`labs/extra-names.ts`。【案。本人は未確認】）。
+
+## 8. 段2 で作ったものと、案との違い
+
+作った表は、`apps/worker/migrations/0003_organize.sql`。答えの形と選べる値は、`packages/core/src/organize/answer.ts`。
+
+| 表 | 作った列 | 案（3）との違い |
+|---|---|---|
+| `sources` に足した列 | organized（NULL・done・failed）・organized_version・organize_report | 案の `organized`（まだ／済み／失敗）のとおり。report は、確かめられなかった件数（種類と理由ごとの整数だけ） |
+| `segments` | id・patient_id・source_id・label・span_start・span_end | 案の `reason`（整理できなかった部分）は、列にせず、件数を `organize_report` に置いた（文には残っているので、失うものはない） |
+| `medications` | id・patient_id・encounter_id・source_id・name・dose_text・action・at・span_start・span_end・origin | 案のとおり。name と dose_text は、文のその場所の字そのもの |
+| `events` | id・patient_id・encounter_id・source_id・kind・title・at・span_start・span_end・origin | 案の `detail` は、まだない（title が、文のその場所の字） |
+| `problems` | id・patient_id・encounter_id・source_id・name・status・at・span_start・span_end・origin | **記載ごとに1行**（案は患者ごとに1行）。同じ問題をまとめるのは、見るときの計算（`problemList`）。`since`・`until`・`order` は、まだない。status は、書かれた確からしさ（問題・診断・疑い・否定的と書かれている） |
+
+- **origin**：AI の整理の行は `ai`。本人が直す行（`self`）は、段3 で作る。
+- **測定値**：整理のたびに、その文の測定値を入れ直す。検査結果・バイタルの文は、文全体を決定論で読み直す（`parser`）。ほかの文は、AI が指した場所を決定論で読む（`ai`）。
+- **まだない表**：`problem_links`（問題と事実の結びつき）・`history`（訂正の履歴）。

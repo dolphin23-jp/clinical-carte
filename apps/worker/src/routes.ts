@@ -18,6 +18,8 @@ import type { z } from 'zod';
 
 import type { Db } from './db.ts';
 import { intake } from './intake.ts';
+import { organizeSource } from './organize.ts';
+import type { Organizer } from './organizer.ts';
 import { SELECT_PROMPT_VERSION } from './prompt.ts';
 import {
   createEncounter,
@@ -51,6 +53,8 @@ export interface RecordDeps {
   readonly dailyAiLimit: number;
   /** 使っているモデルの名前（評価の画面に出すだけ） */
   readonly model: string;
+  /** AI の整理（段2）。鍵がなければ null：文は入れられないので、整理もない */
+  readonly organizer: Organizer | null;
 }
 
 export interface Reply {
@@ -171,10 +175,29 @@ export async function recordApi(request: Request, path: string, deps: RecordDeps
       enteredAt: japanDateTime(runtime.now()),
       text: result.text,
       replaced: result.replaced,
+      organized: null,
+      organizedVersion: null,
+      organizeReport: {},
     };
     const observations: NewObservation[] = result.rows.map((row) => ({ id: newId(runtime), row }));
     await saveSource(db, source, observations);
     return reply(200, { source, observations: observations.map((o) => observationOf(source, o)) });
+  }
+
+  // 整理（段2）：保存した文を、AI に整理させる（文を入れたあと、画面が続けて呼ぶ。整理し直すときも、これ）
+  const organize = /^\/api\/sources\/([^/]+)\/organize$/.exec(path);
+  if (organize && method === 'POST') {
+    const id = organize[1] ?? '';
+    if (!isUlid(id)) return bad();
+    if (deps.organizer === null) return reply(503, { error: 'no_ai' });
+    if (deps.dailyAiLimit > 0 && (await callsOn(db, today)) >= deps.dailyAiLimit) return reply(429, { error: 'ai_limit' });
+    await countCall(db, today);
+    const result = await organizeSource(db, id, deps.organizer, runtime);
+    if (!result.ok) {
+      if (result.reason === 'not_found') return missing();
+      return result.failure === 'refused' ? reply(422, { error: 'ai_refused' }) : reply(502, { error: result.failure === 'unavailable' ? 'ai_unavailable' : 'ai_bad_answer' });
+    }
+    return reply(200, { source: result.source });
   }
 
   const oneSource = /^\/api\/sources\/([^/]+)$/.exec(path);

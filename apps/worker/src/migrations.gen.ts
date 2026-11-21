@@ -32,5 +32,24 @@ export const MIGRATIONS: readonly Migration[] = [
       "CREATE INDEX IF NOT EXISTS observations_by_source ON observations (source_id)",
       "CREATE TABLE IF NOT EXISTS usage_daily ( day TEXT PRIMARY KEY CHECK (length(day) = 10), calls INTEGER NOT NULL DEFAULT 0 CHECK (calls >= 0) )"
     ]
+  },
+  {
+    "name": "0003_organize",
+    "statements": [
+      "ALTER TABLE sources ADD COLUMN organized TEXT CHECK (organized IS NULL OR organized IN ('done', 'failed'))",
+      "ALTER TABLE sources ADD COLUMN organized_version TEXT",
+      "ALTER TABLE sources ADD COLUMN organize_report TEXT",
+      "CREATE TABLE IF NOT EXISTS segments ( id TEXT PRIMARY KEY, patient_id TEXT NOT NULL REFERENCES patients (id) ON DELETE CASCADE, source_id TEXT NOT NULL REFERENCES sources (id) ON DELETE CASCADE, label TEXT NOT NULL, span_start INTEGER NOT NULL, span_end INTEGER NOT NULL )",
+      "CREATE INDEX IF NOT EXISTS segments_by_source ON segments (source_id, span_start)",
+      "CREATE TABLE IF NOT EXISTS medications ( id TEXT PRIMARY KEY, patient_id TEXT NOT NULL REFERENCES patients (id) ON DELETE CASCADE, encounter_id TEXT NOT NULL REFERENCES encounters (id) ON DELETE CASCADE, source_id TEXT NOT NULL REFERENCES sources (id) ON DELETE CASCADE, name TEXT NOT NULL, dose_text TEXT, action TEXT CHECK (action IS NULL OR action IN ('start', 'change', 'stop', 'continue')), at TEXT CHECK (at IS NULL OR length(at) IN (10, 16)), span_start INTEGER NOT NULL, span_end INTEGER NOT NULL, origin TEXT NOT NULL CHECK (origin IN ('ai', 'self')) )",
+      "CREATE INDEX IF NOT EXISTS medications_by_patient ON medications (patient_id, at)",
+      "CREATE INDEX IF NOT EXISTS medications_by_source ON medications (source_id)",
+      "CREATE TABLE IF NOT EXISTS events ( id TEXT PRIMARY KEY, patient_id TEXT NOT NULL REFERENCES patients (id) ON DELETE CASCADE, encounter_id TEXT NOT NULL REFERENCES encounters (id) ON DELETE CASCADE, source_id TEXT NOT NULL REFERENCES sources (id) ON DELETE CASCADE, kind TEXT NOT NULL, title TEXT NOT NULL, at TEXT CHECK (at IS NULL OR length(at) IN (10, 16)), span_start INTEGER NOT NULL, span_end INTEGER NOT NULL, origin TEXT NOT NULL CHECK (origin IN ('ai', 'self')) )",
+      "CREATE INDEX IF NOT EXISTS events_by_patient ON events (patient_id, at)",
+      "CREATE INDEX IF NOT EXISTS events_by_source ON events (source_id)",
+      "CREATE TABLE IF NOT EXISTS problems ( id TEXT PRIMARY KEY, patient_id TEXT NOT NULL REFERENCES patients (id) ON DELETE CASCADE, encounter_id TEXT NOT NULL REFERENCES encounters (id) ON DELETE CASCADE, source_id TEXT NOT NULL REFERENCES sources (id) ON DELETE CASCADE, name TEXT NOT NULL, status TEXT NOT NULL CHECK (status IN ('problem', 'diagnosis', 'suspected', 'ruled_out')), at TEXT CHECK (at IS NULL OR length(at) IN (10, 16)), span_start INTEGER NOT NULL, span_end INTEGER NOT NULL, origin TEXT NOT NULL CHECK (origin IN ('ai', 'self')) )",
+      "CREATE INDEX IF NOT EXISTS problems_by_patient ON problems (patient_id, at)",
+      "CREATE INDEX IF NOT EXISTS problems_by_source ON problems (source_id)"
+    ]
   }
 ];

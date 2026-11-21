@@ -559,3 +559,84 @@ select.input {
   padding-left: 20px;
   overflow-wrap: anywhere;
 }
+
+/* --- 段2：整理（区切り・投薬・問題・できごと） */
+
+.source-parts {
+  display: grid;
+  gap: 8px;
+}
+
+.source-part {
+  display: grid;
+  gap: 2px;
+}
+
+.part-label {
+  justify-self: start;
+  padding: 0 8px;
+  border-radius: 4px;
+  background: var(--tag-bg);
+  color: var(--accent);
+  font-size: 12.5px;
+  font-weight: 700;
+}
+
+.facts {
+  display: grid;
+  gap: 12px;
+}
+
+.fact-group {
+  display: grid;
+  gap: 4px;
+}
+
+.fact-title {
+  margin: 0;
+  font-size: 15.5px;
+}
+
+.fact-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+}
+
+.fact-row {
+  display: grid;
+  grid-template-columns: minmax(0, 9.5em) minmax(0, 1fr);
+  gap: 2px 12px;
+  padding: 8px 0;
+  border-top: 1px solid var(--line);
+  font-size: 14.5px;
+}
+
+.fact-when {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.fact-main {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+  overflow-wrap: anywhere;
+}
+
+.fact-dose {
+  color: var(--muted);
+}
+
+.fact-from {
+  grid-column: 2;
+  color: var(--muted);
+  font-size: 12.5px;
+}
+
+.fact-row:not(:has(.fact-when)) .fact-main,
+.fact-row:not(:has(.fact-when)) .fact-from {
+  grid-column: 1 / -1;
+}

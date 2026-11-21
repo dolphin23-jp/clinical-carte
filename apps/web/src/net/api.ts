@@ -1,6 +1,22 @@
 // サーバーの API を呼ぶ、ただ1つの場所（ESLint と試験が見張る）。宛先は、自分のオリジンの /api/ だけ。
 // 印（Cookie）は、ブラウザが付ける。画面のプログラムからは読めない（HttpOnly）。
-import type { AuthorRole, Comparator, DeviceKind, EncounterKind, NewEncounter, NewPatient, NewSource, PatientPatch, Sex, SourceKind } from '@clinical-carte/core';
+import type {
+  AuthorRole,
+  Comparator,
+  DeviceKind,
+  EncounterKind,
+  EventKind,
+  MedicationAction,
+  NewEncounter,
+  NewPatient,
+  NewSource,
+  OrganizeReport,
+  PatientPatch,
+  ProblemStatus,
+  SegmentLabel,
+  Sex,
+  SourceKind,
+} from '@clinical-carte/core';
 
 export interface DeviceView {
   readonly id: string;
@@ -138,6 +154,46 @@ export interface Source {
   readonly enteredAt: string;
   readonly text: string;
   readonly replaced: Readonly<Record<string, number>>;
+  /** 整理の状態：null（まだ）・done・failed */
+  readonly organized: 'done' | 'failed' | null;
+  readonly organizedVersion: string | null;
+  readonly organizeReport: OrganizeReport;
+}
+
+export interface Segment {
+  readonly id: string;
+  readonly sourceId: string;
+  readonly label: SegmentLabel;
+  readonly start: number;
+  readonly end: number;
+}
+
+export interface Medication {
+  readonly id: string;
+  readonly sourceId: string;
+  readonly encounterId: string;
+  readonly name: string;
+  readonly doseText: string | null;
+  readonly action: MedicationAction | null;
+  readonly at: string | null;
+}
+
+export interface ClinicalEvent {
+  readonly id: string;
+  readonly sourceId: string;
+  readonly encounterId: string;
+  readonly kind: EventKind;
+  readonly title: string;
+  readonly at: string | null;
+}
+
+export interface Problem {
+  readonly id: string;
+  readonly sourceId: string;
+  readonly encounterId: string;
+  readonly name: string;
+  readonly status: ProblemStatus;
+  readonly at: string | null;
 }
 
 export interface Observation {
@@ -165,6 +221,10 @@ export interface PatientRecord {
   readonly encounters: readonly Encounter[];
   readonly sources: readonly Source[];
   readonly observations: readonly Observation[];
+  readonly segments: readonly Segment[];
+  readonly medications: readonly Medication[];
+  readonly events: readonly ClinicalEvent[];
+  readonly problems: readonly Problem[];
   /** サーバーの、今日（日本の日） */
   readonly today: string;
 }
@@ -190,9 +250,23 @@ export async function createPatient(input: NewPatient): Promise<Result<Patient>>
 export async function getRecord(patientId: string): Promise<Result<PatientRecord>> {
   const result = await call('GET', `patients/${encodeURIComponent(patientId)}`);
   if (!result.ok) return result;
-  const { patient, encounters, sources, observations, today } = result.value;
-  if (!isRecord(patient) || !Array.isArray(encounters) || !Array.isArray(sources) || !Array.isArray(observations) || typeof today !== 'string') return { ok: false, error: 'network' };
-  return { ok: true, value: { patient: patient as unknown as Patient, encounters: encounters as Encounter[], sources: sources as Source[], observations: observations as Observation[], today } };
+  const { patient, encounters, sources, observations, segments, medications, events, problems, today } = result.value;
+  const lists = [encounters, sources, observations, segments, medications, events, problems];
+  if (!isRecord(patient) || lists.some((l) => !Array.isArray(l)) || typeof today !== 'string') return { ok: false, error: 'network' };
+  return {
+    ok: true,
+    value: {
+      patient: patient as unknown as Patient,
+      encounters: encounters as Encounter[],
+      sources: sources as Source[],
+      observations: observations as Observation[],
+      segments: segments as Segment[],
+      medications: medications as Medication[],
+      events: events as ClinicalEvent[],
+      problems: problems as Problem[],
+      today,
+    },
+  };
 }
 
 export async function patchPatient(patientId: string, patch: PatientPatch): Promise<Result<Patient>> {
@@ -218,6 +292,11 @@ export async function addSource(encounterId: string, input: NewSource): Promise<
   if (!result.ok) return result;
   const { source, observations } = result.value;
   return isRecord(source) && Array.isArray(observations) ? { ok: true, value: { source: source as unknown as Source, observations: observations as Observation[] } } : { ok: false, error: 'network' };
+}
+
+/** 文を整理する（段2）。保存した文を AI が整理し、確かめた行だけが入る。整理し直すときも、これ */
+export async function organizeSource(sourceId: string): Promise<Result<Source>> {
+  return field<Source>(await call('POST', `sources/${encodeURIComponent(sourceId)}/organize`, {}), 'source');
 }
 
 export async function deleteSource(sourceId: string): Promise<Result<null>> {

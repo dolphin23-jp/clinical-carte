@@ -65,7 +65,25 @@ interface Candidate {
   readonly pair: readonly [string, string] | null;
 }
 
-function buildVocabulary(): { candidates: readonly Candidate[]; units: readonly string[] } {
+interface Vocabulary {
+  /** 名前の候補を、先頭の字ごとに分けたもの（それぞれ、長い順）。全部を毎回試さないため */
+  readonly byFirst: ReadonlyMap<string, readonly Candidate[]>;
+  /** 単位の書き方を、先頭の字ごとに分けたもの（それぞれ、長い順） */
+  readonly unitsByFirst: ReadonlyMap<string, readonly string[]>;
+}
+
+function groupByFirst<T>(items: readonly T[], keyOf: (item: T) => string): Map<string, T[]> {
+  const map = new Map<string, T[]>();
+  for (const item of items) {
+    const first = keyOf(item).charAt(0);
+    const list = map.get(first) ?? [];
+    list.push(item);
+    map.set(first, list);
+  }
+  return map;
+}
+
+function buildVocabulary(): Vocabulary {
   const candidates: Candidate[] = [];
   const units = new Set<string>();
   for (const entry of [...LAB_NAMES, ...EXTRA_LAB_NAMES]) {
@@ -74,7 +92,8 @@ function buildVocabulary(): { candidates: readonly Candidate[]; units: readonly 
   }
   for (const p of PAIRS) for (const n of p.names) candidates.push({ key: nameKey(n), name: p.parts[0], kind: 'vital', pair: p.parts });
   candidates.sort((a, b) => b.key.length - a.key.length);
-  return { candidates, units: [...units].sort((a, b) => b.length - a.length) };
+  const sortedUnits = [...units].sort((a, b) => b.length - a.length);
+  return { byFirst: groupByFirst(candidates, (c) => c.key), unitsByFirst: groupByFirst(sortedUnits, (u) => u) };
 }
 
 const VOCABULARY = buildVocabulary();
@@ -102,7 +121,7 @@ const VALUE_TEXT_MAX = 20;
 const RAW_NAME_MAX = 30;
 
 function matchName(lower: string, pos: number): { candidate: Candidate; length: number } | null {
-  for (const candidate of VOCABULARY.candidates) {
+  for (const candidate of VOCABULARY.byFirst.get(lower.charAt(pos)) ?? []) {
     const end = pos + candidate.key.length;
     if (!lower.startsWith(candidate.key, pos)) continue;
     // 英字で終わる名前は、すぐ後ろに英字が続くなら別の語（「Kg」の K）。英字で始まる名前は、すぐ前が英字なら語の途中
@@ -114,7 +133,7 @@ function matchName(lower: string, pos: number): { candidate: Candidate; length: 
 }
 
 function matchUnit(lower: string, pos: number): number {
-  for (const u of VOCABULARY.units) {
+  for (const u of VOCABULARY.unitsByFirst.get(lower.charAt(pos)) ?? []) {
     if (!lower.startsWith(u, pos)) continue;
     if (isAsciiAlnum(lower[pos + u.length])) continue;
     return u.length;

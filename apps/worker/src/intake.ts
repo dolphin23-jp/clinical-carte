@@ -1,5 +1,6 @@
 // 取り込み（docs/00 の 5、docs/01 の 2）：打った文 → 整え → AI の選別（場所を指す）→ 決定論の置き換え → 形の検査 → 測定値の読み取り。
 // **選別を通っていない文を、返さない**（保存するのは、ここが返した文だけ）。打った文そのものは、保存もログもしない。
+// 整理（段2）は、保存のあとに、別の要求で行う（organize.ts。整理に失敗しても、文は保存されている）。
 import { applySelection, cleanText, findShapes, type LabRow, type NewSource, READ_VALUES_KINDS, readLabText, replaceShapes, type SelectionProblem } from '@clinical-carte/core';
 
 import type { Selector, SelectorFailure } from './selector.ts';
