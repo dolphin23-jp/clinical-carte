@@ -16,6 +16,8 @@ export const OrganizeRule = z
     mode: z.enum(['starts', 'includes']).optional(),
     action: z.enum(MEDICATION_ACTIONS).optional(),
     active: z.literal(true).optional(),
+    /** 記録に入った日時がこれのものだけを数える（測定値・投薬・できごと。区切りの時刻・記載の時刻の確かめ） */
+    at: z.string().min(10).optional(),
     min: z.number().int().min(0),
     max: z.number().int().min(0),
   })
@@ -51,15 +53,16 @@ const core = (name: string): string => name.replace(/^[#＃]\s*\d+\s*[.．:：)�
 export function countMatches(organized: Organized, rule: OrganizeRule): number {
   const m = fold(rule.match);
   const hit = (s: string, mode: 'starts' | 'includes'): boolean => (mode === 'starts' ? fold(s).startsWith(m) : fold(s).includes(m));
+  const atOk = (at: string | null): boolean => rule.at === undefined || at === rule.at;
   switch (rule.target) {
     case 'problem':
       return organized.problems.filter((p) => hit(core(p.name), rule.mode ?? 'starts') && (rule.active !== true || p.activity === null)).length;
     case 'medication':
-      return organized.medications.filter((x) => hit(x.name, rule.mode ?? 'includes') && (rule.action === undefined || x.action === rule.action)).length;
+      return organized.medications.filter((x) => hit(x.name, rule.mode ?? 'includes') && (rule.action === undefined || x.action === rule.action) && atOk(x.at)).length;
     case 'event':
-      return organized.events.filter((x) => hit(x.title, rule.mode ?? 'includes')).length;
+      return organized.events.filter((x) => hit(x.title, rule.mode ?? 'includes') && atOk(x.at)).length;
     case 'measurement':
-      return organized.observations.filter((o) => o.row.name === rule.match).length;
+      return organized.observations.filter((o) => o.row.name === rule.match && atOk(o.at)).length;
   }
 }
 

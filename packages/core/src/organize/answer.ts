@@ -98,8 +98,9 @@ export const OrganizeAnswer = z.object({
   kind: z.enum(SOURCE_KINDS).nullable(),
   /** 記載そのものの日時が書かれた場所（引用）。なければ null */
   when: z.string().nullable(),
-  /** 見出しと、その区切りが始まる場所（引用。文の順） */
-  segments: z.array(z.object({ label: z.enum(SEGMENT_LABELS), start: z.string() })),
+  /** 見出しと、その区切りが始まる場所（引用。文の順）。when は、その区切りの時刻が書かれた場所（「初期評価（10:44）」の 10:44。なければ null）。
+   *  区切りの中の事実で、自分の日時の書かれていないものは、この日時になる（2026-11-21 の本人の決定） */
+  segments: z.array(z.object({ label: z.enum(SEGMENT_LABELS), start: z.string(), when: z.string().nullable() })),
   medications: z.array(
     z.object({
       /** 薬の名前（引用） */

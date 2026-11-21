@@ -58,6 +58,28 @@ const ORACLE: Readonly<Record<string, OrganizeAnswer>> = {
       { quote: '尿Na 58、尿K 32', when: null, specimen: 'urine' },
     ],
   }),
+  'er-02': a({
+    when: '10:44',
+    segments: [
+      { label: 'objective', start: '初期評価（10:44）', when: '10:44' },
+      { label: 'labs', start: '静脈血ガス（10:50）', when: '10:50' },
+      { label: 'home_medications', start: '内服：', when: null },
+      { label: 'assessment', start: 'A)', when: null },
+    ],
+    measurements: [
+      { quote: 'BP 76/40（MAP 52）、HR 36', when: null, specimen: null },
+      { quote: 'K 7.8 mEq/L、pH 7.19', when: null, specimen: null },
+    ],
+    medications: [
+      { name: 'テルミサルタン', dose: '40 mg', action: 'continue', when: null },
+      { name: 'ビソプロロール', dose: '2.5 mg', action: 'continue', when: null },
+      { name: 'スピロノラクトン', dose: '25 mg', action: 'continue', when: null },
+    ],
+    problems: [
+      { name: '#1 ショック＋徐脈 → 高K血症による徐脈を最も疑う', status: 'suspected', activity: null },
+      { name: '#2 急性腎障害', status: 'problem', activity: null },
+    ],
+  }),
   'adm-01': a({
     problems: [
       { name: '高血圧', status: 'diagnosis', activity: 'inactive' },
@@ -141,6 +163,21 @@ test('尿を指さない答え（前の版の形）は、尿の pH・白血球�
   const s = await scoreOrganize(c, fakeOrganizer(() => ({ ok: true, answer: a({ measurements: plain }) })), 'previous');
   expect(s.extra).toEqual(['m1', 'm3']);
   expect(s.missing).toEqual(['m2', 'm4', 'm5', 'm6']);
+});
+
+test('区切りの時刻を指さず、分類名を拾い、見出しを2つに割る答え（前の版の形）は、決まりを超える（organize-5）', async () => {
+  const c = cases.find((x) => x.id === 'er-02');
+  const good = ORACLE['er-02'];
+  if (c === undefined || good === undefined) throw new Error('er-02 がない');
+  const old = a({
+    measurements: good.measurements,
+    segments: good.segments.map((g) => ({ ...g, when: null })),
+    medications: [...good.medications, { name: 'ARB', dose: null, action: 'continue', when: null }, { name: 'β遮断薬', dose: null, action: 'continue', when: null }],
+    problems: [{ name: '#1 ショック＋徐脈', status: 'problem', activity: null }, { name: '高K血症による徐脈', status: 'suspected', activity: null }, ...good.problems.slice(1)],
+  });
+  const s = await scoreOrganize(c, fakeOrganizer(() => ({ ok: true, answer: old })), 'previous');
+  expect(s.extra).toEqual(['d1', 'd2', 'p2']);
+  expect(s.missing).toEqual(['m1', 'm2']);
 });
 
 describe('サーバーの入口（/api/selfcheck/organize）', () => {

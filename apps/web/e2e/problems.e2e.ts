@@ -17,12 +17,12 @@ const ANSWERS: Record<string, OrganizeAnswer> = {
   [D1]: {
     ...EMPTY_ORGANIZE,
     segments: [
-      { label: 'problem_heading', start: '#1 発熱' },
-      { label: 'subjective', start: 'S) 悪寒' },
-      { label: 'assessment', start: 'A) 感染源' },
-      { label: 'plan', start: 'P) 血液' },
-      { label: 'problem_heading', start: '#2 低K血症' },
-      { label: 'assessment', start: 'A) 経口' },
+      { label: 'problem_heading', start: '#1 発熱', when: null },
+      { label: 'subjective', start: 'S) 悪寒', when: null },
+      { label: 'assessment', start: 'A) 感染源', when: null },
+      { label: 'plan', start: 'P) 血液', when: null },
+      { label: 'problem_heading', start: '#2 低K血症', when: null },
+      { label: 'assessment', start: 'A) 経口', when: null },
     ],
     problems: [
       { name: '#1 発熱', status: 'problem', activity: null },
@@ -32,11 +32,11 @@ const ANSWERS: Record<string, OrganizeAnswer> = {
   [D2]: {
     ...EMPTY_ORGANIZE,
     segments: [
-      { label: 'problem_heading', start: '#1 市中肺炎' },
-      { label: 'subjective', start: 'S) 咳嗽' },
-      { label: 'assessment', start: 'A) 抗菌薬に' },
-      { label: 'plan', start: 'P) 抗菌薬を' },
-      { label: 'problem_heading', start: '#2 低K血症 解決' },
+      { label: 'problem_heading', start: '#1 市中肺炎', when: null },
+      { label: 'subjective', start: 'S) 咳嗽', when: null },
+      { label: 'assessment', start: 'A) 抗菌薬に', when: null },
+      { label: 'plan', start: 'P) 抗菌薬を', when: null },
+      { label: 'problem_heading', start: '#2 低K血症 解決', when: null },
     ],
     problems: [
       { name: '#1 市中肺炎', status: 'diagnosis', activity: null },
@@ -49,12 +49,12 @@ const D4 = '#1 市中肺炎\nO) CRP 6.8 WBC 10.1\nA) 改善傾向\nP) セフト�
 ANSWERS[D4] = {
   ...EMPTY_ORGANIZE,
   segments: [
-    { label: 'problem_heading', start: '#1 市中肺炎' },
-    { label: 'objective', start: 'O) CRP' },
-    { label: 'assessment', start: 'A) 改善' },
-    { label: 'plan', start: 'P) セフ' },
-    { label: 'problem_heading', start: '#2 低Na血症' },
-    { label: 'assessment', start: 'A) 経過観察' },
+    { label: 'problem_heading', start: '#1 市中肺炎', when: null },
+    { label: 'objective', start: 'O) CRP', when: null },
+    { label: 'assessment', start: 'A) 改善', when: null },
+    { label: 'plan', start: 'P) セフ', when: null },
+    { label: 'problem_heading', start: '#2 低Na血症', when: null },
+    { label: 'assessment', start: 'A) 経過観察', when: null },
   ],
   problems: [
     { name: '#1 市中肺炎', status: 'diagnosis', activity: null },
@@ -69,11 +69,11 @@ const D5 = 'A)\n#1 ショック：輸液で改善\n#2 急性腎障害：乏尿�
 ANSWERS[D5] = {
   ...EMPTY_ORGANIZE,
   segments: [
-    { label: 'assessment', start: 'A)' },
-    { label: 'problem_heading', start: '#1 ショック' },
-    { label: 'problem_heading', start: '#2 急性腎障害' },
-    { label: 'plan', start: 'P) 輸液' },
-    { label: 'objective', start: '12:00 BP' },
+    { label: 'assessment', start: 'A)', when: null },
+    { label: 'problem_heading', start: '#1 ショック', when: null },
+    { label: 'problem_heading', start: '#2 急性腎障害', when: null },
+    { label: 'plan', start: 'P) 輸液', when: null },
+    { label: 'objective', start: '12:00 BP', when: null },
   ],
   problems: [
     { name: '#1 ショック', status: 'problem', activity: null },

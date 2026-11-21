@@ -68,6 +68,15 @@ describe('読めるもの', () => {
     expect(readLabText('WBC 12,300').rows[0]).toMatchObject({ value: 12300, valueText: '12,300' });
   });
 
+  test('下付き・上付きの文字（SpO₂・pCO₂・HCO₃⁻）を読む。書かれた名前は、そのまま残す', () => {
+    const r = readLabText('SpO₂ 96%、pCO₂ 30 mmHg、HCO₃⁻ 11 mmol/L');
+    expect(r.rows.map((x) => [x.name, x.nameRaw, x.valueText])).toEqual([
+      ['SpO2', 'SpO₂', '96'],
+      ['pCO2', 'pCO₂', '30'],
+      ['HCO3', 'HCO₃⁻', '11'],
+    ]);
+  });
+
   test('「℃」の付いた体温を読む（全角の記号でも、空白をはさんでも）', () => {
     expect(brief(readLabText('BT 39.2℃ 体温 37.8 ℃ BT 38.0°C').rows)).toEqual(['体温=39.2 ℃', '体温=37.8 ℃', '体温=38.0 °C']);
   });
