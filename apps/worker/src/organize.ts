@@ -28,6 +28,15 @@ export async function organizeSource(db: Db, sourceId: string, organizer: Organi
   const id = (): string => ulid(runtime.now(), runtime.randomBytes(ULID_RANDOM_BYTES));
   const base = [source.patientId, source.encounterId, source.id] as const;
 
+  // 問題の筋（段3a）：整理し直しても、同じ場所・同じ名前の記載は、前と同じ筋のまま（本人がつなぎ直したものも）
+  const before = await db.prepare('SELECT span_start, span_end, name, thread_id, thread_origin FROM problems WHERE source_id = ? AND thread_id IS NOT NULL').bind(source.id).all();
+  const kept = new Map<string, { threadId: string; origin: string | null }>();
+  for (const row of before.results) {
+    const threadId = row['thread_id'];
+    if (typeof threadId !== 'string') continue;
+    kept.set(`${String(row['span_start'])}:${String(row['span_end'])}:${String(row['name'])}`, { threadId, origin: typeof row['thread_origin'] === 'string' ? row['thread_origin'] : null });
+  }
+
   await db.batch([
     // それまでの、この文の行を入れ替える
     ...FACT_TABLES.map((table) => db.prepare(`DELETE FROM ${table} WHERE source_id = ?`).bind(source.id)),
@@ -42,9 +51,12 @@ export async function organizeSource(db: Db, sourceId: string, organizer: Organi
     ...organized.events.map((e) =>
       db.prepare("INSERT INTO events (id, patient_id, encounter_id, source_id, kind, title, at, span_start, span_end, origin) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'ai')").bind(id(), ...base, e.kind, e.title, e.at, e.start, e.end),
     ),
-    ...organized.problems.map((p) =>
-      db.prepare("INSERT INTO problems (id, patient_id, encounter_id, source_id, name, status, at, span_start, span_end, origin) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'ai')").bind(id(), ...base, p.name, p.status, p.at, p.start, p.end),
-    ),
+    ...organized.problems.map((p) => {
+      const keep = kept.get(`${String(p.start)}:${String(p.end)}:${p.name}`);
+      return db
+        .prepare("INSERT INTO problems (id, patient_id, encounter_id, source_id, name, status, activity, at, span_start, span_end, origin, thread_id, thread_origin) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'ai', ?, ?)")
+        .bind(id(), ...base, p.name, p.status, p.activity, p.at, p.start, p.end, keep?.threadId ?? null, keep?.origin ?? null);
+    }),
     ...organized.observations.map((o, index) =>
       db
         .prepare(

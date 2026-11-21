@@ -18,8 +18,8 @@ const code = (text: string): string =>
     .filter((l) => !l.trim().startsWith('//') && !l.trim().startsWith('*') && !l.trim().startsWith('/*'))
     .join('\n');
 
-/** いまある表（段0・段1）。docs/04 の 6 の一覧のうち、作った分 */
-const TABLES = ['devices', 'entrance_daily', 'patients', 'encounters', 'sources', 'observations', 'usage_daily', 'schema_migrations', 'segments', 'medications', 'events', 'problems'];
+/** いまある表（段0〜段3a）。docs/04 の 6 の一覧のうち、作った分 */
+const TABLES = ['devices', 'entrance_daily', 'patients', 'encounters', 'sources', 'observations', 'usage_daily', 'schema_migrations', 'segments', 'medications', 'events', 'problems', 'problem_threads', 'history'];
 
 describe('書き込みの一覧', () => {
   test('migrations が作る表は、一覧のとおり', () => {

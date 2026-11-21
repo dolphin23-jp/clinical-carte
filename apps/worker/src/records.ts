@@ -1,6 +1,6 @@
 // 記録の読み書き（段1：患者・受診・取り込んだ文・測定値）。書く表は、docs/04 の 6 の一覧のとおり。
 // ここは、形を確かめた後の値だけを受け取る（形の確かめは handler.ts、文の選別は intake.ts）。
-import type { AuthorRole, Comparator, EncounterKind, EventKind, LabRow, MedicationAction, OrganizeReport, ProblemStatus, SegmentLabel, Sex, SourceKind } from '@clinical-carte/core';
+import type { AuthorRole, Comparator, EncounterKind, EventKind, HistoryAction, LabRow, MedicationAction, OrganizeReport, ProblemActivity, ProblemStatus, SegmentLabel, Sex, SourceKind } from '@clinical-carte/core';
 
 import { type Db, int, real, type Statement, text } from './db.ts';
 
@@ -76,9 +76,30 @@ export interface Problem {
   readonly encounterId: string;
   readonly name: string;
   readonly status: ProblemStatus;
+  /** 書かれた活動の状態（解決・非活動）。書かれていなければ null */
+  readonly activity: ProblemActivity | null;
   readonly at: string | null;
   readonly start: number;
   readonly end: number;
+  /** 問題の筋（まだつないでいなければ null） */
+  readonly threadId: string | null;
+  /** つないだ方法：rule（名前が同じ）・ai（AI が指した）・self（本人が直した） */
+  readonly threadOrigin: 'rule' | 'ai' | 'self' | null;
+}
+
+export interface ProblemThread {
+  readonly id: string;
+  readonly displayName: string | null;
+  readonly mergedInto: string | null;
+}
+
+export interface HistoryEntry {
+  readonly id: string;
+  readonly at: string;
+  readonly action: HistoryAction;
+  readonly target: string;
+  readonly before: string | null;
+  readonly after: string | null;
 }
 
 export interface Observation {
@@ -252,7 +273,35 @@ function toProblem(row: Row): Problem | null {
   const status = text(row, 'status');
   const span = spanOf(row);
   if (id === null || sourceId === null || encounterId === null || name === null || status === null || span === null) return null;
-  return { id, sourceId, encounterId, name, status: status as ProblemStatus, at: text(row, 'at'), ...span };
+  const activity = text(row, 'activity');
+  const origin = text(row, 'thread_origin');
+  return {
+    id,
+    sourceId,
+    encounterId,
+    name,
+    status: status as ProblemStatus,
+    activity: activity === 'resolved' || activity === 'inactive' ? activity : null,
+    at: text(row, 'at'),
+    ...span,
+    threadId: text(row, 'thread_id'),
+    threadOrigin: origin === 'rule' || origin === 'ai' || origin === 'self' ? origin : null,
+  };
+}
+
+function toThread(row: Row): ProblemThread | null {
+  const id = text(row, 'id');
+  if (id === null) return null;
+  return { id, displayName: text(row, 'display_name'), mergedInto: text(row, 'merged_into') };
+}
+
+function toHistory(row: Row): HistoryEntry | null {
+  const id = text(row, 'id');
+  const at = text(row, 'at');
+  const action = text(row, 'action');
+  const target = text(row, 'target');
+  if (id === null || at === null || target === null || (action !== 'move' && action !== 'merge' && action !== 'name')) return null;
+  return { id, at, action, target, before: text(row, 'before'), after: text(row, 'after') };
 }
 
 const present = <T>(value: T | null): value is T => value !== null;
@@ -310,12 +359,18 @@ export interface PatientRecord {
   readonly medications: Medication[];
   readonly events: Event[];
   readonly problems: Problem[];
+  readonly problemThreads: ProblemThread[];
+  /** 本人が直した記録（新しい順） */
+  readonly history: HistoryEntry[];
 }
+
+/** 問題の列（読み出し） */
+export const PROBLEM_COLUMNS = 'id, source_id, encounter_id, name, status, activity, at, span_start, span_end, thread_id, thread_origin';
 
 export async function getRecord(db: Db, id: string): Promise<PatientRecord | null> {
   const patient = await getPatient(db, id);
   if (patient === null) return null;
-  const [encounters, sources, observations, segments, medications, events, problems] = await Promise.all([
+  const [encounters, sources, observations, segments, medications, events, problems, threads, history] = await Promise.all([
     db.prepare('SELECT id, patient_id, kind, started, ended FROM encounters WHERE patient_id = ? ORDER BY started, id').bind(id).all(),
     db.prepare('SELECT id, patient_id, encounter_id, kind, author_role, at, entered_at, text, replaced, organized, organized_version, organize_report FROM sources WHERE patient_id = ? ORDER BY id').bind(id).all(),
     db
@@ -325,7 +380,9 @@ export async function getRecord(db: Db, id: string): Promise<PatientRecord | nul
     db.prepare('SELECT id, source_id, label, span_start, span_end FROM segments WHERE patient_id = ? ORDER BY source_id, span_start').bind(id).all(),
     db.prepare('SELECT id, source_id, encounter_id, name, dose_text, action, at, span_start, span_end FROM medications WHERE patient_id = ? ORDER BY source_id, span_start').bind(id).all(),
     db.prepare('SELECT id, source_id, encounter_id, kind, title, at, span_start, span_end FROM events WHERE patient_id = ? ORDER BY source_id, span_start').bind(id).all(),
-    db.prepare('SELECT id, source_id, encounter_id, name, status, at, span_start, span_end FROM problems WHERE patient_id = ? ORDER BY source_id, span_start').bind(id).all(),
+    db.prepare(`SELECT ${PROBLEM_COLUMNS} FROM problems WHERE patient_id = ? ORDER BY source_id, span_start`).bind(id).all(),
+    db.prepare('SELECT id, display_name, merged_into FROM problem_threads WHERE patient_id = ? ORDER BY id').bind(id).all(),
+    db.prepare('SELECT id, at, action, target, before, after FROM history WHERE patient_id = ? ORDER BY at DESC, id DESC LIMIT 200').bind(id).all(),
   ]);
   return {
     patient,
@@ -336,6 +393,8 @@ export async function getRecord(db: Db, id: string): Promise<PatientRecord | nul
     medications: medications.results.map(toMedication).filter(present),
     events: events.results.map(toEvent).filter(present),
     problems: problems.results.map(toProblem).filter(present),
+    problemThreads: threads.results.map(toThread).filter(present),
+    history: history.results.map(toHistory).filter(present),
   };
 }
 
@@ -350,6 +409,7 @@ export async function deletePatient(db: Db, id: string): Promise<number> {
   if (exists === null) return 0;
   await db.batch([
     ...FACT_TABLES.map((table) => db.prepare(`DELETE FROM ${table} WHERE patient_id = ?`).bind(id)),
+    ...PATIENT_TABLES.map((table) => db.prepare(`DELETE FROM ${table} WHERE patient_id = ?`).bind(id)),
     db.prepare('DELETE FROM sources WHERE patient_id = ?').bind(id),
     db.prepare('DELETE FROM encounters WHERE patient_id = ?').bind(id),
     db.prepare('DELETE FROM patients WHERE id = ?').bind(id),
@@ -372,6 +432,18 @@ export async function setEncounterEnd(db: Db, id: string, end: string | null): P
 
 /** 文から作った行の表（文を消すと、一緒に消える。整理し直すと、入れ替わる） */
 export const FACT_TABLES = ['observations', 'segments', 'medications', 'events', 'problems'] as const;
+
+/** 患者に付く、文からではない行の表（患者を消すと、一緒に消える。文を消しても残る：筋は、記載がなくなると見えなくなるだけ） */
+export const PATIENT_TABLES = ['problem_threads', 'history'] as const;
+
+/** 問題の行を、表から読む */
+export function problemOf(row: Record<string, unknown>): Problem | null {
+  return toProblem(row);
+}
+
+export function threadOf(row: Record<string, unknown>): ProblemThread | null {
+  return toThread(row);
+}
 
 // --- 取り込んだ文と、そこから読んだ測定値
 

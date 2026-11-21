@@ -10,7 +10,7 @@ import type { Db, Statement } from '../src/db.ts';
 import { handle, type HandlerDeps } from '../src/handler.ts';
 import { MIGRATIONS as MIGRATION_LIST } from '../src/migrations.gen.ts';
 import { type Runtime, webRuntime } from '../src/runtime.ts';
-import type { Organizer, OrganizerResult } from '../src/organizer.ts';
+import type { LinkerResult, Organizer, OrganizerResult } from '../src/organizer.ts';
 import type { Selector, SelectorResult } from '../src/selector.ts';
 
 export const MIGRATIONS = resolve(import.meta.dirname, '..', 'migrations');
@@ -163,16 +163,27 @@ export const EMPTY_ORGANIZE: OrganizeAnswer = { kind: null, when: null, segments
 export interface FakeOrganizer extends Organizer {
   /** 整理に渡された文（何が AI に届くかを、試験が確かめる） */
   readonly seen: string[];
+  /** つなぎに渡された資料（JSON） */
+  readonly linked: string[];
 }
 
-/** AI の整理の代役：文を受け取り、決めた答えを返す（既定は、何も見つけない） */
-export function fakeOrganizer(answer: (text: string) => OrganizerResult = () => ({ ok: true, answer: EMPTY_ORGANIZE })): FakeOrganizer {
+/** AI の整理の代役：文を受け取り、決めた答えを返す（既定は、何も見つけない）。つなぎは、既定では何もつながない */
+export function fakeOrganizer(
+  answer: (text: string) => OrganizerResult = () => ({ ok: true, answer: EMPTY_ORGANIZE }),
+  link: (message: string) => LinkerResult = () => ({ ok: true, answer: { links: [] } }),
+): FakeOrganizer {
   const seen: string[] = [];
+  const linked: string[] = [];
   return {
     seen,
+    linked,
     organize: (text) => {
       seen.push(text);
       return Promise.resolve(answer(text));
+    },
+    link: (message) => {
+      linked.push(message);
+      return Promise.resolve(link(message));
     },
   };
 }

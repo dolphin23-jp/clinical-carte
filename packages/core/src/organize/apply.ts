@@ -11,7 +11,7 @@ import { type LabRow, readLabText } from '../labs/read.ts';
 import { READ_VALUES_KINDS, type SourceKind } from '../record/schema.ts';
 import { foldSameLength } from '../text/fold.ts';
 import { parseWhen } from '../time/when.ts';
-import type { EventKind, MedicationAction, OrganizeAnswer, ProblemStatus, SegmentLabel } from './answer.ts';
+import type { EventKind, MedicationAction, OrganizeAnswer, ProblemActivity, ProblemStatus, SegmentLabel } from './answer.ts';
 
 export const ORGANIZE_QUOTE_MAX = 200;
 /** 1つの文から作る、種類ごとの行の上限 */
@@ -53,6 +53,7 @@ export interface OrganizedEvent extends Span {
 export interface OrganizedProblem extends Span {
   readonly name: string;
   readonly status: ProblemStatus;
+  readonly activity: ProblemActivity | null;
   readonly at: string | null;
 }
 
@@ -213,7 +214,7 @@ export function applyOrganization(answer: OrganizeAnswer, ctx: OrganizeContext):
   for (const p of capped('problem', answer.problems)) {
     const span = place('problem', p.name);
     if (span === null) continue;
-    problems.push({ ...span, name: text.slice(span.start, span.end), status: p.status, at });
+    problems.push({ ...span, name: text.slice(span.start, span.end), status: p.status, activity: p.activity, at });
   }
 
   // 測定値：検査結果・バイタルの文は、文全体を決定論で読む（AI の指した場所は使わない）。

@@ -180,7 +180,9 @@ AI が返すのは、次の3つだけ（構造化した出力）。
 | `sources` | 本人の入力（選別を通ったものだけ） |
 | `segments` | AI の整理（確かめた後）・決定論の読み取り |
 | `observations`・`medications`・`events`・`problems`・`problem_links` | 決定論の読み取り・AI の整理（確かめた後）・本人の操作 |
-| `history` | 本人が直した・消したとき |
+| `problem_threads` | 問題の筋のつなぎ（決定論・AI の答えを確かめた後。段3a）・本人の操作（分ける・統合・表示の名前） |
+| `problems` の `thread_id`・`thread_origin` | 問題の筋のつなぎ・本人の操作（移す・分ける・統合） |
+| `history` | 本人が直したとき（段3a：問題の記載を移す・統合・表示の名前） |
 | `devices` | 端末の登録・外すとき・その日はじめて使ったとき（1日に1回） |
 | `entrance_daily` | 合鍵を間違えたとき |
 | `usage_daily` | AI を呼んだとき |
@@ -189,7 +191,7 @@ AI が返すのは、次の3つだけ（構造化した出力）。
 
 - 打った原文・AI へ送った文・AI の答えそのものは、どの表にも書かない。ログにも出さない。
 - 表を足すときは、先にこの一覧を直す。
-- いまある表（段0〜段2）は `devices`・`entrance_daily`・`patients`・`encounters`・`sources`・`observations`・`usage_daily`・`schema_migrations`・`segments`・`medications`・`events`・`problems`。`apps/worker/test/writes.test.ts` が、migrations が作る表と、ソースの SQL が書く表を、この一覧と突き合わせる。
+- いまある表（段0〜段3a）は `devices`・`entrance_daily`・`patients`・`encounters`・`sources`・`observations`・`usage_daily`・`schema_migrations`・`segments`・`medications`・`events`・`problems`・`problem_threads`・`history`。`apps/worker/test/writes.test.ts` が、migrations が作る表と、ソースの SQL が書く表を、この一覧と突き合わせる。
 
 ## 7. 段1 で作ったものと、案との違い
 
@@ -225,3 +227,22 @@ AI が返すのは、次の3つだけ（構造化した出力）。
 - **origin**：AI の整理の行は `ai`。本人が直す行（`self`）は、段3 で作る。
 - **測定値**：整理のたびに、その文の測定値を入れ直す。検査結果・バイタルの文は、文全体を決定論で読み直す（`parser`）。ほかの文は、AI が指した場所を決定論で読む（`ai`）。
 - **まだない表**：`problem_links`（問題と事実の結びつき）・`history`（訂正の履歴）。
+
+## 9. 段3a で作ったもの（問題の筋。CA-024・CA-025）
+
+作った表は、`apps/worker/migrations/0004_threads.sql`。つなぎの計算と見方は、`packages/core/src/problems/threads.ts`。
+
+| 表・列 | 中身 |
+|---|---|
+| `problem_threads` | id・patient_id・display_name・merged_into。患者ごとの「問題の筋」。**文の字を持たない**（display_name は、その筋に書かれた名前から本人が選んだものだけ。打った名前は入らない）。統合した筋は消さず、統合先を持つ（id を使い回さない） |
+| `problems` に足した列 | thread_id（筋。まだつないでいなければ NULL）・thread_origin（rule：名前が同じ／ai：AI が指した／self：本人が直した）・activity（resolved：解決／inactive：非活動・既往と書かれている。書かれていなければ NULL） |
+| `history` | id・patient_id・at（日本の日時。分まで）・action（move・merge・name）・target（直した行の id）・before・after（筋の id か、選んだ名前）。**文は入らない** |
+
+- **つなぐ時**：文を整理したあと（同じ要求の中で）。名前が同じ（先頭の番号「#1」・全角半角・空白の違いを除いて）筋が1つだけあれば、決定論でつなぐ。それ以外は、AI に聞く（すでに筋があるか、名前の違う記載が2つ以上あるとき）。AI に送るのは、すでにある筋の、書かれてきた名前（6 つまで）と、新しい記載の名前と、その記載の行（保存した文の1行。200 字まで）だけ（docs/01 の 2）。答えは記号（T1・M1）で、知らない記号・自分自身・1つの記載への2つの答え・食い違う2つの筋は使わない。答えのない記載は、新しい筋（同じ名前どうしは1つ）。
+- **AI に聞けないとき**（1日の上限・失敗）：決定論でつなげない記載は、つながないまま残す。画面の「AI でつなぐ」で、あとからつなげる（AI の1回に数える）。本人が1件ずつ行き先を選んでもよい。
+- **整理し直したとき**：同じ場所・同じ名前の記載は、前と同じ筋のまま（本人が直したものも、self のまま）。
+- **文を消したとき**：その文の問題の行は消える。筋の行は残る（記載がなくなった筋は、見えなくなるだけ）。患者を消すと、筋と履歴も消える。
+- **見方**（`threadViews`）：筋ごとに記載を古い順に並べ、名前の移り変わり（同じ名前は1回）、いちばん新しい記載の確からしさと、解決・非活動を出す。いちばん新しい記載が「否定的」なら「否定的と書かれたもの」、解決・非活動なら「解決・非活動と書かれたもの」、それ以外は「いまの問題」。判定ではなく、書かれたとおりの並べ分け。
+- **問題ごとの A・P**（`problemNotes`）：問題の記載が「#問題」の見出しの区切りにあれば、次の見出しまで（S・O・A・P が続くあいだ）の A・P・A/P の区切り。A・P・A/P の区切りの中にあれば、その区切り。字は保存しない（場所だけ。画面が保存した文から切り出す）。
+- **直す操作**：記載を別の筋へ移す・新しい筋に分ける（`PATCH /api/problems/:id`。いまの筋を添え、違えば 409）、筋を統合する・表示の名前を選ぶ（`PATCH /api/threads/:id`）。どれも `history` に残る。別の患者の筋へは移せない。
+- **まだないもの**：`problem_links`（問題と値・薬・できごとの結びつき。段3c）。問題以外の事実を直す操作。

@@ -18,7 +18,7 @@ describe('migrations の写し', () => {
   });
 
   test('番号の順に並び、最初は、適用の控えの表', () => {
-    expect(MIGRATIONS.map((m) => m.name)).toEqual(['0000_schema', '0001_entrance', '0002_records', '0003_organize']);
+    expect(MIGRATIONS.map((m) => m.name)).toEqual(['0000_schema', '0001_entrance', '0002_records', '0003_organize', '0004_threads']);
     for (const m of MIGRATIONS) expect(m.statements.length, m.name).toBeGreaterThan(0);
   });
 
@@ -33,7 +33,7 @@ describe('表の用意', () => {
     const db = openDb({ empty: true });
     expect(tables(db)).toEqual([]);
     expect(await ensureSchema(db)).toBe(MIGRATIONS.length);
-    expect(tables(db)).toEqual(['devices', 'encounters', 'entrance_daily', 'events', 'medications', 'observations', 'patients', 'problems', 'schema_migrations', 'segments', 'sources', 'usage_daily']);
+    expect(tables(db)).toEqual(['devices', 'encounters', 'entrance_daily', 'events', 'history', 'medications', 'observations', 'patients', 'problem_threads', 'problems', 'schema_migrations', 'segments', 'sources', 'usage_daily']);
     expect(db.raw.prepare('SELECT name FROM schema_migrations ORDER BY name').all()).toEqual(MIGRATIONS.map((m) => ({ name: m.name })));
   });
 
@@ -43,8 +43,19 @@ describe('表の用意', () => {
     db.raw.exec("INSERT INTO patients (id, age, age_on, sex, created_on) VALUES ('01ARZ3NDEKTSV4RRFFQ69G5FAV', 72, '2026-11-20', 'male', '2026-11-20')");
     db.raw.exec("INSERT INTO encounters (id, patient_id, kind, started) VALUES ('01ARZ3NDEKTSV4RRFFQ69G5FAW', '01ARZ3NDEKTSV4RRFFQ69G5FAV', 'inpatient', '2026-11-20')");
     db.raw.exec("INSERT INTO sources (id, patient_id, encounter_id, kind, author_role, at, entered_at, text, replaced) VALUES ('01ARZ3NDEKTSV4RRFFQ69G5FAX', '01ARZ3NDEKTSV4RRFFQ69G5FAV', '01ARZ3NDEKTSV4RRFFQ69G5FAW', 'progress_note', 'self', NULL, '2026-11-20T09:00', '解熱。', '{}')");
-    expect(await ensureSchema(db)).toBe(1);
+    expect(await ensureSchema(db, MIGRATIONS.slice(0, 4))).toBe(1);
     expect(db.raw.prepare('SELECT text, organized, organized_version, organize_report FROM sources').all()).toEqual([{ text: '解熱。', organized: null, organized_version: null, organize_report: null }]);
+  });
+
+  test('段2 で整理した問題の入った保存先に、段3a の migration を足しても、問題はそのまま。筋・活動の状態は空（あとで、つなぐ）', async () => {
+    const db = openDb({ empty: true });
+    await ensureSchema(db, MIGRATIONS.slice(0, 4));
+    db.raw.exec("INSERT INTO patients (id, age, age_on, sex, created_on) VALUES ('01ARZ3NDEKTSV4RRFFQ69G5FAV', 72, '2026-11-20', 'male', '2026-11-20')");
+    db.raw.exec("INSERT INTO encounters (id, patient_id, kind, started) VALUES ('01ARZ3NDEKTSV4RRFFQ69G5FAW', '01ARZ3NDEKTSV4RRFFQ69G5FAV', 'inpatient', '2026-11-20')");
+    db.raw.exec("INSERT INTO sources (id, patient_id, encounter_id, kind, author_role, at, entered_at, text, replaced) VALUES ('01ARZ3NDEKTSV4RRFFQ69G5FAX', '01ARZ3NDEKTSV4RRFFQ69G5FAV', '01ARZ3NDEKTSV4RRFFQ69G5FAW', 'progress_note', 'self', NULL, '2026-11-20T09:00', '#1 肺炎', '{}')");
+    db.raw.exec("INSERT INTO problems (id, patient_id, encounter_id, source_id, name, status, at, span_start, span_end, origin) VALUES ('01ARZ3NDEKTSV4RRFFQ69G5FAY', '01ARZ3NDEKTSV4RRFFQ69G5FAV', '01ARZ3NDEKTSV4RRFFQ69G5FAW', '01ARZ3NDEKTSV4RRFFQ69G5FAX', '#1 肺炎', 'problem', NULL, 0, 5, 'ai')");
+    expect(await ensureSchema(db)).toBe(1);
+    expect(db.raw.prepare('SELECT name, thread_id, thread_origin, activity FROM problems').all()).toEqual([{ name: '#1 肺炎', thread_id: null, thread_origin: null, activity: null }]);
   });
 
   test('もう一度動かしても、何もしない。入っている記録は、そのまま', async () => {

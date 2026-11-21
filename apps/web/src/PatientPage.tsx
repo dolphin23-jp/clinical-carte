@@ -23,8 +23,9 @@ import { Composer } from './Composer.tsx';
 import { joinDateTime, nowLocal, replacedSummary, showDateTime } from './format.ts';
 import { LabTable } from './LabTable.tsx';
 import { LatestStrip } from './LatestStrip.tsx';
+import { ProblemThreads } from './ProblemThreads.tsx';
 import { errorMessage } from './messages.ts';
-import { EventView, MedicationView, ProblemView } from './Facts.tsx';
+import { EventView, MedicationView } from './Facts.tsx';
 import { createEncounter, deletePatient, deleteSource, type Encounter, getRecord, organizeSource, type PatientRecord, type Segment, setEncounterEnd, type Source } from './net/api.ts';
 import { organizeSummary, reportText } from './organizeText.ts';
 import { SourceText } from './SourceText.tsx';
@@ -97,7 +98,6 @@ export function PatientPage({ patientId, onBack, onLeft }: { patientId: string; 
   const encounterSources = record.sources.filter((s) => s.encounterId === current?.id);
   const medications = record.medications.filter((m) => m.encounterId === current?.id);
   const events = record.events.filter((e) => e.encounterId === current?.id);
-  const problems = record.problems.filter((p) => p.encounterId === current?.id);
 
   const panels = vitalPanels(observations);
   const toComposer = () => {
@@ -217,7 +217,18 @@ export function PatientPage({ patientId, onBack, onLeft }: { patientId: string; 
           </>
         )}
         {tab === 'medications' && <MedicationView medications={medications} sources={encounterSources} />}
-        {tab === 'problems' && <ProblemView problems={problems} sources={encounterSources} />}
+        {tab === 'problems' && (
+          <ProblemThreads
+            patientId={patientId}
+            problems={record.problems}
+            threads={record.problemThreads}
+            segments={record.segments}
+            sources={record.sources}
+            history={record.history}
+            onChanged={load}
+            onLeft={onLeft}
+          />
+        )}
         {tab === 'events' && <EventView events={events} sources={encounterSources} />}
         {tab !== 'notes' ? null : sources.length === 0 ? (
           <p className="note">この受診には、まだ、記録がありません。</p>

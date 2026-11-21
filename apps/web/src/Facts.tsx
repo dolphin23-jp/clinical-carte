@@ -1,17 +1,15 @@
-// 整理した事実の見方（docs/04 の 1 の層④。保存しない）：投薬の時間軸・問題の一覧・できごとの並び。
+// 整理した事実の見方（docs/04 の 1 の層④。保存しない）：投薬の時間軸・できごとの並び（問題は ProblemThreads.tsx）。
 // 判定しない：書かれたとおりに並べるだけ（色・評価の語を付けない）。どの事実も、どの記載から来たかを出す。
 import {
   EVENT_KIND_NAMES,
   eventTimeline,
   MEDICATION_ACTION_NAMES,
   medicationTimeline,
-  PROBLEM_STATUS_NAMES,
-  problemList,
   SOURCE_KIND_LABELS,
 } from '@clinical-carte/core';
 
 import { showDateTime } from './format.ts';
-import type { ClinicalEvent, Medication, Problem, Source } from './net/api.ts';
+import type { ClinicalEvent, Medication, Source } from './net/api.ts';
 
 const notOrganized = (sources: readonly Source[]): number => sources.filter((s) => s.organized !== 'done').length;
 
@@ -52,34 +50,6 @@ export function MedicationView({ medications, sources }: { medications: readonly
           </section>
         ))
       )}
-    </div>
-  );
-}
-
-export function ProblemView({ problems, sources }: { problems: readonly Problem[]; sources: readonly Source[] }) {
-  const lines = problemList(problems);
-  return (
-    <div className="facts" data-testid="problems">
-      <Pending sources={sources} />
-      {lines.length === 0 ? (
-        <p className="note">この受診の記載から、問題は見つかっていません。</p>
-      ) : (
-        <ul className="fact-list">
-          {lines.map((p) => (
-            <li key={p.name} className="fact-row" data-testid="problem-line">
-              <span className="fact-main">
-                <strong>{p.name}</strong>
-                <span className="tag">{PROBLEM_STATUS_NAMES[p.latestStatus]}</span>
-              </span>
-              <span className="fact-from">
-                記載 {String(p.mentions)} 件・{showDateTime(p.first)}
-                {p.last !== p.first && `〜${showDateTime(p.last)}`}
-              </span>
-            </li>
-          ))}
-        </ul>
-      )}
-      {lines.length > 0 && <p className="note">確からしさは、いちばん新しい記載の書かれ方です（判定ではありません）。</p>}
     </div>
   );
 }

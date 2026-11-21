@@ -22,7 +22,7 @@ const ANSWER: OrganizeAnswer = {
     { name: 'バンコマイシン', dose: null, action: 'start', when: null },
   ],
   events: [{ kind: 'test', title: '胸部X線を撮影', when: '11/19' }],
-  problems: [{ name: '#1 市中肺炎', status: 'problem' }],
+  problems: [{ name: '#1 市中肺炎', status: 'problem', activity: null }],
   measurements: [
     { quote: 'BT 37.2', when: null },
     { quote: 'BT 38.4', when: '昨日' },

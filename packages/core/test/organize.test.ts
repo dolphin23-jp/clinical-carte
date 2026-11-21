@@ -66,7 +66,7 @@ describe('投薬・できごと・問題', () => {
           { name: 'メロペネム', dose: null, action: 'start', when: '11/18 22:00' },
         ],
         events: [{ kind: 'test', title: '胸部X線を撮影', when: '11/19' }],
-        problems: [{ name: '#1 市中肺炎', status: 'problem' }],
+        problems: [{ name: '#1 市中肺炎', status: 'problem', activity: null }],
       }),
       ctx,
     );
@@ -88,7 +88,7 @@ describe('投薬・できごと・問題', () => {
           { name: 'メロペネム', dose: '2g 8時間毎', action: 'change', when: null },
         ],
         events: [{ kind: 'surgery', title: '胸腔ドレーン留置', when: null }],
-        problems: [{ name: '敗血症', status: 'suspected' }],
+        problems: [{ name: '敗血症', status: 'suspected', activity: null }],
       }),
       ctx,
     );
@@ -107,10 +107,10 @@ describe('投薬・できごと・問題', () => {
     const r = applyOrganization(
       answer({
         problems: [
-          { name: '', status: 'problem' },
-          { name: ' 市中肺炎', status: 'problem' },
-          { name: '市中肺炎\nS)', status: 'problem' },
-          { name: 'あ'.repeat(201), status: 'problem' },
+          { name: '', status: 'problem', activity: null },
+          { name: ' 市中肺炎', status: 'problem', activity: null },
+          { name: '市中肺炎\nS)', status: 'problem', activity: null },
+          { name: 'あ'.repeat(201), status: 'problem', activity: null },
         ],
       }),
       ctx,
@@ -206,7 +206,7 @@ describe('性質', () => {
             ...empty,
             medications: quotes.map((q) => ({ name: q, dose: q, action: null, when: q })),
             events: quotes.map((q) => ({ kind: 'other' as const, title: q, when: null })),
-            problems: quotes.map((q) => ({ name: q, status: 'problem' as const })),
+            problems: quotes.map((q) => ({ name: q, status: 'problem' as const, activity: null })),
             measurements: quotes.map((q) => ({ quote: q, when: null })),
             segments: quotes.map((q) => ({ label: 'other' as const, start: q })),
           },
