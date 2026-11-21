@@ -9,6 +9,7 @@ import { clearCookie, type Device, enter, type EntranceDeps, listDevices, regist
 import { recordApi } from './routes.ts';
 import type { Runtime } from './runtime.ts';
 import type { Organizer } from './organizer.ts';
+import type { BookSearcher } from './references.ts';
 import type { Selector } from './selector.ts';
 
 export interface HandlerDeps {
@@ -29,6 +30,8 @@ export interface HandlerDeps {
   readonly model: string;
   /** AI の整理（段2）。鍵がなければ null */
   readonly organizer: Organizer | null;
+  /** 書籍の検索（段5。本人の clinical-RAG）。設定がなければ null */
+  readonly books?: BookSearcher | null;
 }
 
 /** 登録の要求の本文の上限（文字）。合鍵と端末の種類だけなので、小さくてよい */
@@ -124,7 +127,7 @@ async function api(request: Request, url: URL, deps: HandlerDeps): Promise<Respo
     return json(200, { removed: id }, id === me.id ? clearCookie(deps.secureCookies) : entered.renew);
   }
 
-  const record = await recordApi(request, path, { db: deps.db, runtime: deps.runtime, selector: deps.selector, dailyAiLimit: deps.dailyAiLimit, model: deps.model, organizer: deps.organizer });
+  const record = await recordApi(request, path, { db: deps.db, runtime: deps.runtime, selector: deps.selector, dailyAiLimit: deps.dailyAiLimit, model: deps.model, organizer: deps.organizer, books: deps.books ?? null });
   if (record !== null) return json(record.status, record.body, entered.renew);
 
   return json(404, { error: 'not_found' }, entered.renew);

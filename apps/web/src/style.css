@@ -1531,3 +1531,172 @@ select.input {
 .pick-quote {
   overflow-wrap: anywhere;
 }
+
+/* ===== 記載と A/P（段5） ===== */
+.notes-view {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+}
+
+.note-problem,
+.ap-proposal {
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+  min-width: 0;
+}
+
+.note-problem-title {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 8px;
+  margin: 0;
+  font-size: 16px;
+}
+
+.note-part {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.note-part > .part-label,
+.discuss-turns .part-label {
+  justify-self: start;
+}
+
+.note-part .source-text,
+.ap-text {
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  line-height: 1.7;
+}
+
+.note-values,
+.note-vitals {
+  margin: 0;
+  color: var(--muted);
+  font-size: 14px;
+  overflow-wrap: anywhere;
+}
+
+.last-ap > summary {
+  color: var(--accent);
+  cursor: pointer;
+  font-size: 14px;
+}
+
+.ap-notes,
+.ap-sentences,
+.discuss-turns {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.ap-note {
+  display: grid;
+  gap: 6px;
+  padding: 8px 10px;
+  border-left: 3px solid var(--accent);
+  background: var(--bg);
+  border-radius: 0 8px 8px 0;
+}
+
+.ap-note-head {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.tag.ai {
+  border: 1px dashed var(--accent);
+  background: transparent;
+}
+
+.ap-refs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  color: var(--muted);
+  font-size: 12.5px;
+  overflow-wrap: anywhere;
+}
+
+.ap-refs a,
+.ap-cites a {
+  color: var(--accent);
+  overflow-wrap: anywhere;
+}
+
+.ap-area {
+  min-height: 96px;
+  resize: vertical;
+  line-height: 1.6;
+}
+
+.input.small {
+  min-height: 36px;
+  padding: 4px 8px;
+  font-size: 14px;
+}
+
+.ap-cites > summary {
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 13px;
+}
+
+.tag.basis-inference {
+  background: transparent;
+  border: 1px solid var(--muted);
+  color: var(--muted);
+}
+
+.ap-pick {
+  align-items: flex-start;
+  overflow-wrap: anywhere;
+  line-height: 1.6;
+}
+
+.ap-pick input {
+  margin-top: 4px;
+  width: 20px;
+  height: 20px;
+  flex: none;
+}
+
+.ap-proposal-problem {
+  display: grid;
+  gap: 6px;
+}
+
+.discuss[open] {
+  padding: 8px 0 0;
+}
+
+.turn {
+  display: grid;
+  gap: 4px;
+  padding: 8px 10px;
+  border-radius: 8px;
+}
+
+.turn.doctor {
+  background: var(--tag-bg);
+}
+
+.turn.ai {
+  border: 1px dashed var(--line);
+}

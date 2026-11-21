@@ -187,6 +187,8 @@ AI が返すのは、次の3つだけ（構造化した出力）。
 | `fact_edits` | 本人が事実を直したとき（段3e：外す・戻す・投薬の動き・できごとの種類・日時） |
 | `problem_threads` の本人の決めの列・`segments` の origin | 本人が調節したとき（CA-029） |
 | `user_edits` | 本人が調節したとき（CA-029：問題の確からしさ・状態・並び・外す・統合を解く・打った名前、記載の種類・日時・書いた人、区切りの見出し、値の項目名、なぞって足した、文を打ち直した） |
+| `ap_notes` | 本人が A/P を残す・直す・消すとき（段5。本人が書いたもの・AI の案から本人が選んだもの。文は選別を通した後の字） |
+| `ap_history` | 本人が A/P を残す・直す・種類を選び直す・消すとき（段5。**文は入らない**） |
 | `devices` | 端末の登録・外すとき・その日はじめて使ったとき（1日に1回） |
 | `entrance_daily` | 合鍵を間違えたとき |
 | `usage_daily` | AI を呼んだとき |
@@ -195,7 +197,7 @@ AI が返すのは、次の3つだけ（構造化した出力）。
 
 - 打った原文・AI へ送った文・AI の答えそのものは、どの表にも書かない。ログにも出さない。
 - 表を足すときは、先にこの一覧を直す。
-- いまある表（段0〜段3a）は `devices`・`entrance_daily`・`patients`・`encounters`・`sources`・`observations`・`usage_daily`・`schema_migrations`・`segments`・`medications`・`events`・`problems`・`problem_threads`・`history`・`fact_edits`・`user_edits`。`apps/worker/test/writes.test.ts` が、migrations が作る表と、ソースの SQL が書く表を、この一覧と突き合わせる。
+- いまある表（段0〜段5）は `devices`・`entrance_daily`・`patients`・`encounters`・`sources`・`observations`・`usage_daily`・`schema_migrations`・`segments`・`medications`・`events`・`problems`・`problem_threads`・`history`・`fact_edits`・`user_edits`・`ap_notes`・`ap_history`。`apps/worker/test/writes.test.ts` が、migrations が作る表と、ソースの SQL が書く表を、この一覧と突き合わせる。
 
 ## 7. 段1 で作ったものと、案との違い
 
@@ -280,3 +282,17 @@ AI が返すのは、次の3つだけ（構造化した出力）。
 - **なぞって足す**：字は保存した文のその場所のもの（選別を通し直さない）。前後の空白を詰め、1行の中・200 字まで・識別情報の形がないこと。値は、なぞった字を決定論で読めるときだけ（数を AI に写させない決まりと同じ）。足した問題は、名前が同じ筋があればそこへ、なければ新しい筋。
 - **打って直す（C-1）**：問題の名前と文の打ち直しは、文を入れるときと同じ選別（`intake`）を通し、置き換えた後の字だけを保存する（AI の1回。選別が失敗したら保存しない）。文を打ち直すと、AI の行は消して整理し直し、本人の行は、前の文の字を新しい文で探して場所を移す（見つからなければ消し、数を画面に出す）。
 - **値の項目名**：検査名の表（取り込んだ名前と carte の足し分）からだけ選べる。表にない名前は断る。
+
+## 12. 段5 で作ったもの（記載と A/P。CA-030〜035）
+
+作った表は、`apps/worker/migrations/0007_ap_notes.sql`。形と確かめは、`packages/core/src/notes/ap.ts`・`notes/note.ts`。
+
+| 表 | 中身 |
+|---|---|
+| `ap_notes` | id・patient_id・encounter_id・thread_id（問題の筋）・day（その記載の日。日付だけ）・part（assessment・plan）・plan_kind（dx・tx・ex・other・NULL）・text（**選別を通した後の字**。600 字まで）・origin（self：先生が書いた・ai：AI の案から採用・ai_edited：AI の案を直した）・refs（根拠の参照の JSON。記録＝文の id と場所、書籍＝題・頁・節の道筋、ネット＝題・URL。**本文・抜き出し・引用の字は入れない**。20 件まで）・entered_at・updated_at |
+| `ap_history` | id・patient_id・at・note_id・action（add・edit・kind・delete）・origin。**文は残さない** |
+
+- **残すのは、決まった A/P だけ**：AI の案・議論のやりとり・問い・参照元の検索の結果（書籍の抜き出し・ネットの引用）は、どの表にも書かない（CA-032）。AI を呼んだ回数だけが `usage_daily` に数えられる（参照元のウェブ検索も 1 回）。
+- `origin` の `ai_edited` は、サーバーだけが付ける（AI の案から採用したものを本人が直したとき）。画面から送れるのは self と ai だけ。
+- 記載の S・O は保存しない：画面が、保存した文の区切りから、その場で並べる（決定論）。
+- 統合した筋に残した A/P は、統合先の筋に出す（`thread_id` は書き換えない）。

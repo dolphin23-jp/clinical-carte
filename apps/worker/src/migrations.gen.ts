@@ -87,5 +87,15 @@ export const MIGRATIONS: readonly Migration[] = [
       "CREATE TABLE IF NOT EXISTS user_edits ( id TEXT PRIMARY KEY, patient_id TEXT NOT NULL REFERENCES patients (id) ON DELETE CASCADE, at TEXT NOT NULL CHECK (length(at) = 16), target_type TEXT NOT NULL CHECK (target_type IN ('source', 'segment', 'thread', 'problem', 'medication', 'event', 'observation')), target TEXT NOT NULL, field TEXT NOT NULL CHECK (field IN ('kind', 'at', 'author_role', 'label', 'status', 'activity', 'ord', 'excluded', 'unmerge', 'typed_name', 'name', 'text', 'added')), before TEXT, after TEXT )",
       "CREATE INDEX IF NOT EXISTS user_edits_by_patient ON user_edits (patient_id, at)"
     ]
+  },
+  {
+    "name": "0007_ap_notes",
+    "statements": [
+      "CREATE TABLE IF NOT EXISTS ap_notes ( id TEXT PRIMARY KEY, patient_id TEXT NOT NULL REFERENCES patients (id) ON DELETE CASCADE, encounter_id TEXT NOT NULL REFERENCES encounters (id) ON DELETE CASCADE, thread_id TEXT NOT NULL, day TEXT NOT NULL CHECK (length(day) = 10), part TEXT NOT NULL CHECK (part IN ('assessment', 'plan')), plan_kind TEXT CHECK (plan_kind IS NULL OR plan_kind IN ('dx', 'tx', 'ex', 'other')), text TEXT NOT NULL, origin TEXT NOT NULL CHECK (origin IN ('self', 'ai', 'ai_edited')), refs TEXT NOT NULL DEFAULT '[]', entered_at TEXT NOT NULL CHECK (length(entered_at) = 16), updated_at TEXT NOT NULL CHECK (length(updated_at) = 16) )",
+      "CREATE INDEX IF NOT EXISTS ap_notes_by_encounter ON ap_notes (encounter_id, day)",
+      "CREATE INDEX IF NOT EXISTS ap_notes_by_patient ON ap_notes (patient_id)",
+      "CREATE TABLE IF NOT EXISTS ap_history ( id TEXT PRIMARY KEY, patient_id TEXT NOT NULL REFERENCES patients (id) ON DELETE CASCADE, at TEXT NOT NULL CHECK (length(at) = 16), note_id TEXT NOT NULL, action TEXT NOT NULL CHECK (action IN ('add', 'edit', 'kind', 'delete')), origin TEXT CHECK (origin IS NULL OR origin IN ('self', 'ai', 'ai_edited')) )",
+      "CREATE INDEX IF NOT EXISTS ap_history_by_patient ON ap_history (patient_id, at)"
+    ]
   }
 ];

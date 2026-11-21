@@ -144,7 +144,7 @@ const numbers = (text: string): string[] => (text.match(/\d+/g) ?? []).map((n) =
  * 文の中の数が、根拠の引用にあるか。日付・時刻・病日の形の数は、引用の本文・日時・病日のどれかにあればよい。
  * それ以外の数（検査値・用量など）は、引用の本文にあるものだけ（日時・病日の数で、検査値の数を通さない）。
  */
-function numbersBacked(text: string, cited: readonly DraftQuote[]): boolean {
+export function numbersBacked(text: string, cited: readonly { readonly text: string; readonly at: string | null; readonly day: number | null }[]): boolean {
   const normalized = text.normalize('NFKC');
   const body = new Set(cited.flatMap((q) => numbers(q.text.normalize('NFKC'))));
   const when = new Set([...body, ...cited.flatMap((q) => [...numbers(q.at ?? ''), ...(q.day === null ? [] : [String(q.day)])])]);

@@ -52,8 +52,9 @@ import { SourceFacts } from './SourceFacts.tsx';
 import { SourceText } from './SourceText.tsx';
 import { StateView } from './StateView.tsx';
 import { DraftView } from './DraftView.tsx';
+import { NoteView } from './NoteView.tsx';
 
-type Tab = 'draft' | 'state' | 'overview' | 'notes' | 'values' | 'medications' | 'problems' | 'events';
+type Tab = 'draft' | 'chart' | 'state' | 'overview' | 'notes' | 'values' | 'medications' | 'problems' | 'events';
 const TABS: readonly (readonly [Tab, string])[] = [
   ['state', 'いま'],
   ['overview', '経過表'],
@@ -61,6 +62,7 @@ const TABS: readonly (readonly [Tab, string])[] = [
   ['values', '検査'],
   ['medications', '投薬'],
   ['problems', '問題'],
+  ['chart', '記載'],
   ['events', 'できごと'],
   ['draft', '草案'],
 ];
@@ -289,6 +291,7 @@ export function PatientPage({ patientId, onBack, onLeft }: { patientId: string; 
           />
         )}
         {tab === 'events' && <EventView events={events} sources={encounterSources} />}
+        {tab === 'chart' && current !== null && <NoteView key={current.id} record={record} encounter={current} onChanged={load} onLeft={onLeft} />}
         {tab === 'draft' && current !== null && <DraftView key={current.id} encounterId={current.id} onLeft={onLeft} />}
         {tab === 'notes' && kindsHere.length > 1 && (
           <div className="chips kind-filter" data-testid="kind-filter" aria-label="記載の種類で絞る">

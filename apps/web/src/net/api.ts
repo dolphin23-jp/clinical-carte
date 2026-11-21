@@ -14,6 +14,14 @@ import type {
   ActivityOverride,
   AddFact,
   CheckedDraft,
+  ApNoteNew,
+  ApNotePatch,
+  ApOrigin,
+  ApPart,
+  ApRef,
+  CheckedDiscussion,
+  CheckedProposal,
+  PlanKind,
   SegmentPatch,
   SourcePatch,
   ThreadPatch,
@@ -59,6 +67,8 @@ export type ApiError =
   | 'selection_failed'
   | 'conflict'
   | 'draft_empty'
+  | 'ap_empty'
+  | 'shape'
   | 'bad_span';
 
 export type Result<T> = { readonly ok: true; readonly value: T } | { readonly ok: false; readonly error: ApiError; readonly left?: number };
@@ -80,6 +90,8 @@ const KNOWN: readonly ApiError[] = [
   'selection_failed',
   'conflict',
   'draft_empty',
+  'ap_empty',
+  'shape',
   'bad_span',
 ];
 
@@ -303,6 +315,21 @@ export interface PatientSummary {
   readonly round: RoundSummary;
 }
 
+/** 残した A/P（段5）。参照は場所・題・頁・URL だけ（本文なし） */
+export interface ApNote {
+  readonly id: string;
+  readonly encounterId: string;
+  readonly threadId: string;
+  readonly day: string;
+  readonly part: ApPart;
+  readonly planKind: PlanKind | null;
+  readonly text: string;
+  readonly origin: ApOrigin;
+  readonly refs: readonly ApRef[];
+  readonly enteredAt: string;
+  readonly updatedAt: string;
+}
+
 export interface PatientRecord {
   readonly patient: Patient;
   readonly encounters: readonly Encounter[];
@@ -316,6 +343,8 @@ export interface PatientRecord {
   readonly history: readonly HistoryEntry[];
   readonly factEdits: readonly FactEdit[];
   readonly userEdits: readonly UserEdit[];
+  /** A/P（段5。本人が書いた・AI の案から採用した、決まったことだけ） */
+  readonly apNotes: readonly ApNote[];
   /** サーバーの、今日（日本の日） */
   readonly today: string;
 }
@@ -341,8 +370,8 @@ export async function createPatient(input: NewPatient): Promise<Result<Patient>>
 export async function getRecord(patientId: string): Promise<Result<PatientRecord>> {
   const result = await call('GET', `patients/${encodeURIComponent(patientId)}`);
   if (!result.ok) return result;
-  const { patient, encounters, sources, observations, segments, medications, events, problems, problemThreads, history, factEdits, userEdits, today } = result.value;
-  const lists = [encounters, sources, observations, segments, medications, events, problems, problemThreads, history, factEdits, userEdits];
+  const { patient, encounters, sources, observations, segments, medications, events, problems, problemThreads, history, factEdits, userEdits, apNotes, today } = result.value;
+  const lists = [encounters, sources, observations, segments, medications, events, problems, problemThreads, history, factEdits, userEdits, apNotes];
   if (!isRecord(patient) || lists.some((l) => !Array.isArray(l)) || typeof today !== 'string') return { ok: false, error: 'network' };
   return {
     ok: true,
@@ -359,6 +388,7 @@ export async function getRecord(patientId: string): Promise<Result<PatientRecord
       history: history as HistoryEntry[],
       factEdits: factEdits as FactEdit[],
       userEdits: userEdits as UserEdit[],
+      apNotes: apNotes as ApNote[],
       today,
     },
   };
@@ -510,4 +540,55 @@ export async function retypeSource(sourceId: string, text: string): Promise<Resu
   if (!result.ok) return result;
   const lost = result.value['lost'];
   return typeof lost === 'number' ? { ok: true, value: { lost } } : { ok: false, error: 'network' };
+}
+
+// --- 記載と A/P（段5。CA-030〜035）
+
+/** A/P を残す（まとめて。文はサーバーで選別を通す） */
+export async function addApNotes(encounterId: string, notes: readonly ApNoteNew[]): Promise<Result<null>> {
+  return done(await call('POST', `encounters/${encodeURIComponent(encounterId)}/ap-notes`, { notes }));
+}
+
+/** A/P を直す（文は選別を通す。AI 案から採用したものは「AI 案を直した」になる）・方針の種類を選び直す */
+export async function patchApNote(id: string, patch: ApNotePatch): Promise<Result<null>> {
+  return done(await call('PATCH', `ap-notes/${encodeURIComponent(id)}`, patch));
+}
+
+export async function deleteApNote(id: string): Promise<Result<null>> {
+  return done(await call('DELETE', `ap-notes/${encodeURIComponent(id)}`));
+}
+
+export interface RefCounts {
+  /** 資料にした出典の数（記録・書籍・ネット） */
+  readonly sources: number;
+  readonly books: number;
+  readonly web: number;
+  /** ウェブ検索を頼んだが、できなかった */
+  readonly webFailed: boolean;
+}
+
+function refCounts(value: Record<string, unknown>): RefCounts | null {
+  const { sources, books, web, webFailed } = value;
+  return typeof sources === 'number' && typeof books === 'number' && typeof web === 'number' && typeof webFailed === 'boolean' ? { sources, books, web, webFailed } : null;
+}
+
+/** AI の A/P の案（保存しない） */
+export async function requestProposal(encounterId: string, body: { day: string; threadIds: readonly string[]; web: boolean }): Promise<Result<{ proposal: CheckedProposal } & RefCounts>> {
+  const result = await call('POST', `encounters/${encodeURIComponent(encounterId)}/ap-proposal`, body);
+  if (!result.ok) return result;
+  const counts = refCounts(result.value);
+  const proposal = result.value['proposal'];
+  return counts !== null && isRecord(proposal) ? { ok: true, value: { proposal: proposal as unknown as CheckedProposal, ...counts } } : { ok: false, error: 'network' };
+}
+
+/** AI との議論（保存しない） */
+export async function requestDiscussion(
+  encounterId: string,
+  body: { threadId: string; day: string; web: boolean; question: string; history: readonly { role: 'doctor' | 'ai'; text: string }[] },
+): Promise<Result<{ discussion: CheckedDiscussion } & RefCounts>> {
+  const result = await call('POST', `encounters/${encodeURIComponent(encounterId)}/discuss`, body);
+  if (!result.ok) return result;
+  const counts = refCounts(result.value);
+  const discussion = result.value['discussion'];
+  return counts !== null && isRecord(discussion) ? { ok: true, value: { discussion: discussion as unknown as CheckedDiscussion, ...counts } } : { ok: false, error: 'network' };
 }

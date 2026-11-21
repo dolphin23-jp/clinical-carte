@@ -2,10 +2,11 @@
 // 答えは、決めた形（構造化した出力）で受け、確かめるのは core の applySelection。ここでは、保存もログもしない。
 import Anthropic from '@anthropic-ai/sdk';
 import { zodOutputFormat } from '@anthropic-ai/sdk/helpers/zod';
-import { DraftAnswer, LinkAnswer, OrganizeAnswer, SelectionAnswer } from '@clinical-carte/core';
+import { DiscussAnswer, DraftAnswer, LinkAnswer, OrganizeAnswer, ProposalAnswer, SelectionAnswer } from '@clinical-carte/core';
 
-import type { DrafterResult, LinkerResult, Organizer, OrganizerResult } from './organizer.ts';
-import { DRAFT_SYSTEM, LINK_SYSTEM, ORGANIZE_SYSTEM, SELECT_SYSTEM } from './prompt.ts';
+import type { DiscussResult, DrafterResult, LinkerResult, Organizer, OrganizerResult, ProposerResult, ResearchResult } from './organizer.ts';
+import { AP_SYSTEM, DISCUSS_SYSTEM, DRAFT_SYSTEM, LINK_SYSTEM, ORGANIZE_SYSTEM, RESEARCH_SYSTEM, SELECT_SYSTEM, WEB_DOMAINS } from './prompt.ts';
+import type { WebHit } from './references.ts';
 import type { Selector, SelectorResult } from './selector.ts';
 
 /** 始めるモデル（CA-022）。設定（MODEL）で変えられる */
@@ -88,6 +89,83 @@ export function createAnthropicOrganizer(options: AnthropicOptions): Organizer {
         if (response.stop_reason === 'refusal') return { ok: false, reason: 'refused' };
         if (response.stop_reason !== 'end_turn') return { ok: false, reason: 'bad_answer' };
         const parsed = LinkAnswer.safeParse(response.parsed_output);
+        return parsed.success ? { ok: true, answer: parsed.data } : { ok: false, reason: 'bad_answer' };
+      } catch (error) {
+        if (error instanceof Anthropic.APIError) return { ok: false, reason: 'unavailable' };
+        return { ok: false, reason: 'bad_answer' };
+      }
+    },
+    // 参照元（段5）：ウェブ検索（Anthropic の側で検索する）。許す先は WEB_DOMAINS。答えから、引用（題・URL・引用の字）だけを取り出す
+    async research(message: string): Promise<ResearchResult> {
+      try {
+        const messages: Anthropic.Beta.BetaMessageParam[] = [{ role: 'user', content: message }];
+        const hits: WebHit[] = [];
+        // 検索が長いと、途中で止まる（pause_turn）。そのときは続けて送る（3回まで）
+        for (let turn = 0; turn < 3; turn += 1) {
+          const response = await client.beta.messages.create({
+            model: options.model,
+            max_tokens: 8000,
+            betas: ['server-side-fallback-2026-07-01'],
+            fallbacks: 'default',
+            system: RESEARCH_SYSTEM,
+            output_config: { effort: 'medium' },
+            tools: [{ type: 'web_search_20260209', name: 'web_search', max_uses: 5, allowed_domains: [...WEB_DOMAINS] }], // phi-guard: allow ツールの版の名前（患者の番号ではない）
+            messages,
+          });
+          if (response.stop_reason === 'refusal') return { ok: false, reason: 'refused' };
+          for (const block of response.content) {
+            if (block.type !== 'text') continue;
+            for (const c of block.citations ?? []) {
+              if (c.type === 'web_search_result_location') hits.push({ title: c.title ?? c.url, url: c.url, citedText: c.cited_text });
+            }
+          }
+          if (response.stop_reason !== 'pause_turn') break;
+          messages.push({ role: 'assistant', content: response.content });
+        }
+        return { ok: true, hits };
+      } catch (error) {
+        if (error instanceof Anthropic.APIError) return { ok: false, reason: 'unavailable' };
+        return { ok: false, reason: 'bad_answer' };
+      }
+    },
+    // A/P の案（段5）。送るのは、記録の引用・書籍の抜き出し・ネットの引用だけ（core の proposalMessage）。保存しない
+    async propose(message: string): Promise<ProposerResult> {
+      try {
+        const response = await client.beta.messages.parse({
+          model: options.model,
+          max_tokens: 16000,
+          betas: ['server-side-fallback-2026-07-01'],
+          fallbacks: 'default',
+          cache_control: { type: 'ephemeral' },
+          system: AP_SYSTEM,
+          output_config: { effort: 'high', format: zodOutputFormat(ProposalAnswer) },
+          messages: [{ role: 'user', content: message }],
+        });
+        if (response.stop_reason === 'refusal') return { ok: false, reason: 'refused' };
+        if (response.stop_reason !== 'end_turn') return { ok: false, reason: 'bad_answer' };
+        const parsed = ProposalAnswer.safeParse(response.parsed_output);
+        return parsed.success ? { ok: true, answer: parsed.data } : { ok: false, reason: 'bad_answer' };
+      } catch (error) {
+        if (error instanceof Anthropic.APIError) return { ok: false, reason: 'unavailable' };
+        return { ok: false, reason: 'bad_answer' };
+      }
+    },
+    // 議論（段5）。保存しない
+    async discuss(message: string): Promise<DiscussResult> {
+      try {
+        const response = await client.beta.messages.parse({
+          model: options.model,
+          max_tokens: 16000,
+          betas: ['server-side-fallback-2026-07-01'],
+          fallbacks: 'default',
+          cache_control: { type: 'ephemeral' },
+          system: DISCUSS_SYSTEM,
+          output_config: { effort: 'high', format: zodOutputFormat(DiscussAnswer) },
+          messages: [{ role: 'user', content: message }],
+        });
+        if (response.stop_reason === 'refusal') return { ok: false, reason: 'refused' };
+        if (response.stop_reason !== 'end_turn') return { ok: false, reason: 'bad_answer' };
+        const parsed = DiscussAnswer.safeParse(response.parsed_output);
         return parsed.success ? { ok: true, answer: parsed.data } : { ok: false, reason: 'bad_answer' };
       } catch (error) {
         if (error instanceof Anthropic.APIError) return { ok: false, reason: 'unavailable' };
