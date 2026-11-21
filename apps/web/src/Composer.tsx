@@ -15,9 +15,10 @@ import { type SyntheticEvent, useState } from 'react';
 
 import { joinDateTime, nowLocal, replacedSummary } from './format.ts';
 import { errorMessage } from './messages.ts';
-import { addSource, type Observation, type Source } from './net/api.ts';
+import { addSource, type Observation, organizeSource, type Source } from './net/api.ts';
+import { organizeSummary } from './organizeText.ts';
 
-export function Composer({ encounterId, target, onSaved, onLeft }: { encounterId: string; target: string; onSaved: (source: Source, observations: readonly Observation[]) => void; onLeft: () => void }) {
+export function Composer({ encounterId, target, onSaved, onLeft }: { encounterId: string; target: string; onSaved: (source?: Source, observations?: readonly Observation[]) => void; onLeft: () => void }) {
   const [kind, setKind] = useState<SourceKind>('unsorted');
   const [authorRole, setAuthorRole] = useState<AuthorRole>('self');
   const [day, setDay] = useState(() => nowLocal().day);
@@ -27,6 +28,8 @@ export function Composer({ encounterId, target, onSaved, onLeft }: { encounterId
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [done, setDone] = useState<string | null>(null);
+  /** 保存のあとの整理（段2）の知らせ */
+  const [organizing, setOrganizing] = useState<string | null>(null);
 
   const readsValues = READ_VALUES_KINDS.includes(kind);
   const tooLong = text.length > TEXT_LIMIT;
@@ -38,6 +41,7 @@ export function Composer({ encounterId, target, onSaved, onLeft }: { encounterId
     setBusy(true);
     setMessage(null);
     setDone(null);
+    setOrganizing(null);
     void addSource(encounterId, { kind, authorRole, at: unknownTime ? null : joinDateTime(day, time), text }).then((result) => {
       setBusy(false);
       if (!result.ok) {
@@ -57,6 +61,14 @@ export function Composer({ encounterId, target, onSaved, onLeft }: { encounterId
       setDone(parts.join(''));
       setText('');
       onSaved(source, observations);
+      // 続けて整理する（段2）。整理に失敗しても、文は保存されている
+      setOrganizing('整理しています…（30 秒ほどかかることがあります）');
+      void organizeSource(source.id).then((organized) => {
+        if (organized.ok) setOrganizing(organizeSummary(organized.value));
+        else if (organized.error === 'unregistered') onLeft();
+        else setOrganizing(`整理できませんでした（${errorMessage(organized.error).replace('文は保存していません。', '')}）。文は保存してあります。あとで、記録の「整理する」を押せます。`);
+        onSaved();
+      });
     });
   };
 
@@ -157,7 +169,7 @@ export function Composer({ encounterId, target, onSaved, onLeft }: { encounterId
       {readsValues ? (
         <p className="note">名前と値を並べて書きます（例：WBC 12.3 Hb 8.2 CRP &lt;0.1 BP 78/40 尿潜血 (-)）。値は、AI を使わずに読みます。読めなかった部分も、文には残ります。</p>
       ) : (
-        <p className="note">写した文を、そのまま入れます。この種類の文からは、まだ、値や問題を取り出しません（文として残ります）。</p>
+        <p className="note">写した文を、そのまま入れます。保存したあと、AI が整理します（見出しの区切り・投薬・できごと・問題・測定値）。整理は、文に書かれたことだけで、文そのものは変えません。</p>
       )}
       <p className={tooLong ? 'note over' : 'note'}>
         {String(text.length)} / {String(TEXT_LIMIT)} 字
@@ -170,6 +182,11 @@ export function Composer({ encounterId, target, onSaved, onLeft }: { encounterId
       {done !== null && (
         <p className="done" role="status" data-testid="composer-done">
           {done}
+        </p>
+      )}
+      {organizing !== null && (
+        <p className="note" role="status" data-testid="composer-organizing">
+          {organizing}
         </p>
       )}
       <p className="target" data-testid="target">

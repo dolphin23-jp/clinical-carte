@@ -4,12 +4,13 @@ import { DatabaseSync, type SQLInputValue } from 'node:sqlite';
 
 import { toHex } from '@clinical-carte/core';
 
-import type { SelectionAnswer } from '@clinical-carte/core';
+import type { OrganizeAnswer, SelectionAnswer } from '@clinical-carte/core';
 
 import type { Db, Statement } from '../src/db.ts';
 import { handle, type HandlerDeps } from '../src/handler.ts';
 import { MIGRATIONS as MIGRATION_LIST } from '../src/migrations.gen.ts';
 import { type Runtime, webRuntime } from '../src/runtime.ts';
+import type { Organizer, OrganizerResult } from '../src/organizer.ts';
 import type { Selector, SelectorResult } from '../src/selector.ts';
 
 export const MIGRATIONS = resolve(import.meta.dirname, '..', 'migrations');
@@ -100,6 +101,7 @@ export function world(overrides: Partial<HandlerDeps> = {}): World {
     selector: fakeSelector(),
     dailyAiLimit: 0,
     model: 'test-model',
+    organizer: fakeOrganizer(),
     ...overrides,
   };
   return {
@@ -152,6 +154,25 @@ export function fakeSelector(known: readonly Omit<Identifier, 'facility'>[] = []
       if (override !== undefined) return Promise.resolve(override(text));
       const identifiers: Identifier[] = known.filter((k) => text.includes(k.quote)).map((k) => ({ ...k, facility: null }));
       return Promise.resolve({ ok: true, answer: { identifiers } });
+    },
+  };
+}
+
+export const EMPTY_ORGANIZE: OrganizeAnswer = { kind: null, when: null, segments: [], medications: [], events: [], problems: [], measurements: [] };
+
+export interface FakeOrganizer extends Organizer {
+  /** 整理に渡された文（何が AI に届くかを、試験が確かめる） */
+  readonly seen: string[];
+}
+
+/** AI の整理の代役：文を受け取り、決めた答えを返す（既定は、何も見つけない） */
+export function fakeOrganizer(answer: (text: string) => OrganizerResult = () => ({ ok: true, answer: EMPTY_ORGANIZE })): FakeOrganizer {
+  const seen: string[] = [];
+  return {
+    seen,
+    organize: (text) => {
+      seen.push(text);
+      return Promise.resolve(answer(text));
     },
   };
 }

@@ -1,5 +1,5 @@
 // Cloudflare Workers の入口。設定（保存先・合鍵・静的ファイル・AI の鍵）を、handler に渡すだけ。
-import { createAnthropicSelector, DEFAULT_MODEL } from './anthropic.ts';
+import { createAnthropicOrganizer, createAnthropicSelector, DEFAULT_MODEL } from './anthropic.ts';
 import type { Db } from './db.ts';
 import { handle } from './handler.ts';
 import { webRuntime } from './runtime.ts';
@@ -63,6 +63,7 @@ export default {
       ready,
       selector: apiKey === '' ? null : createAnthropicSelector({ apiKey, model }),
       model,
+      organizer: apiKey === '' ? null : createAnthropicOrganizer({ apiKey, model }),
       dailyAiLimit: dailyLimitOf(env.DAILY_AI_LIMIT),
     });
   },

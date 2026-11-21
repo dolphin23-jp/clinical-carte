@@ -18,7 +18,7 @@ describe('migrations の写し', () => {
   });
 
   test('番号の順に並び、最初は、適用の控えの表', () => {
-    expect(MIGRATIONS.map((m) => m.name)).toEqual(['0000_schema', '0001_entrance', '0002_records']);
+    expect(MIGRATIONS.map((m) => m.name)).toEqual(['0000_schema', '0001_entrance', '0002_records', '0003_organize']);
     for (const m of MIGRATIONS) expect(m.statements.length, m.name).toBeGreaterThan(0);
   });
 
@@ -33,8 +33,18 @@ describe('表の用意', () => {
     const db = openDb({ empty: true });
     expect(tables(db)).toEqual([]);
     expect(await ensureSchema(db)).toBe(MIGRATIONS.length);
-    expect(tables(db)).toEqual(['devices', 'encounters', 'entrance_daily', 'observations', 'patients', 'schema_migrations', 'sources', 'usage_daily']);
+    expect(tables(db)).toEqual(['devices', 'encounters', 'entrance_daily', 'events', 'medications', 'observations', 'patients', 'problems', 'schema_migrations', 'segments', 'sources', 'usage_daily']);
     expect(db.raw.prepare('SELECT name FROM schema_migrations ORDER BY name').all()).toEqual(MIGRATIONS.map((m) => ({ name: m.name })));
+  });
+
+  test('段1 の表に記録が入った保存先に、段2 の migration を足しても、記録はそのまま。新しい列は空（まだ整理していない）', async () => {
+    const db = openDb({ empty: true });
+    await ensureSchema(db, MIGRATIONS.slice(0, 3));
+    db.raw.exec("INSERT INTO patients (id, age, age_on, sex, created_on) VALUES ('01ARZ3NDEKTSV4RRFFQ69G5FAV', 72, '2026-11-20', 'male', '2026-11-20')");
+    db.raw.exec("INSERT INTO encounters (id, patient_id, kind, started) VALUES ('01ARZ3NDEKTSV4RRFFQ69G5FAW', '01ARZ3NDEKTSV4RRFFQ69G5FAV', 'inpatient', '2026-11-20')");
+    db.raw.exec("INSERT INTO sources (id, patient_id, encounter_id, kind, author_role, at, entered_at, text, replaced) VALUES ('01ARZ3NDEKTSV4RRFFQ69G5FAX', '01ARZ3NDEKTSV4RRFFQ69G5FAV', '01ARZ3NDEKTSV4RRFFQ69G5FAW', 'progress_note', 'self', NULL, '2026-11-20T09:00', '解熱。', '{}')");
+    expect(await ensureSchema(db)).toBe(1);
+    expect(db.raw.prepare('SELECT text, organized, organized_version, organize_report FROM sources').all()).toEqual([{ text: '解熱。', organized: null, organized_version: null, organize_report: null }]);
   });
 
   test('もう一度動かしても、何もしない。入っている記録は、そのまま', async () => {
@@ -51,7 +61,7 @@ describe('表の用意', () => {
     const db = openDb({ empty: true });
     await ensureSchema(db, MIGRATIONS.slice(0, 2));
     expect(tables(db)).toEqual(['devices', 'entrance_daily', 'schema_migrations']);
-    expect(await ensureSchema(db)).toBe(1);
+    expect(await ensureSchema(db)).toBe(MIGRATIONS.length - 2);
     expect(tables(db)).toContain('patients');
   });
 
