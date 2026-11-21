@@ -166,22 +166,23 @@ describe('問題の筋', () => {
 
     // 「#1 市中肺炎」を「#1 発熱」へ統合
     const pneu = current.getByTestId('problem-line').filter({ has: page.getByTestId('thread-name').filter({ hasText: '#1 市中肺炎' }) });
-    await pneu.getByTestId('thread-edit').locator('summary').click();
+    await pneu.getByTestId('thread-edit').locator(':scope > summary').click();
     const target = await pneu.getByTestId('thread-merge-to').locator('option', { hasText: '#1 発熱' }).getAttribute('value');
     await pneu.getByTestId('thread-merge-to').selectOption(target ?? '');
     await pneu.getByTestId('thread-merge').click();
     await expect.poll(() => current.getByTestId('problem-line').count()).toBe(1);
-    expect(await current.getByTestId('thread-name').textContent()).toBe('#1 市中肺炎');
+    // 統合先の名前が残る（統合した側の名前で上書きしない）
+    expect(await current.getByTestId('thread-name').textContent()).toBe('#1 発熱');
 
-    // 表示の名前を、書かれた名前から選ぶ
+    // 表示の名前を、書かれた名前（統合した側の名前も）から選ぶ
     const card = current.getByTestId('problem-line');
-    await card.getByTestId('thread-edit').locator('summary').click();
-    await card.getByTestId('thread-display-name').selectOption('#1 発熱');
-    await expect.poll(() => current.getByTestId('thread-name').textContent()).toBe('#1 発熱');
+    await card.getByTestId('thread-edit').locator(':scope > summary').click();
+    await card.getByTestId('thread-display-name').selectOption('#1 市中肺炎');
+    await expect.poll(() => current.getByTestId('thread-name').textContent()).toBe('#1 市中肺炎');
 
     // 分ける：最初の記載を、新しい問題へ
     const editor = current.getByTestId('problem-line').getByTestId('thread-edit');
-    if ((await editor.getAttribute('open')) === null) await editor.locator('summary').click();
+    if ((await editor.getAttribute('open')) === null) await editor.locator(':scope > summary').click();
     const row = editor.getByTestId('mention-row').filter({ hasText: '#1 市中肺炎' });
     await row.getByTestId('mention-move-to').selectOption('new');
     await row.getByTestId('mention-move').click();
@@ -192,7 +193,7 @@ describe('問題の筋', () => {
     const text = await history.textContent();
     expect(text).toContain('直した記録（3）');
     expect(text).toContain('に統合した');
-    expect(text).toContain('表示の名前を、「#1 発熱」にした');
+    expect(text).toContain('表示の名前を、「#1 市中肺炎」にした');
     expect(text).toContain('記載「#1 市中肺炎」を');
     expect(await fits(page)).toBe(true);
   });

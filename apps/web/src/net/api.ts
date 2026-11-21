@@ -11,7 +11,14 @@ import type {
   NewPatient,
   NewSource,
   OrganizeReport,
+  ActivityOverride,
+  AddFact,
   CheckedDraft,
+  SegmentPatch,
+  SourcePatch,
+  ThreadPatch,
+  UserEditField,
+  UserEditTarget,
   FactField,
   FactKind,
   FactPatch,
@@ -51,7 +58,8 @@ export type ApiError =
   | 'ai_bad_answer'
   | 'selection_failed'
   | 'conflict'
-  | 'draft_empty';
+  | 'draft_empty'
+  | 'bad_span';
 
 export type Result<T> = { readonly ok: true; readonly value: T } | { readonly ok: false; readonly error: ApiError; readonly left?: number };
 
@@ -72,13 +80,14 @@ const KNOWN: readonly ApiError[] = [
   'selection_failed',
   'conflict',
   'draft_empty',
+  'bad_span',
 ];
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-async function call(method: 'GET' | 'POST' | 'PATCH' | 'DELETE', path: string, body?: unknown): Promise<Result<Record<string, unknown>>> {
+async function call(method: 'GET' | 'POST' | 'PATCH' | 'PUT' | 'DELETE', path: string, body?: unknown): Promise<Result<Record<string, unknown>>> {
   let response: Response;
   let data: unknown;
   try {
@@ -177,6 +186,8 @@ export interface Segment {
   readonly label: SegmentLabel;
   readonly start: number;
   readonly end: number;
+  /** 本人が足した・見出しを直した区切り */
+  readonly edited: boolean;
 }
 
 export interface Medication {
@@ -238,6 +249,21 @@ export interface ProblemThread {
   readonly id: string;
   readonly displayName: string | null;
   readonly mergedInto: string | null;
+  readonly statusOverride: ProblemStatus | null;
+  readonly activityOverride: ActivityOverride | null;
+  readonly ord: number | null;
+  readonly excluded: boolean;
+  readonly typedName: string | null;
+}
+
+export interface UserEdit {
+  readonly id: string;
+  readonly at: string;
+  readonly targetType: UserEditTarget;
+  readonly target: string;
+  readonly field: UserEditField;
+  readonly before: string | null;
+  readonly after: string | null;
 }
 
 export interface HistoryEntry {
@@ -289,6 +315,7 @@ export interface PatientRecord {
   readonly problemThreads: readonly ProblemThread[];
   readonly history: readonly HistoryEntry[];
   readonly factEdits: readonly FactEdit[];
+  readonly userEdits: readonly UserEdit[];
   /** サーバーの、今日（日本の日） */
   readonly today: string;
 }
@@ -314,8 +341,8 @@ export async function createPatient(input: NewPatient): Promise<Result<Patient>>
 export async function getRecord(patientId: string): Promise<Result<PatientRecord>> {
   const result = await call('GET', `patients/${encodeURIComponent(patientId)}`);
   if (!result.ok) return result;
-  const { patient, encounters, sources, observations, segments, medications, events, problems, problemThreads, history, factEdits, today } = result.value;
-  const lists = [encounters, sources, observations, segments, medications, events, problems, problemThreads, history, factEdits];
+  const { patient, encounters, sources, observations, segments, medications, events, problems, problemThreads, history, factEdits, userEdits, today } = result.value;
+  const lists = [encounters, sources, observations, segments, medications, events, problems, problemThreads, history, factEdits, userEdits];
   if (!isRecord(patient) || lists.some((l) => !Array.isArray(l)) || typeof today !== 'string') return { ok: false, error: 'network' };
   return {
     ok: true,
@@ -331,6 +358,7 @@ export async function getRecord(patientId: string): Promise<Result<PatientRecord
       problemThreads: problemThreads as ProblemThread[],
       history: history as HistoryEntry[],
       factEdits: factEdits as FactEdit[],
+      userEdits: userEdits as UserEdit[],
       today,
     },
   };
@@ -450,4 +478,36 @@ export async function requestDraft(encounterId: string): Promise<Result<DraftRes
   if (!result.ok) return result;
   const { draft, quotes, dropped } = result.value;
   return isRecord(draft) && typeof quotes === 'number' && typeof dropped === 'number' ? { ok: true, value: { draft: draft as unknown as CheckedDraft, quotes, dropped } } : { ok: false, error: 'network' };
+}
+
+// --- 本人の調節（CA-029）
+
+const done = (result: Result<Record<string, unknown>>): Result<null> => (result.ok ? { ok: true, value: null } : result);
+
+/** 問題の筋を直す：確からしさ・状態・並び・外す・統合を解く・打った名前（打った名前はサーバーで選別を通す） */
+export async function patchThread(threadId: string, patch: ThreadPatch): Promise<Result<null>> {
+  return done(await call('PATCH', `threads/${encodeURIComponent(threadId)}`, patch));
+}
+
+/** 記載の種類・日時・書いた人を直す */
+export async function patchSource(sourceId: string, patch: SourcePatch): Promise<Result<null>> {
+  return done(await call('PATCH', `sources/${encodeURIComponent(sourceId)}`, patch));
+}
+
+/** 区切りの見出しを選び直す */
+export async function patchSegment(segmentId: string, patch: SegmentPatch): Promise<Result<null>> {
+  return done(await call('PATCH', `segments/${encodeURIComponent(segmentId)}`, patch));
+}
+
+/** 文をなぞって足す */
+export async function addFact(sourceId: string, add: AddFact): Promise<Result<null>> {
+  return done(await call('POST', `sources/${encodeURIComponent(sourceId)}/facts`, add));
+}
+
+/** 文を打ち直す（選別を通す）。引き継げなかった本人の直しの数が返る */
+export async function retypeSource(sourceId: string, text: string): Promise<Result<{ lost: number }>> {
+  const result = await call('PUT', `sources/${encodeURIComponent(sourceId)}/text`, { text });
+  if (!result.ok) return result;
+  const lost = result.value['lost'];
+  return typeof lost === 'number' ? { ok: true, value: { lost } } : { ok: false, error: 'network' };
 }

@@ -2,7 +2,11 @@
 // 形の確かめは、core の型（zod）。誤りの答えは、名前だけ（何が起きたかの文・打った文を返さない）。
 import {
   compareDateTime,
+  AddFact,
   EncounterPatch,
+  SegmentPatch,
+  SourcePatch,
+  SourceTextPut,
   FACT_KINDS,
   type FactKind,
   FactPatch,
@@ -23,11 +27,12 @@ import type { z } from 'zod';
 
 import type { Db } from './db.ts';
 import { draftCourse, draftMaterialFor } from './draft.ts';
+import { addFact, patchSegment, patchSource, retypeSource } from './edits.ts';
 import { patchFact } from './facts.ts';
 import { intake } from './intake.ts';
 import { organizeSource } from './organize.ts';
 import type { Organizer } from './organizer.ts';
-import { type EditOutcome, type LinkOutcome, linkPatient, moveMention, patchThread } from './problems.ts';
+import { type EditOutcome, type LinkOutcome, linkPatient, moveMention, patchThread, setTypedName } from './problems.ts';
 import { SELECT_PROMPT_VERSION } from './prompt.ts';
 import {
   createEncounter,
@@ -280,6 +285,20 @@ export async function recordApi(request: Request, path: string, deps: RecordDeps
     if (!isUlid(id)) return bad();
     const body = await readBody(request, ThreadPatch);
     if (body === null) return bad();
+    if ('typedName' in body) {
+      // 打って直す名前（C-1）：入れるときと同じ選別を通し、置き換えた後の字だけを保存する。やめる（null）ときは AI を使わない
+      if (body.typedName === null) return edited(await setTypedName(db, id, null, runtime));
+      if (deps.selector === null) return reply(503, { error: 'no_ai' });
+      if (deps.dailyAiLimit > 0 && (await callsOn(db, today)) >= deps.dailyAiLimit) return reply(429, { error: 'ai_limit' });
+      await countCall(db, today);
+      const selected = await intake({ kind: 'memo', authorRole: 'self', at: null, text: body.typedName }, deps.selector);
+      if (!selected.ok) {
+        if (selected.reason === 'empty') return bad();
+        if (selected.reason === 'ai') return selected.failure === 'refused' ? reply(422, { error: 'ai_refused' }) : reply(502, { error: selected.failure === 'unavailable' ? 'ai_unavailable' : 'ai_bad_answer' });
+        return reply(422, { error: 'selection_failed' });
+      }
+      return edited(await setTypedName(db, id, selected.text, runtime));
+    }
     return edited(await patchThread(db, id, body, runtime));
   }
 
@@ -288,6 +307,58 @@ export async function recordApi(request: Request, path: string, deps: RecordDeps
     const id = oneSource[1] ?? '';
     if (!isUlid(id)) return bad();
     return (await deleteSource(db, id)) === 0 ? missing() : reply(200, { removed: id });
+  }
+  // 記載の種類・日時・書いた人を直す（CA-029 の A）
+  if (oneSource && method === 'PATCH') {
+    const id = oneSource[1] ?? '';
+    if (!isUlid(id)) return bad();
+    const body = await readBody(request, SourcePatch);
+    if (body === null) return bad();
+    const r = await patchSource(db, id, body, runtime);
+    return r.ok ? reply(200, { ok: true }) : r.error === 'not_found' ? missing() : bad();
+  }
+
+  // 文を打ち直す（C-1）：入れるときと同じ選別を通す。AI の1回に数える。続けて、画面が整理し直す
+  const sourceText = /^\/api\/sources\/([^/]+)\/text$/.exec(path);
+  if (sourceText && method === 'PUT') {
+    const id = sourceText[1] ?? '';
+    if (!isUlid(id)) return bad();
+    const body = await readBody(request, SourceTextPut);
+    if (body === null) return bad();
+    if (deps.selector === null) return reply(503, { error: 'no_ai' });
+    if (deps.dailyAiLimit > 0 && (await callsOn(db, today)) >= deps.dailyAiLimit) return reply(429, { error: 'ai_limit' });
+    await countCall(db, today);
+    const r = await retypeSource(db, id, body.text, deps.selector, runtime);
+    if (!r.ok) {
+      if (r.error === 'not_found') return missing();
+      if (r.error === 'empty') return bad();
+      if (r.error === 'ai') return r.failure === 'refused' ? reply(422, { error: 'ai_refused' }) : reply(502, { error: r.failure === 'unavailable' ? 'ai_unavailable' : 'ai_bad_answer' });
+      return reply(422, { error: 'selection_failed' });
+    }
+    return reply(200, { lost: r.lost });
+  }
+
+  // なぞって足す（CA-029 の B）：保存した文の一部を、問題・投薬・できごと・値・区切りとして足す
+  const sourceAdd = /^\/api\/sources\/([^/]+)\/facts$/.exec(path);
+  if (sourceAdd && method === 'POST') {
+    const id = sourceAdd[1] ?? '';
+    if (!isUlid(id)) return bad();
+    const body = await readBody(request, AddFact);
+    if (body === null) return bad();
+    const r = await addFact(db, id, body, runtime);
+    if (r.ok) return reply(200, { ok: true });
+    return r.error === 'not_found' ? missing() : reply(422, { error: 'bad_span', problem: r.problem });
+  }
+
+  // 区切りの見出しを選び直す（CA-029 の A）
+  const oneSegment = /^\/api\/segments\/([^/]+)$/.exec(path);
+  if (oneSegment && method === 'PATCH') {
+    const id = oneSegment[1] ?? '';
+    if (!isUlid(id)) return bad();
+    const body = await readBody(request, SegmentPatch);
+    if (body === null) return bad();
+    const r = await patchSegment(db, id, body, runtime);
+    return r.ok ? reply(200, { ok: true }) : r.error === 'not_found' ? missing() : bad();
   }
 
   // 選別の評価（selfcheck.ts）：架空の文だけを、本番と同じ鍵・指示・モデルで AI に送り、漏れを数える

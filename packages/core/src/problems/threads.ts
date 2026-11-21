@@ -7,7 +7,7 @@
 // - 見方（threadViews）は、並べるだけ：確からしさと、解決・非活動は、いちばん新しい記載に書かれたとおり（CA-025）。判定しない。
 import { z } from 'zod';
 
-import { type ProblemActivity, type ProblemStatus, type SegmentLabel } from '../organize/answer.ts';
+import { PROBLEM_STATUSES, type ProblemActivity, type ProblemStatus, type SegmentLabel } from '../organize/answer.ts';
 import { nameKey, problemKey } from '../organize/views.ts';
 import { Ulid } from '../record/schema.ts';
 import { compareDateTime } from '../time/datetime.ts';
@@ -32,7 +32,22 @@ export interface ThreadRow {
   readonly displayName: string | null;
   /** 本人が統合した先（なければ null） */
   readonly mergedInto: string | null;
+  /** 本人が決めた確からしさ（CA-029。なければ書かれたとおり） */
+  readonly statusOverride?: ProblemStatus | null;
+  /** 本人が決めた状態（active：いまの問題・resolved・inactive。なければ書かれたとおり） */
+  readonly activityOverride?: ActivityOverride | null;
+  /** 本人が決めた並び（小さいほど上。なければ最初の記載の順） */
+  readonly ord?: number | null;
+  /** 本人が外した（問題ではない） */
+  readonly excluded?: boolean;
+  /** 本人が打って直した名前（選別を通した後の字） */
+  readonly typedName?: string | null;
 }
+
+/** 本人が決める状態（CA-029） */
+export const ACTIVITY_OVERRIDES = ['active', 'resolved', 'inactive'] as const;
+export type ActivityOverride = (typeof ACTIVITY_OVERRIDES)[number];
+export const ACTIVITY_OVERRIDE_NAMES: Readonly<Record<ActivityOverride, string>> = { active: 'いまの問題', resolved: '解決', inactive: '非活動・既往' };
 
 /** 記載の順：日時（日時のないものは最後）→ 入れた順（文の id は ULID）→ 文の中の場所 */
 export function compareMentions(a: ThreadMention, b: ThreadMention): number {
@@ -294,7 +309,21 @@ export const ProblemMove = z.strictObject({ thread: z.union([Ulid, z.literal('ne
 export type ProblemMove = z.infer<typeof ProblemMove>;
 
 /** 筋を直す：別の筋へ統合する、または、表示の名前を、書かれた名前から選ぶ（null：いちばん新しい記載の名前に戻す） */
-export const ThreadPatch = z.union([z.strictObject({ mergeInto: Ulid }), z.strictObject({ displayName: z.string().min(1).max(200).nullable() })]);
+/** 打って直す名前の長さの上限 */
+export const TYPED_NAME_MAX = 100;
+
+export const ThreadPatch = z.union([
+  z.strictObject({ mergeInto: Ulid }),
+  z.strictObject({ displayName: z.string().min(1).max(200).nullable() }),
+  // 本人の決め（CA-029）
+  z.strictObject({ status: z.enum(PROBLEM_STATUSES).nullable() }),
+  z.strictObject({ activity: z.enum(ACTIVITY_OVERRIDES).nullable() }),
+  z.strictObject({ move: z.enum(['up', 'down']) }),
+  z.strictObject({ excluded: z.boolean() }),
+  z.strictObject({ unmerge: Ulid }),
+  // 打って直す名前：サーバーで選別を通してから保存する（C-1）。null は、打った名前をやめる
+  z.strictObject({ typedName: z.string().min(1).max(TYPED_NAME_MAX).nullable() }),
+]);
 export type ThreadPatch = z.infer<typeof ThreadPatch>;
 
 export const HISTORY_ACTIONS = ['move', 'merge', 'name'] as const;
@@ -329,10 +358,22 @@ export interface ThreadView {
   readonly first: string | null;
   readonly last: string | null;
   readonly group: ThreadGroup;
+  /** 確からしさを本人が決めたか（決めていなければ、いちばん新しい記載に書かれたとおり） */
+  readonly statusBySelf: boolean;
+  /** 本人が決めた状態（なければ null） */
+  readonly activitySelf: ActivityOverride | null;
+  /** 名前を本人が打って直したか */
+  readonly typedName: boolean;
+  /** この筋へ統合した筋（統合を解けるように）。名前は、その筋の記載の名前 */
+  readonly mergedFrom: readonly { readonly id: string; readonly names: readonly string[] }[];
+  /** 本人が外した */
+  readonly excluded: boolean;
 }
 
 export interface ThreadViews {
   readonly threads: readonly ThreadView[];
+  /** 本人が外した筋（問題ではないとした。戻せる） */
+  readonly excluded: readonly ThreadView[];
   /** まだ筋につないでいない記載 */
   readonly unlinked: readonly ThreadMention[];
 }
@@ -365,27 +406,46 @@ export function threadViews(threads: readonly ThreadRow[], mentions: readonly Th
       seen.add(k);
       names.push({ name: m.name, at: m.at });
     }
-    const chosen = byId.get(id)?.displayName ?? null;
+    const row = byId.get(id);
+    const chosen = row?.displayName ?? null;
     const chosenOk = chosen !== null && sorted.some((m) => m.name === chosen);
+    const typed = row?.typedName ?? null;
     const earlier = [...sorted.slice(0, -1)].reverse().find((m) => m.activity !== null);
     const dated = sorted.filter((m) => m.at !== null);
+    const statusSelf = row?.statusOverride ?? null;
+    const activitySelf = row?.activityOverride ?? null;
+    const status = statusSelf ?? latest.status;
+    // 本人の決めが、書かれたものより先（CA-029）
+    const group: ThreadGroup =
+      status === 'ruled_out' ? 'ruled_out' : activitySelf === 'active' ? 'current' : activitySelf !== null ? 'closed' : latest.activity !== null ? 'closed' : 'current';
+    const mergedFrom = threads
+      .filter((t) => t.mergedInto === id)
+      .map((t) => ({ id: t.id, names: [...new Set(list.filter((m) => m.threadId === t.id).map((m) => m.name))] }));
     views.push({
       id,
-      name: chosenOk ? chosen : latest.name,
-      chosenName: chosenOk,
+      // 名前は、その筋そのものの記載のいちばん新しいもの（統合した筋の名前で、統合先の名前を上書きしない）
+      name: typed ?? (chosenOk ? chosen : (sorted.filter((m) => m.threadId === id).at(-1) ?? latest).name),
+      chosenName: typed === null && chosenOk,
       names,
       mentions: sorted,
-      status: latest.status,
+      status,
       statusAt: latest.at,
       activity: latest.activity,
       earlierActivity: earlier?.activity == null ? null : { activity: earlier.activity, at: earlier.at },
       first: dated[0]?.at ?? null,
       last: dated.at(-1)?.at ?? null,
-      group: latest.status === 'ruled_out' ? 'ruled_out' : latest.activity !== null ? 'closed' : 'current',
+      group,
+      statusBySelf: statusSelf !== null,
+      activitySelf,
+      typedName: typed !== null,
+      mergedFrom,
+      excluded: row?.excluded === true,
     });
   }
-  views.sort((a, b) => compareMentions(a.mentions[0] as ThreadMention, b.mentions[0] as ThreadMention));
-  return { threads: views, unlinked: [...unlinked].sort(compareMentions) };
+  // 本人の並び（小さいほど上）が先。並びのないものは、最初の記載の順
+  const ordOf = (v: ThreadView): number => byId.get(v.id)?.ord ?? Number.POSITIVE_INFINITY;
+  views.sort((a, b) => ordOf(a) - ordOf(b) || compareMentions(a.mentions[0] as ThreadMention, b.mentions[0] as ThreadMention));
+  return { threads: views.filter((v) => !v.excluded), excluded: views.filter((v) => v.excluded), unlinked: [...unlinked].sort(compareMentions) };
 }
 
 // ---------------------------------------------------------------------------
@@ -538,4 +598,19 @@ export function relatedFacts<
     medicationNames.push(m.name);
   }
   return { valueNames, observations, medicationNames, medications, events: withinBlocks(facts.events, blocks) };
+}
+
+/**
+ * 並べ替え（CA-029）：いまの並びで、id の筋を1つ上・下へ。返すのは、筋ごとの新しい並びの番号（0 から）。
+ * 外した筋は並びに入れない。端なら null（動かさない）
+ */
+export function reorder(views: readonly ThreadView[], id: string, move: 'up' | 'down'): { id: string; ord: number }[] | null {
+  const ids = views.map((v) => v.id);
+  const i = ids.indexOf(id);
+  const j = move === 'up' ? i - 1 : i + 1;
+  if (i < 0 || j < 0 || j >= ids.length) return null;
+  const next = [...ids];
+  next[i] = ids[j] ?? '';
+  next[j] = id;
+  return next.map((x, ord) => ({ id: x, ord }));
 }

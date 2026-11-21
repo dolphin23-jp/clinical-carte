@@ -1481,3 +1481,53 @@ select.input {
   color: var(--muted);
   font-size: 12px;
 }
+
+/* ===== 本人の調節（CA-029） ===== */
+.thread-order {
+  flex-wrap: wrap;
+}
+
+.source-edit,
+.picker {
+  font-size: 14px;
+}
+
+.source-edit > summary,
+.picker > summary {
+  min-height: 36px;
+  padding: 6px 0;
+  color: var(--accent);
+  cursor: pointer;
+}
+
+.source-edit[open],
+.picker[open] {
+  display: grid;
+  gap: 8px;
+}
+
+.pick-text {
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-size: 15px;
+  line-height: 1.8;
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+.pick-chosen {
+  display: grid;
+  gap: 4px;
+  padding: 8px 10px;
+  border-left: 3px solid var(--accent);
+  background: var(--bg);
+}
+
+.pick-quote {
+  overflow-wrap: anywhere;
+}

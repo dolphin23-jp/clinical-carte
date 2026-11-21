@@ -1,11 +1,22 @@
 // 記載から整理した事実を見る・直す（段3e。docs/04 の 10）。直せるのは、外す・戻すと、選ぶだけの直し（投薬の動き・できごとの種類・日時）。
 // 打つ欄はない（打った文は選別を通す決まり。docs/01 の 2）。直した記録（fact_edits）を、その記載の事実の分だけ出す。
-import { EVENT_KIND_NAMES, EVENT_KINDS, FACT_FIELD_NAMES, type FactKind, type FactPatch, MEDICATION_ACTION_NAMES, MEDICATION_ACTIONS } from '@clinical-carte/core';
+import {
+  EVENT_KIND_NAMES,
+  EVENT_KINDS,
+  EXTRA_LAB_NAMES,
+  FACT_FIELD_NAMES,
+  type FactKind,
+  type FactPatch,
+  LAB_NAMES,
+  MEDICATION_ACTION_NAMES,
+  MEDICATION_ACTIONS,
+  USER_EDIT_FIELD_NAMES,
+} from '@clinical-carte/core';
 import { useState } from 'react';
 
 import { joinDateTime, showDateTime } from './format.ts';
 import { errorMessage } from './messages.ts';
-import { type ClinicalEvent, type FactEdit, type Medication, type Observation, patchFact } from './net/api.ts';
+import { type ClinicalEvent, type FactEdit, type Medication, type Observation, patchFact, type UserEdit } from './net/api.ts';
 
 interface Row {
   readonly fact: FactKind;
@@ -17,7 +28,11 @@ interface Row {
   readonly edited: boolean;
   readonly action?: Medication['action'];
   readonly kind?: ClinicalEvent['kind'];
+  readonly labName?: string | null;
 }
+
+/** 値の項目名の候補（検査名の表。表にない名前はサーバーが断る） */
+const LAB_CHOICES = [...new Set([...LAB_NAMES, ...EXTRA_LAB_NAMES].map((e) => e.name))].sort((a, b) => a.localeCompare(b, 'ja'));
 
 const FACT_NAMES: Readonly<Record<FactKind, string>> = { medication: '投薬', event: 'できごと', observation: '値' };
 
@@ -26,6 +41,7 @@ export function SourceFacts({
   events,
   observations,
   edits,
+  userEdits,
   onChanged,
   onLeft,
 }: {
@@ -33,6 +49,7 @@ export function SourceFacts({
   events: readonly ClinicalEvent[];
   observations: readonly Observation[];
   edits: readonly FactEdit[];
+  userEdits: readonly UserEdit[];
   onChanged: () => void;
   onLeft: () => void;
 }) {
@@ -41,11 +58,25 @@ export function SourceFacts({
   const rows: Row[] = [
     ...medications.map((m) => ({ fact: 'medication' as const, id: m.id, label: '投薬', text: `${m.name}${m.doseText === null ? '' : ` ${m.doseText}`}`, at: m.at, excluded: m.excluded, edited: m.edited, action: m.action })),
     ...events.map((e) => ({ fact: 'event' as const, id: e.id, label: EVENT_KIND_NAMES[e.kind], text: e.title, at: e.at, excluded: e.excluded, edited: e.edited, kind: e.kind })),
-    ...observations.map((o) => ({ fact: 'observation' as const, id: o.id, label: '値', text: `${o.nameRaw} ${o.valueText}${o.unit === null ? '' : ` ${o.unit}`}`, at: o.at, excluded: o.excluded, edited: o.edited })),
+    ...observations.map((o) => ({
+      fact: 'observation' as const,
+      id: o.id,
+      label: o.name === null ? '値（項目名を読めなかった）' : `値：${o.name}`,
+      text: `${o.nameRaw} ${o.valueText}${o.unit === null ? '' : ` ${o.unit}`}`,
+      at: o.at,
+      excluded: o.excluded,
+      edited: o.edited,
+      labName: o.name,
+    })),
   ];
   if (rows.length === 0) return null;
   const ids = new Set(rows.map((r) => r.id));
-  const mine = edits.filter((e) => ids.has(e.target));
+  const mine = [
+    ...edits.filter((e) => ids.has(e.target)).map((e) => ({ id: e.id, at: e.at, target: e.target, text: `${FACT_FIELD_NAMES[e.field]}\u3000${editValue(e.field, e.before)} → ${editValue(e.field, e.after)}` })),
+    ...userEdits
+      .filter((e) => ids.has(e.target))
+      .map((e) => ({ id: e.id, at: e.at, target: e.target, text: e.field === 'name' ? `項目名\u3000${e.before ?? '読めなかった名前'} → ${e.after ?? ''}` : e.field === 'added' ? 'なぞって足した' : USER_EDIT_FIELD_NAMES[e.field] })),
+  ].sort((a, b) => b.at.localeCompare(a.at) || b.id.localeCompare(a.id));
   const nameOf = new Map(rows.map((r) => [r.id, `${FACT_NAMES[r.fact]}「${r.text}」`]));
 
   const run = (row: Row, patch: FactPatch) => {
@@ -74,6 +105,11 @@ export function SourceFacts({
           {message}
         </p>
       )}
+      <datalist id="lab-names">
+        {LAB_CHOICES.map((n) => (
+          <option key={n} value={n} />
+        ))}
+      </datalist>
       <ul className="fact-list">
         {rows.map((row) => (
           <FactRow key={row.id} row={row} busy={busy} onPatch={(patch) => {
@@ -89,7 +125,7 @@ export function SourceFacts({
               <li key={e.id} className="fact-row">
                 <span className="fact-when">{showDateTime(e.at)}</span>
                 <span className="fact-main">
-                  {nameOf.get(e.target) ?? '事実'}：{FACT_FIELD_NAMES[e.field]}{'\u3000'}{editValue(e.field, e.before)} → {editValue(e.field, e.after)}
+                  {nameOf.get(e.target) ?? '事実'}：{e.text}
                 </span>
               </li>
             ))}
@@ -171,6 +207,7 @@ function FactRow({ row, busy, onPatch }: { row: Row; busy: boolean; onPatch: (pa
             ))}
           </select>
         )}
+        {row.fact === 'observation' && <LabName row={row} busy={busy} onPatch={onPatch} />}
         <span className="fact-at">
           <input className="input compact" type="date" aria-label="日" value={day} disabled={busy || row.excluded} onChange={(e) => { setDay(e.target.value); }} data-testid="fact-day" />
           <input className="input compact" type="time" aria-label="時刻" value={time} disabled={busy || row.excluded || day === ''} onChange={(e) => { setTime(e.target.value); }} data-testid="fact-time" />
@@ -188,5 +225,28 @@ function FactRow({ row, busy, onPatch }: { row: Row; busy: boolean; onPatch: (pa
         </span>
       </span>
     </li>
+  );
+}
+
+/** 値の項目名を、検査名の表から選び直す（打った名前は記録に入らない：表にない名前はサーバーが断る） */
+function LabName({ row, busy, onPatch }: { row: Row; busy: boolean; onPatch: (patch: FactPatch) => void }) {
+  const [name, setName] = useState('');
+  const ok = LAB_CHOICES.includes(name) && name !== row.labName;
+  return (
+    <span className="fact-at">
+      <input className="input compact" list="lab-names" aria-label="項目名" placeholder="項目名を表から選ぶ" value={name} disabled={busy || row.excluded} onChange={(e) => { setName(e.target.value); }} data-testid="fact-labname" />
+      <button
+        type="button"
+        className="button small"
+        disabled={busy || row.excluded || !ok}
+        onClick={() => {
+          onPatch({ name });
+          setName('');
+        }}
+        data-testid="fact-labname-save"
+      >
+        項目名を直す
+      </button>
+    </span>
   );
 }
