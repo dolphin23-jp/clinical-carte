@@ -14,4 +14,5 @@ export * from './select/selection.ts';
 export * from './text/fold.ts';
 export * from './time/datetime.ts';
 export * from './time/when.ts';
+export * from './views/chart.ts';
 export * from './time/day.ts';

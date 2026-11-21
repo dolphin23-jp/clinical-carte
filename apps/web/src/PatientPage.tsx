@@ -1,4 +1,4 @@
-// 患者の画面：自動の見出し、受診、入れる欄、記録（時系列）、検査・バイタルの表。
+// 患者の画面：自動の見出し・最新のバイタル・受診、経過表（温度板・投薬・できごと）、記録、検査の推移と表、入れる欄。
 import {
   AUTHOR_ROLE_LABELS,
   ENCOUNTER_KIND_LABELS,
@@ -6,26 +6,34 @@ import {
   type EncounterKind,
   headline,
   hospitalDay,
+  labTrends,
+  medicationTimeline,
   READ_VALUES_KINDS,
   readLabText,
   SOURCE_KIND_LABELS,
   UNREAD_LABELS,
+  vitalPanels,
 } from '@clinical-carte/core';
-import { type SyntheticEvent, useCallback, useEffect, useState } from 'react';
+import { type SyntheticEvent, useCallback, useEffect, useRef, useState } from 'react';
+
+import { Timeline } from './charts/Timeline.tsx';
+import { TrendGrid } from './charts/TrendGrid.tsx';
 
 import { Composer } from './Composer.tsx';
 import { joinDateTime, nowLocal, replacedSummary, showDateTime } from './format.ts';
 import { LabTable } from './LabTable.tsx';
+import { LatestStrip } from './LatestStrip.tsx';
 import { errorMessage } from './messages.ts';
 import { EventView, MedicationView, ProblemView } from './Facts.tsx';
 import { createEncounter, deletePatient, deleteSource, type Encounter, getRecord, organizeSource, type PatientRecord, type Segment, setEncounterEnd, type Source } from './net/api.ts';
 import { organizeSummary, reportText } from './organizeText.ts';
 import { SourceText } from './SourceText.tsx';
 
-type Tab = 'notes' | 'values' | 'medications' | 'problems' | 'events';
+type Tab = 'overview' | 'notes' | 'values' | 'medications' | 'problems' | 'events';
 const TABS: readonly (readonly [Tab, string])[] = [
+  ['overview', '経過表'],
   ['notes', '記録'],
-  ['values', '検査・バイタル'],
+  ['values', '検査'],
   ['medications', '投薬'],
   ['problems', '問題'],
   ['events', 'できごと'],
@@ -48,7 +56,8 @@ export function PatientPage({ patientId, onBack, onLeft }: { patientId: string; 
   const [record, setRecord] = useState<PatientRecord | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [encounterId, setEncounterId] = useState<string | null>(null);
-  const [tab, setTab] = useState<Tab>('notes');
+  const [tab, setTab] = useState<Tab>('overview');
+  const composerRef = useRef<HTMLElement>(null);
   const [panel, setPanel] = useState<'none' | 'encounter' | 'end' | 'delete'>('none');
 
   const load = useCallback(() => {
@@ -90,58 +99,62 @@ export function PatientPage({ patientId, onBack, onLeft }: { patientId: string; 
   const events = record.events.filter((e) => e.encounterId === current?.id);
   const problems = record.problems.filter((p) => p.encounterId === current?.id);
 
+  const panels = vitalPanels(observations);
+  const toComposer = () => {
+    composerRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  };
+
   return (
     <main className="page" data-testid="patient-page">
       <button className="button link" type="button" onClick={onBack} data-testid="back">
         ← 患者の一覧
       </button>
-      <h1 data-testid="headline">{title}</h1>
-      {message !== null && (
-        <p className="alert" role="alert">
-          {message}
-        </p>
-      )}
 
-      <section className="card" aria-labelledby="encounters-title">
-        <h2 id="encounters-title">受診</h2>
-        <div className="choices" data-testid="encounters">
-          {record.encounters.map((e) => (
+      <section className="card head-card" aria-labelledby="headline">
+        <h1 id="headline" data-testid="headline">
+          {title}
+        </h1>
+        <LatestStrip panels={panels} />
+        <div className="encounter-bar">
+          <div className="chips" data-testid="encounters" aria-label="受診">
+            {record.encounters.map((e) => (
+              <button
+                key={e.id}
+                type="button"
+                className={e.id === current?.id ? 'chip on' : 'chip'}
+                aria-pressed={e.id === current?.id}
+                onClick={() => {
+                  setEncounterId(e.id);
+                }}
+              >
+                {encounterLabel(e)}
+              </button>
+            ))}
+          </div>
+          <div className="actions">
             <button
-              key={e.id}
-              type="button"
-              className={e.id === current?.id ? 'chip on' : 'chip'}
-              aria-pressed={e.id === current?.id}
-              onClick={() => {
-                setEncounterId(e.id);
-              }}
-            >
-              {encounterLabel(e)}
-            </button>
-          ))}
-        </div>
-        <div className="actions">
-          <button
-            className="button"
-            type="button"
-            onClick={() => {
-              setPanel(panel === 'encounter' ? 'none' : 'encounter');
-            }}
-            data-testid="add-encounter"
-          >
-            受診を足す
-          </button>
-          {current !== null && (
-            <button
-              className="button"
+              className="button small"
               type="button"
               onClick={() => {
-                setPanel(panel === 'end' ? 'none' : 'end');
+                setPanel(panel === 'encounter' ? 'none' : 'encounter');
               }}
-              data-testid="set-end"
+              data-testid="add-encounter"
             >
-              {current.end === null ? '終わり（退院・帰宅）を入れる' : '終わりを直す'}
+              ＋ 受診
             </button>
-          )}
+            {current !== null && (
+              <button
+                className="button small"
+                type="button"
+                onClick={() => {
+                  setPanel(panel === 'end' ? 'none' : 'end');
+                }}
+                data-testid="set-end"
+              >
+                {current.end === null ? '終わり（退院・帰宅）' : '終わりを直す'}
+              </button>
+            )}
+          </div>
         </div>
         {panel === 'encounter' && (
           <EncounterForm
@@ -165,36 +178,44 @@ export function PatientPage({ patientId, onBack, onLeft }: { patientId: string; 
           />
         )}
       </section>
-
-      {current !== null && (
-        <section className="card" aria-labelledby="composer-title">
-          <h2 id="composer-title">入れる</h2>
-          <Composer key={current.id} encounterId={current.id} target={`${title.split(' ｜ ')[0] ?? title} ｜ ${encounterLabel(current)}`} onSaved={load} onLeft={onLeft} />
-        </section>
+      {message !== null && (
+        <p className="alert" role="alert">
+          {message}
+        </p>
       )}
 
       <section className="card" aria-labelledby="record-title">
-        <div className="card-head">
-          <h2 id="record-title">{current === null ? '記録' : encounterLabel(current)}</h2>
-          <div className="tabs" role="tablist">
-            {TABS.map(([id, name]) => (
-              <button
-                key={id}
-                type="button"
-                role="tab"
-                aria-selected={tab === id}
-                className={tab === id ? 'chip on' : 'chip'}
-                onClick={() => {
-                  setTab(id);
-                }}
-                data-testid={`tab-${id}`}
-              >
-                {id === 'notes' ? `${name} ${String(sources.length)}` : name}
-              </button>
-            ))}
-          </div>
+        <h2 id="record-title" className="sr-only">
+          {current === null ? '記録' : encounterLabel(current)}
+        </h2>
+        <div className="tabbar" role="tablist" aria-label="見方">
+          {TABS.map(([id, name]) => (
+            <button
+              key={id}
+              type="button"
+              role="tab"
+              aria-selected={tab === id}
+              className={tab === id ? 'tab on' : 'tab'}
+              onClick={() => {
+                setTab(id);
+              }}
+              data-testid={`tab-${id}`}
+            >
+              {name}
+              {id === 'notes' && <span className="tab-count">{String(sources.length)}</span>}
+            </button>
+          ))}
         </div>
-        {tab === 'values' && <LabTable observations={observations} />}
+        {tab === 'overview' && current !== null && (
+          <Timeline panels={panels} medications={medicationTimeline(medications)} events={events} encounterStart={current.start} encounterEnd={current.end} inpatient={current.kind === 'inpatient'} />
+        )}
+        {tab === 'values' && (
+          <>
+            <TrendGrid trends={labTrends(observations)} />
+            <h3 className="sub-title">表（書かれたとおり）</h3>
+            <LabTable observations={observations} />
+          </>
+        )}
         {tab === 'medications' && <MedicationView medications={medications} sources={encounterSources} />}
         {tab === 'problems' && <ProblemView problems={problems} sources={encounterSources} />}
         {tab === 'events' && <EventView events={events} sources={encounterSources} />}
@@ -208,6 +229,29 @@ export function PatientPage({ patientId, onBack, onLeft }: { patientId: string; 
           </ul>
         )}
       </section>
+
+      {current !== null && (
+        <section className="card composer-card" aria-labelledby="composer-title" ref={composerRef}>
+          <h2 id="composer-title">入れる</h2>
+          <Composer
+            key={current.id}
+            encounterId={current.id}
+            target={`${title.split(' ｜ ')[0] ?? title} ｜ ${encounterLabel(current)}`}
+            onSaved={(source) => {
+              // 保存したら、記録のタブで、入れた文を見せる
+              if (source !== undefined) setTab('notes');
+              load();
+            }}
+            onLeft={onLeft}
+          />
+        </section>
+      )}
+
+      {current !== null && (
+        <button type="button" className="fab" onClick={toComposer} data-testid="fab-compose">
+          ＋ 入れる
+        </button>
+      )}
 
       <section className="card" aria-labelledby="danger-title">
         <h2 id="danger-title">この患者を消す</h2>

@@ -1,0 +1,134 @@
+import { describe, expect, it, test } from 'vitest';
+
+import { type ChartObservation, chartTime, dayTicks, labTrends, medicationSpans, niceTicks, timeDomain, vitalPanels } from '../src/index.ts';
+
+let n = 0;
+const obs = (patch: Partial<ChartObservation>): ChartObservation => ({
+  id: String((n += 1)),
+  sourceId: 's1',
+  at: '2026-11-20T06:00',
+  name: null,
+  nameRaw: 'x',
+  kind: 'lab',
+  value: 1,
+  comparator: null,
+  valueText: '1',
+  unit: null,
+  ...patch,
+});
+
+describe('時間の位置', () => {
+  test('日時は、そのまま数に。日だけは、その日の正午に置き、印を付ける', () => {
+    expect(chartTime('2026-11-20T06:30')).toEqual({ t: Date.UTC(2026, 10, 20, 6, 30), dateOnly: false });
+    expect(chartTime('2026-11-20')).toEqual({ t: Date.UTC(2026, 10, 20, 12), dateOnly: true });
+    expect(chartTime(null)).toBeNull();
+  });
+});
+
+describe('温度板', () => {
+  test('段は、体温・心拍数・血圧・呼吸数・SpO2 の順。値のない段も返す', () => {
+    expect(vitalPanels([]).map((p) => [p.id, p.points.length])).toEqual([
+      ['bt', 0],
+      ['hr', 0],
+      ['bp', 0],
+      ['rr', 0],
+      ['spo2', 0],
+    ]);
+  });
+
+  test('置くのは、数で書かれ、不等号がなく、日時のある値だけ。日時の順', () => {
+    const panels = vitalPanels([
+      obs({ name: '体温', kind: 'vital', value: 37.2, valueText: '37.2', at: '2026-11-20T09:00' }),
+      obs({ name: '体温', kind: 'vital', value: 38.4, valueText: '38.4', at: '2026-11-19' }),
+      obs({ name: '体温', kind: 'vital', value: 39, comparator: '>', valueText: '39' }),
+      obs({ name: '体温', kind: 'vital', value: 37, at: null }),
+    ]);
+    expect(panels[0]?.points.map((p) => [p.at, p.value, p.dateOnly])).toEqual([
+      ['2026-11-19', 38.4, true],
+      ['2026-11-20T09:00', 37.2, false],
+    ]);
+  });
+
+  test('単位が書かれていて、カタログの単位と違う値は、置かない（換算しない）', () => {
+    const panels = vitalPanels([
+      obs({ name: '体温', kind: 'vital', value: 98.6, unit: '°F' }),
+      obs({ name: '体温', kind: 'vital', value: 37, unit: '℃' }),
+      obs({ name: '体温', kind: 'vital', value: 36.8, unit: null }),
+    ]);
+    expect(panels[0]?.points.map((p) => p.value).sort()).toEqual([36.8, 37]);
+  });
+
+  test('血圧は、同じ文・同じ日時の収縮期と拡張期を組にする', () => {
+    const panels = vitalPanels([
+      obs({ name: '収縮期血圧', kind: 'vital', value: 120, valueText: '120', sourceId: 'a' }),
+      obs({ name: '拡張期血圧', kind: 'vital', value: 80, valueText: '80', sourceId: 'a' }),
+      obs({ name: '収縮期血圧', kind: 'vital', value: 98, valueText: '98', sourceId: 'b', at: '2026-11-19T22:00' }),
+    ]);
+    const bp = panels.find((p) => p.id === 'bp');
+    expect(bp?.points.map((p) => [p.value, p.low, p.text])).toEqual([
+      [98, undefined, '98'],
+      [120, 80, '120/80'],
+    ]);
+  });
+});
+
+describe('検査の推移', () => {
+  test('項目と、書かれた単位ごとに分ける（単位の違う値を、同じ線にしない）。置けない値は数える', () => {
+    const trends = labTrends([
+      obs({ name: 'WBC', value: 12.3, valueText: '12.3' }),
+      obs({ name: 'WBC', value: 12300, valueText: '12300', unit: '/μL', at: '2026-11-21T06:00' }),
+      obs({ name: 'WBC', value: 9.8, valueText: '9.8', at: '2026-11-21T06:00' }),
+      obs({ name: 'CRP', value: 0.1, comparator: '<', valueText: '0.1' }),
+      obs({ name: '体温', kind: 'vital', value: 37 }),
+      obs({ name: null, nameRaw: '架空マーカー', value: 5, valueText: '5' }),
+    ]);
+    expect(trends.map((t) => [t.name, t.unit, t.points.map((p) => p.value), t.hidden])).toEqual([
+      ['WBC', null, [12.3, 9.8], 0],
+      ['WBC', '/μL', [12300], 0],
+      ['CRP', null, [], 1],
+      ['架空マーカー', null, [5], 0],
+    ]);
+  });
+});
+
+describe('軸', () => {
+  test('時間の範囲は、値と受診の開始・終わりを含む。短すぎれば1日に広げる', () => {
+    const t = Date.UTC(2026, 10, 20, 6);
+    expect(timeDomain([t], null, null)).toEqual([t - 43_200_000, t + 43_200_000]);
+    expect(timeDomain([], '2026-11-18T22:00', null)).toEqual([Date.UTC(2026, 10, 18, 10), Date.UTC(2026, 10, 19, 10)]);
+    expect(timeDomain([t], '2026-11-18', '2026-11-25')?.[0]).toBe(Date.UTC(2026, 10, 18));
+    expect(timeDomain([], null, null)).toBeNull();
+  });
+
+  test('日の目盛り：日の始まり、病日、多すぎれば間引く', () => {
+    const ticks = dayTicks([Date.UTC(2026, 10, 18, 10), Date.UTC(2026, 10, 21, 10)], 10, '2026-11-18T22:00');
+    expect(ticks.map((d) => [d.label, d.hospitalDay])).toEqual([
+      ['11/19', 2],
+      ['11/20', 3],
+      ['11/21', 4],
+    ]);
+    expect(dayTicks([Date.UTC(2026, 10, 1), Date.UTC(2026, 11, 1)], 6, null).length).toBeLessThanOrEqual(6);
+  });
+
+  test('縦の目盛りは、きりのよい値。値が1つでも幅を持つ', () => {
+    expect(niceTicks(36.4, 38.9, 4)).toEqual({ min: 36, max: 39, ticks: [36, 37, 38, 39] });
+    const one = niceTicks(37, 37);
+    expect(one.max).toBeGreaterThan(one.min);
+  });
+});
+
+describe('medicationSpans', () => {
+  const t = (at: string) => chartTime(at)?.t ?? NaN;
+  it('つなぐのは記録のあいだだけで、中止のあとと最後の記録より先は描かない', () => {
+    const spans = medicationSpans([
+      { action: 'start', at: '2026-11-01T09:00' },
+      { action: 'continue', at: '2026-11-03' },
+      { action: 'stop', at: '2026-11-05T10:00' },
+      { action: 'start', at: '2026-11-08T09:00' },
+    ]);
+    expect(spans).toEqual([{ from: t('2026-11-01T09:00'), to: t('2026-11-05T10:00') }]);
+  });
+  it('日時の分からない記録は飛ばす。1つだけなら帯はない', () => {
+    expect(medicationSpans([{ action: 'start', at: null }, { action: 'start', at: '2026-11-01' }])).toEqual([]);
+  });
+});
