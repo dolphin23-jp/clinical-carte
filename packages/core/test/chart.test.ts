@@ -1,6 +1,6 @@
 import { describe, expect, it, test } from 'vitest';
 
-import { type ChartObservation, chartTime, dayTicks, labTrends, medicationSpans, niceTicks, timeDomain, vitalPanels } from '../src/index.ts';
+import { type ChartObservation, chartTime, dayTicks, labTrends, latestPoint, medicationSpans, niceTicks, timeDomain, untimedSameDay, vitalPanels } from '../src/index.ts';
 
 let n = 0;
 const obs = (patch: Partial<ChartObservation>): ChartObservation => ({
@@ -58,6 +58,29 @@ describe('温度板', () => {
     expect(panels[0]?.points.map((p) => p.value).sort()).toEqual([36.8, 37]);
   });
 
+  test('MAP・酸素流量・JCS・GCS・尿量の段は、値があるときだけ。尿量は、書かれた単位ごとに分ける（換算しない）', () => {
+    const panels = vitalPanels([
+      obs({ name: 'MAP', kind: 'vital', value: 67, valueText: '67', unit: null }),
+      obs({ name: 'JCS', kind: 'vital', value: 3, valueText: '3', unit: null }),
+      obs({ name: '酸素流量', kind: 'vital', value: 2, valueText: '2', unit: 'L/min' }),
+      obs({ name: '尿量', kind: 'vital', value: 25, valueText: '25', unit: 'mL' }),
+      obs({ name: '尿量', kind: 'vital', value: 0.43, valueText: '0.43', unit: 'mL/kg/hr' }),
+    ]);
+    expect(panels.map((p) => [p.key, p.points.length])).toEqual([
+      ['bt', 0],
+      ['hr', 0],
+      ['bp', 0],
+      ['map', 1],
+      ['rr', 0],
+      ['spo2', 0],
+      ['o2', 1],
+      ['jcs', 1],
+      ['uo:ml', 1],
+      ['uo:ml/kg/hr', 1],
+    ]);
+    expect(panels.filter((p) => p.id === 'uo').map((p) => p.unit)).toEqual(['mL', 'mL/kg/hr']);
+  });
+
   test('血圧は、同じ文・同じ日時の収縮期と拡張期を組にする', () => {
     const panels = vitalPanels([
       obs({ name: '収縮期血圧', kind: 'vital', value: 120, valueText: '120', sourceId: 'a' }),
@@ -73,6 +96,19 @@ describe('温度板', () => {
 });
 
 describe('検査の推移', () => {
+  test('同じ項目の推移は、隣どうしに並べる（単位の書かれていない値は、書かれた単位の推移に入れない）', () => {
+    const trends = labTrends([
+      obs({ name: 'Lac', value: 3.6, valueText: '3.6', unit: 'mmol/L', at: '2026-11-21T10:48' }),
+      obs({ name: 'pH', value: 7.31, valueText: '7.31', at: '2026-11-21T10:48' }),
+      obs({ name: 'Lac', value: 2.8, valueText: '2.8', at: '2026-11-21T14:00' }),
+    ]);
+    expect(trends.map((t) => [t.name, t.unit])).toEqual([
+      ['Lac', 'mmol/L'],
+      ['Lac', null],
+      ['pH', null],
+    ]);
+  });
+
   test('項目と、書かれた単位ごとに分ける（単位の違う値を、同じ線にしない）。置けない値は数える', () => {
     const trends = labTrends([
       obs({ name: 'WBC', value: 12.3, valueText: '12.3' }),
@@ -130,5 +166,21 @@ describe('medicationSpans', () => {
   });
   it('日時の分からない記録は飛ばす。1つだけなら帯はない', () => {
     expect(medicationSpans([{ action: 'start', at: null }, { action: 'start', at: '2026-11-01' }])).toEqual([]);
+  });
+});
+
+describe('最新の値（どの画面も同じ決まり）', () => {
+  test('同じ日なら、時刻のない値は時刻のある値より前。同じ日に時刻のない値があれば、そう分かる', () => {
+    const hr = vitalPanels([
+      obs({ name: '心拍数', kind: 'vital', value: 108, valueText: '108', at: '2026-11-21' }),
+      obs({ name: '心拍数', kind: 'vital', value: 128, valueText: '128', at: '2026-11-21T11:45' }),
+      obs({ name: '心拍数', kind: 'vital', value: 118, valueText: '118', at: '2026-11-21T09:10' }),
+    ]).find((p) => p.id === 'hr');
+    const latest = latestPoint(hr?.points ?? []);
+    expect(latest?.text).toBe('128');
+    expect(untimedSameDay(hr?.points ?? [], latest)).toBe(true);
+    const later = latestPoint([...(hr?.points ?? []), { ...(chartTime('2026-11-22') ?? { t: 0, dateOnly: true }), at: '2026-11-22', value: 100, text: '100' }]);
+    expect(later?.text).toBe('100');
+    expect(untimedSameDay(hr?.points ?? [], latestPoint([]))).toBe(false);
   });
 });

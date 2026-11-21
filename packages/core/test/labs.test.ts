@@ -2,7 +2,7 @@
 import fc from 'fast-check';
 import { describe, expect, test } from 'vitest';
 
-import { EXTRA_LAB_NAMES, LAB_NAMES, type LabRow, readLabText } from '../src/index.ts';
+import { EXTRA_ALIASES, EXTRA_LAB_NAMES, LAB_NAMES, type LabRow, readLabText } from '../src/index.ts';
 
 const brief = (rows: readonly LabRow[]): string[] => rows.map((r) => `${r.name ?? `?${r.nameRaw}`}=${r.comparator ?? ''}${r.valueText}${r.unit === null ? '' : ` ${r.unit}`}`);
 
@@ -68,6 +68,55 @@ describe('読めるもの', () => {
     expect(readLabText('WBC 12,300').rows[0]).toMatchObject({ value: 12300, valueText: '12,300' });
   });
 
+  test('下付き・上付きの文字（SpO₂・pCO₂・HCO₃⁻）を読む。書かれた名前は、そのまま残す', () => {
+    const r = readLabText('SpO₂ 96%、pCO₂ 30 mmHg、HCO₃⁻ 11 mmol/L');
+    expect(r.rows.map((x) => [x.name, x.nameRaw, x.valueText])).toEqual([
+      ['SpO2', 'SpO₂', '96'],
+      ['pCO2', 'pCO₂', '30'],
+      ['HCO3', 'HCO₃⁻', '11'],
+    ]);
+  });
+
+  test('「℃」の付いた体温を読む（全角の記号でも、空白をはさんでも）', () => {
+    expect(brief(readLabText('BT 39.2℃ 体温 37.8 ℃ BT 38.0°C').rows)).toEqual(['体温=39.2 ℃', '体温=37.8 ℃', '体温=38.0 °C']);
+  });
+
+  test('値のすぐ後ろの括弧（全角・半角）で、値を捨てない。括弧の中の項目も読む', () => {
+    const r = readLabText('BP 84/40（MAP 約55） ALP 597（IFCC法） WBC 20,500/μL（Neut 91%） PT 62%(PT-INR 1.38)');
+    expect(brief(r.rows)).toEqual(['収縮期血圧=84', '拡張期血圧=40', 'ALP=597', 'WBC=20,500 /μL', 'Neut=91 %', 'PT=62 %', 'PT-INR=1.38']);
+    expect(brief(readLabText('HBs抗原（−） 顆粒円柱(+)').rows)).toEqual(['HBs抗原=（−）', '顆粒円柱=(+)']);
+    expect(brief(readLabText('【血ガス】pH 7.31【血算】WBC 18,200').rows)).toEqual(['pH=7.31', 'WBC=18,200']);
+    // 括弧のあとの「：」は、つなぎの字
+    expect(brief(readLabText('健診（2026年6月）：Cr 0.86、Plt 21万（紹介状）').rows)).toEqual(['Cr=0.86', 'Plt=21 万']);
+  });
+
+  test('時刻・比・式の「:」「=」と、単位だけの語を、カタログにない名前と読まない', () => {
+    for (const text of ['【腎臓内科の意見（11:35、電話）】', '次回は翌日11:00、23:20', 'E3V4M6＝13', '0.05 μg/kg/min ＝ 3.2 mL/hr', 'mL/hr: 40']) {
+      expect(readLabText(text).rows, text).toEqual([]);
+    }
+    expect(brief(readLabText('架空マーカー: 12.3 P/F比: 200').rows)).toEqual(['?架空マーカー=12.3', '?P/F比=200']);
+  });
+
+  test('経過表のための名前：MAP・JCS（「Ⅱ-10」の書き方も）・GCS（合計が書かれていれば、その数。E・V・M から足さない）', () => {
+    expect(brief(readLabText('BP 98/52（MAP 67） JCS Ⅱ-10 JCS 3 GCS E3V4M6＝13 GCS 14').rows)).toEqual(['収縮期血圧=98', '拡張期血圧=52', 'MAP=67', 'JCS=10', 'JCS=3', 'GCS=13', 'GCS=14']);
+    const noTotal = readLabText('GCS E4V4M6');
+    expect(noTotal.rows).toEqual([]);
+    expect(noTotal.unread.map((u) => u.reason)).toContain('no_value');
+  });
+
+  test('酸素の器具の名前に続く流量を、酸素流量として読む（器具の名前は、書かれた名前に残る）。尿量は、書かれた単位のまま', () => {
+    const r = readLabText('SpO2 96%（鼻カニュラ2 L/min） 尿量 25 mL 尿量 0.43 mL/kg/hr');
+    expect(brief(r.rows)).toEqual(['SpO2=96 %', '酸素流量=2 L/min', '尿量=25 mL', '尿量=0.43 mL/kg/hr']);
+    expect(r.rows[1]?.nameRaw).toBe('鼻カニュラ');
+  });
+
+  test('尿の検査の引用（specimen = urine）は、「尿」のない名前も尿の項目として読む。ふだんは血液の項目（CD-023）', () => {
+    const text = '比重 1.012、pH 5.5、蛋白 2+、潜血 2+、糖 1+、白血球 1+、Na 58、K 32';
+    expect(brief(readLabText(text, { specimen: 'urine' }).rows)).toEqual(['尿比重=1.012', '尿pH=5.5', '尿蛋白=2+', '尿潜血=2+', '尿糖=1+', '尿白血球反応=1+', '尿Na=58', '尿K=32']);
+    expect(brief(readLabText('pH 7.31 WBC 18,200 Na 131').rows)).toEqual(['pH=7.31', 'WBC=18,200', 'Na=131']);
+    expect(brief(readLabText('沈渣：RBC 5 WBC 10', { specimen: 'urine' }).rows)).toEqual(['尿沈渣RBC=5', '尿沈渣WBC=10']);
+  });
+
   test('カタログにない名前は、「名前: 値」「名前=値」と書いたときだけ読む（書かれた名前のまま）', () => {
     const r = readLabText('架空マーカー: 12.3 別の項目=陽性 これは 5');
     expect(brief(r.rows)).toEqual(['?架空マーカー=12.3', '?別の項目=陽性']);
@@ -113,7 +162,7 @@ describe('性質', () => {
         const covered = new Array<boolean>(text.length).fill(false);
         for (const s of [...r.rows, ...r.unread]) for (let i = s.start; i < s.end; i++) covered[i] = true;
         for (let i = 0; i < text.length; i++) {
-          if (!covered[i]) expect([' ', '\n', ',', '、', ';', '。', ':', '=', '　'], `位置 ${String(i)}「${text}」`).toContain(text[i]);
+          if (!covered[i]) expect([' ', '\n', ',', '、', ';', '。', ':', '=', '　', '(', ')', '【', '】'], `位置 ${String(i)}「${text}」`).toContain(text[i]);
         }
       }),
       { numRuns: 500 },
@@ -162,6 +211,18 @@ describe('取り込んだ名前（Playbook のカタログ）', () => {
       }
     }
     expect(failed).toEqual([]);
+  });
+
+  test('carte で足した別名（酸素の器具）は、取り込んだ名前に付き、ほかの名前・別名と重ならない', () => {
+    const key = (n: string): string => n.normalize('NFKC').trim().replace(/\s+/g, ' ').toLowerCase();
+    const all = new Set([...LAB_NAMES, ...EXTRA_LAB_NAMES].flatMap((e) => [e.name, ...e.aliases].map(key)));
+    for (const extra of EXTRA_ALIASES) {
+      expect(LAB_NAMES.some((e) => e.name === extra.name), extra.name).toBe(true);
+      for (const a of extra.aliases) {
+        expect(all.has(key(a)), a).toBe(false);
+        expect(readLabText(`${a} 2`).rows[0]?.name, a).toBe(extra.name);
+      }
+    }
   });
 
   test('carte で足した名前は、取り込んだ名前・別名と重ならない', () => {

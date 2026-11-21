@@ -88,14 +88,19 @@ export const PROBLEM_ACTIVITY_NAMES: Readonly<Record<ProblemActivity, string>> =
   inactive: '非活動・既往と書かれている',
 };
 
+/** 測定値の検体の種類（AI が指す。書かれた見出し・行から）。いまは尿だけ（血液・バイタル・そのほかは null） */
+export const MEASUREMENT_SPECIMENS = ['urine'] as const;
+export type MeasurementSpecimen = (typeof MEASUREMENT_SPECIMENS)[number];
+
 /** AI の答えの形（構造化した出力の型）。長さ・場所などの検査は apply.ts がする */
 export const OrganizeAnswer = z.object({
   /** 記載の種類（文から分かれば）。種類が「未分類」の文だけに使う */
   kind: z.enum(SOURCE_KINDS).nullable(),
   /** 記載そのものの日時が書かれた場所（引用）。なければ null */
   when: z.string().nullable(),
-  /** 見出しと、その区切りが始まる場所（引用。文の順） */
-  segments: z.array(z.object({ label: z.enum(SEGMENT_LABELS), start: z.string() })),
+  /** 見出しと、その区切りが始まる場所（引用。文の順）。when は、その区切りの時刻が書かれた場所（「初期評価（10:44）」の 10:44。なければ null）。
+   *  区切りの中の事実で、自分の日時の書かれていないものは、この日時になる（2026-11-21 の本人の決定） */
+  segments: z.array(z.object({ label: z.enum(SEGMENT_LABELS), start: z.string(), when: z.string().nullable() })),
   medications: z.array(
     z.object({
       /** 薬の名前（引用） */
@@ -109,7 +114,8 @@ export const OrganizeAnswer = z.object({
   ),
   events: z.array(z.object({ kind: z.enum(EVENT_KINDS), title: z.string(), when: z.string().nullable() })),
   problems: z.array(z.object({ name: z.string(), status: z.enum(PROBLEM_STATUSES), activity: z.enum(PROBLEM_ACTIVITIES).nullable() })),
-  /** 測定値が書かれた場所（引用。「Na 128」「BT 38.5」など。数は、ここから決定論で読む） */
-  measurements: z.array(z.object({ quote: z.string(), when: z.string().nullable() })),
+  /** 測定値が書かれた場所（引用。「Na 128」「BT 38.5」など。数は、ここから決定論で読む）。
+   *  specimen は、尿の検査の引用なら urine（尿の項目の名前で読む。CD-023 の答え：2026-11-21 の本人の決定）。ほかは null */
+  measurements: z.array(z.object({ quote: z.string(), when: z.string().nullable(), specimen: z.enum(MEASUREMENT_SPECIMENS).nullable() })),
 });
 export type OrganizeAnswer = z.infer<typeof OrganizeAnswer>;

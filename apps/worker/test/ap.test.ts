@@ -11,11 +11,11 @@ const NOTE = `${NAME}さん。\n#1 市中肺炎\nS) 咳は減った\nO) 体温 3
 const ANSWER: OrganizeAnswer = {
   ...EMPTY_ORGANIZE,
   segments: [
-    { label: 'problem_heading', start: '#1 市中肺炎' },
-    { label: 'subjective', start: 'S) 咳' },
-    { label: 'objective', start: 'O) 体温' },
-    { label: 'assessment', start: 'A) 抗菌薬' },
-    { label: 'plan', start: 'P) セフ' },
+    { label: 'problem_heading', start: '#1 市中肺炎', when: null },
+    { label: 'subjective', start: 'S) 咳', when: null },
+    { label: 'objective', start: 'O) 体温', when: null },
+    { label: 'assessment', start: 'A) 抗菌薬', when: null },
+    { label: 'plan', start: 'P) セフ', when: null },
   ],
   problems: [{ name: '#1 市中肺炎', status: 'diagnosis', activity: null }],
 };

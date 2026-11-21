@@ -215,7 +215,7 @@ function ThreadCard({
   const [typed, setTyped] = useState('');
   // 記載ごとにまとめる（1つの記載の A と P は一緒に出す）。いちばん新しい記載を開いて、ほかは畳む
   const groups: ProblemNote[][] = [];
-  for (const n of problemNotes(view.mentions, segments)) {
+  for (const n of problemNotes(view.mentions, segments, [...view.mentions, ...others.flatMap((o) => o.mentions)])) {
     const last = groups.at(-1);
     if (last?.[0]?.sourceId === n.sourceId) last.push(n);
     else groups.push([n]);

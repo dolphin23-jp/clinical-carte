@@ -10,6 +10,7 @@ import {
   problemNotes,
   ProblemMove,
   resolveLinks,
+  sharedPlanSegments,
   type ThreadMention,
   type ThreadRow,
   ThreadPatch,
@@ -223,6 +224,54 @@ describe('problemNotes', () => {
   test('A・P の中に書かれた問題は、その区切り。S・O の中なら、出さない', () => {
     const segments = [seg('subjective', 0, 10), seg('assessment_plan', 10, 30)];
     expect(problemNotes([m({ start: 12, end: 14 }), m({ start: 2, end: 4 })], segments).map((x) => x.label)).toEqual(['assessment_plan']);
+  });
+});
+
+describe('記載全体の P（sharedPlanSegments）', () => {
+  const seg = (label: string, start: number, end: number, sourceId = 's1') => ({ sourceId, label: label as never, start, end });
+  // 「A) → #1 の段落 → #2 の段落 → #3 の段落 → P) → 申し送り」の形
+  const segments = [seg('assessment', 0, 5), seg('problem_heading', 5, 30), seg('problem_heading', 30, 50), seg('problem_heading', 50, 70), seg('plan', 70, 100), seg('handover', 100, 120)];
+
+  test('見出しが2つ以上あり、A・P が最後の見出しのあとにだけあれば、その P は記載全体のもの', () => {
+    expect(sharedPlanSegments(segments).map((g) => [g.label, g.start])).toEqual([['plan', 70]]);
+  });
+
+  test('最後の問題の範囲と A・P は、記載全体の P を含まない（最後の問題のものにしない）', () => {
+    const last = m({ start: 51, end: 55 });
+    expect(problemBlocks([last], segments)).toEqual([{ sourceId: 's1', start: 50, end: 70 }]);
+    expect(problemNotes([last], segments).map((x) => [x.label, x.start])).toEqual([['problem_heading', 50]]);
+    const first = m({ start: 6, end: 9 });
+    expect(problemNotes([first], segments).map((x) => [x.label, x.start])).toEqual([['problem_heading', 5]]);
+  });
+
+  test('問題ごとに A・P が書かれた記載（前の見出しにも A・P が続く）は、これまでどおり、その問題の P', () => {
+    const own = [seg('problem_heading', 0, 10), seg('plan', 10, 20), seg('problem_heading', 20, 30), seg('plan', 30, 40)];
+    expect(sharedPlanSegments(own)).toEqual([]);
+    expect(problemNotes([m({ start: 21, end: 24 })], own).map((x) => [x.label, x.start])).toEqual([['plan', 30]]);
+  });
+
+  test('見出しが1つの記載・ほかの記載の区切りは、記載全体の P にしない', () => {
+    expect(sharedPlanSegments([seg('problem_heading', 0, 10), seg('plan', 10, 20)])).toEqual([]);
+    expect(sharedPlanSegments([...segments.map((g) => ({ ...g, sourceId: 's2' })), seg('plan', 0, 10, 's3')]).map((g) => g.sourceId)).toEqual(['s2']);
+  });
+});
+
+describe('一覧の形の A（1つの区切りに別の問題が並ぶ）', () => {
+  const seg = (label: string, start: number, end: number, sourceId = 's1') => ({ sourceId, label: label as never, start, end });
+  // 「A)\n#1 ショック\n#2 急性腎障害\n#3 低K血症」の1つの A の区切り（0〜60）
+  const segments = [seg('assessment', 0, 60), seg('other', 60, 80)];
+  const a1 = m({ threadId: 'T1', start: 3, end: 10 });
+  const a2 = m({ threadId: 'T2', start: 20, end: 26 });
+  const a3 = m({ threadId: 'T3', start: 40, end: 45 });
+  test('ほかの問題の記載を渡すと、その問題の名前から、次の別の問題の名前の手前まで', () => {
+    const all = [a1, a2, a3];
+    expect(problemNotes([a1], segments, all).map((x) => [x.start, x.end])).toEqual([[3, 20]]);
+    expect(problemNotes([a2], segments, all).map((x) => [x.start, x.end])).toEqual([[20, 40]]);
+    expect(problemNotes([a3], segments, all).map((x) => [x.start, x.end])).toEqual([[40, 60]]);
+  });
+  test('渡さなければ・ほかの問題がなければ、これまでどおり区切り全体', () => {
+    expect(problemNotes([a1], segments).map((x) => [x.start, x.end])).toEqual([[0, 60]]);
+    expect(problemNotes([a1], segments, [a1]).map((x) => [x.start, x.end])).toEqual([[0, 60]]);
   });
 });
 

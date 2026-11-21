@@ -17,12 +17,12 @@ const ANSWERS: Record<string, OrganizeAnswer> = {
   [D1]: {
     ...EMPTY_ORGANIZE,
     segments: [
-      { label: 'problem_heading', start: '#1 発熱' },
-      { label: 'subjective', start: 'S) 悪寒' },
-      { label: 'assessment', start: 'A) 感染源' },
-      { label: 'plan', start: 'P) 血液' },
-      { label: 'problem_heading', start: '#2 低K血症' },
-      { label: 'assessment', start: 'A) 経口' },
+      { label: 'problem_heading', start: '#1 発熱', when: null },
+      { label: 'subjective', start: 'S) 悪寒', when: null },
+      { label: 'assessment', start: 'A) 感染源', when: null },
+      { label: 'plan', start: 'P) 血液', when: null },
+      { label: 'problem_heading', start: '#2 低K血症', when: null },
+      { label: 'assessment', start: 'A) 経口', when: null },
     ],
     problems: [
       { name: '#1 発熱', status: 'problem', activity: null },
@@ -32,11 +32,11 @@ const ANSWERS: Record<string, OrganizeAnswer> = {
   [D2]: {
     ...EMPTY_ORGANIZE,
     segments: [
-      { label: 'problem_heading', start: '#1 市中肺炎' },
-      { label: 'subjective', start: 'S) 咳嗽' },
-      { label: 'assessment', start: 'A) 抗菌薬に' },
-      { label: 'plan', start: 'P) 抗菌薬を' },
-      { label: 'problem_heading', start: '#2 低K血症 解決' },
+      { label: 'problem_heading', start: '#1 市中肺炎', when: null },
+      { label: 'subjective', start: 'S) 咳嗽', when: null },
+      { label: 'assessment', start: 'A) 抗菌薬に', when: null },
+      { label: 'plan', start: 'P) 抗菌薬を', when: null },
+      { label: 'problem_heading', start: '#2 低K血症 解決', when: null },
     ],
     problems: [
       { name: '#1 市中肺炎', status: 'diagnosis', activity: null },
@@ -49,19 +49,37 @@ const D4 = '#1 市中肺炎\nO) CRP 6.8 WBC 10.1\nA) 改善傾向\nP) セフト�
 ANSWERS[D4] = {
   ...EMPTY_ORGANIZE,
   segments: [
-    { label: 'problem_heading', start: '#1 市中肺炎' },
-    { label: 'objective', start: 'O) CRP' },
-    { label: 'assessment', start: 'A) 改善' },
-    { label: 'plan', start: 'P) セフ' },
-    { label: 'problem_heading', start: '#2 低Na血症' },
-    { label: 'assessment', start: 'A) 経過観察' },
+    { label: 'problem_heading', start: '#1 市中肺炎', when: null },
+    { label: 'objective', start: 'O) CRP', when: null },
+    { label: 'assessment', start: 'A) 改善', when: null },
+    { label: 'plan', start: 'P) セフ', when: null },
+    { label: 'problem_heading', start: '#2 低Na血症', when: null },
+    { label: 'assessment', start: 'A) 経過観察', when: null },
   ],
   problems: [
     { name: '#1 市中肺炎', status: 'diagnosis', activity: null },
     { name: '#2 低Na血症', status: 'problem', activity: null },
   ],
   medications: [{ name: 'セフトリアキソン', dose: '2g', action: 'continue', when: null }],
-  measurements: [{ quote: 'CRP 6.8 WBC 10.1', when: null }, { quote: 'Na 132', when: null }],
+  measurements: [{ quote: 'CRP 6.8 WBC 10.1', when: null, specimen: null }, { quote: 'Na 132', when: null, specimen: null }],
+};
+
+// 問題ごとの段落のあとに、全体で1つの P が続く記載（記載全体の P）と、MAP・JCS・酸素の書かれたバイタル
+const D5 = 'A)\n#1 ショック：輸液で改善\n#2 急性腎障害：乏尿が続く\nP) 輸液は少量ずつ。腎臓内科に相談\n12:00 BP 96/54（MAP 65）、JCS 3、鼻カニュラ 2 L/min';
+ANSWERS[D5] = {
+  ...EMPTY_ORGANIZE,
+  segments: [
+    { label: 'assessment', start: 'A)', when: null },
+    { label: 'problem_heading', start: '#1 ショック', when: null },
+    { label: 'problem_heading', start: '#2 急性腎障害', when: null },
+    { label: 'plan', start: 'P) 輸液', when: null },
+    { label: 'objective', start: '12:00 BP', when: null },
+  ],
+  problems: [
+    { name: '#1 ショック', status: 'problem', activity: null },
+    { name: '#2 急性腎障害', status: 'problem', activity: null },
+  ],
+  measurements: [{ quote: 'BP 96/54（MAP 65）、JCS 3、鼻カニュラ 2 L/min', when: '12:00', specimen: null }],
 };
 
 /** つなぎの代役：「市中肺炎」を「発熱」の筋につなぐ（つなげる設定のときだけ） */
@@ -221,6 +239,22 @@ describe('いまの状態（段3b）', () => {
     if (SHOTS !== undefined) await page.screenshot({ path: `${SHOTS}/state-iphone.png`, fullPage: true });
     await page.getByTestId('state-to-problems').click();
     expect(await page.getByTestId('tab-problems').getAttribute('aria-selected')).toBe('true');
+  });
+});
+
+describe('記載全体の P と、経過表の足した段（2026-11-21 の本人の決定）', () => {
+  test('問題ごとの段落のあとの P は、最後の問題のものにせず、「記載全体の方針」として出す。MAP・JCS・酸素流量の段が出る', async () => {
+    const page = await openPatient();
+    await send(page, D5, '2026-11-18');
+    await page.getByTestId('tab-state').click();
+    await page.getByTestId('state').waitFor();
+    expect(await page.getByTestId('state-shared-plan').textContent()).toContain('P) 輸液は少量ずつ');
+    const notes = await page.getByTestId('state-problem').allTextContents();
+    expect(notes.find((t) => t.includes('#2 急性腎障害'))).not.toContain('P) 輸液');
+    await page.getByTestId('tab-overview').click();
+    for (const key of ['map', 'jcs', 'o2']) await page.getByTestId(`panel-${key}`).waitFor();
+    expect(await fits(page)).toBe(true);
+    if (SHOTS !== undefined) await page.screenshot({ path: `${SHOTS}/overview-extra-iphone.png`, fullPage: true });
   });
 });
 

@@ -146,22 +146,29 @@ export function applyOrganization(answer: OrganizeAnswer, ctx: OrganizeContext):
   let kind = ctx.kind;
   if (ctx.kind === 'unsorted' && answer.kind !== null && answer.kind !== 'unsorted') kind = answer.kind;
 
-  // 記載の日時：入れたときに分からなかったときだけ、文から
+  // 記載の日時：入れたときに分からなかったときは、文から。日だけで入れたときは、文に書かれた同じ日の時刻を足す
+  // （2026-11-21 の本人の決定：文に書かれた時刻を、AI が場所を指し、決定論で読んで、自動で記録の時刻にする）
   let at = ctx.at;
   const encounterStart = ctx.encounterStart.slice(0, 10);
-  if (ctx.at === null && answer.when !== null) {
+  if ((ctx.at === null || ctx.at.length === 10) && answer.when !== null) {
     const span = place('when', answer.when);
     if (span !== null) {
-      const parsed = parseWhen(text.slice(span.start, span.end), { refDay: null, encounterStart });
+      const parsed = parseWhen(text.slice(span.start, span.end), { refDay: ctx.at, encounterStart });
       if (parsed === null) count(report, 'when', 'when_unread');
-      else at = parsed;
+      else if (ctx.at === null) at = parsed;
+      // 日だけで入れた記載：同じ日の、時刻のある日時のときだけ使う（本人の選んだ日は変えない）
+      else if (parsed.length > 10 && parsed.slice(0, 10) === ctx.at) at = parsed;
     }
   }
   const whenCtx = { refDay: at === null ? null : at.slice(0, 10), encounterStart };
 
-  /** 事実の日時：引用があれば、それを読む（読めなければ null と数える）。なければ、記載の日時 */
-  const factAt = (category: ReportCategory, when: string | null): string | null => {
-    if (when === null) return at;
+  /** 区切りの時刻（区切りの見出しや最初の行に書かれた時刻。区切りの中の、自分の日時のない事実の日時になる） */
+  const segmentTimes: { start: number; end: number; at: string }[] = [];
+  const atOfSpan = (pos: number): string | null => segmentTimes.find((g) => pos >= g.start && pos < g.end)?.at ?? at;
+
+  /** 事実の日時：引用があれば、それを読む（読めなければ null と数える）。なければ、区切りの時刻、それもなければ記載の日時 */
+  const factAt = (category: ReportCategory, when: string | null, pos: number | null = null): string | null => {
+    if (when === null) return pos === null ? at : atOfSpan(pos);
     const span = place(category, when);
     if (span === null) return null;
     const parsed = parseWhen(text.slice(span.start, span.end), whenCtx);
@@ -176,7 +183,7 @@ export function applyOrganization(answer: OrganizeAnswer, ctx: OrganizeContext):
   };
 
   // 区切り：文の順に、前の区切りより後ろで見つかったものだけ
-  const starts: { label: SegmentLabel; start: number }[] = [];
+  const starts: { label: SegmentLabel; start: number; when: string | null }[] = [];
   let cursor = 0;
   for (const s of capped('segment', answer.segments)) {
     const span = place('segment', s.start, cursor);
@@ -185,14 +192,56 @@ export function applyOrganization(answer: OrganizeAnswer, ctx: OrganizeContext):
       count(report, 'segment', 'order');
       continue;
     }
-    starts.push({ label: s.label, start: span.start });
+    starts.push({ label: s.label, start: span.start, when: s.when });
     cursor = span.start + 1;
   }
   const segments: OrganizedSegment[] = starts.map((s, i) => ({ label: s.label, start: s.start, end: starts[i + 1]?.start ?? text.length }));
+  for (const [i, s] of starts.entries()) {
+    if (s.when === null) continue;
+    const span = place('segment', s.when);
+    if (span === null) continue;
+    const parsed = parseWhen(text.slice(span.start, span.end), whenCtx);
+    if (parsed === null) {
+      count(report, 'segment', 'when_unread');
+      continue;
+    }
+    const seg = segments[i];
+    if (seg !== undefined) segmentTimes.push({ start: seg.start, end: seg.end, at: parsed });
+  }
+
+  /**
+   * 事実の名前の場所。同じ字が文に何度も出るとき、最初の場所に決め打ちしない（問題一覧の「NSAIDs・ARBの関与」の ARB を、
+   * P の「ARB…中止」の事実の場所にしてしまうと、別の問題の記載に書かれた薬になる）。字はどの場所でも同じなので、変わるのは場所だけ：
+   *  1. 手がかり（用量・日時の引用）が同じ行にある場所
+   *  2. その中で、同じ種類の前の項目より後ろの、最初の場所（AI は、文の順に返すことが多い）
+   *  3. なければ、手がかりの合う最初の場所。手がかりがどこにも合わなければ、すべての場所から同じ順で選ぶ
+   */
+  const placeFact = (category: ReportCategory, quote: string, anchors: readonly (string | null)[], cursor: number): Span | null => {
+    const first = place(category, quote);
+    if (first === null) return null;
+    const all: Span[] = [];
+    for (let from = 0; ; ) {
+      const found = locate(text, folded, quote, from);
+      if (found === null) break;
+      all.push(found);
+      from = found.start + 1;
+    }
+    if (all.length === 1) return first;
+    const lineOf = (span: Span): string => {
+      const start = text.lastIndexOf('\n', span.start - 1) + 1;
+      const end = text.indexOf('\n', span.end);
+      return foldSameLength(text.slice(start, end < 0 ? text.length : end));
+    };
+    const hints = anchors.filter((a): a is string => a !== null && a !== '').map((a) => foldSameLength(a));
+    const anchored = hints.length === 0 ? [] : all.filter((span) => hints.some((h) => lineOf(span).includes(h)));
+    const pool = anchored.length > 0 ? anchored : all;
+    return pool.find((span) => span.start >= cursor) ?? pool[0] ?? first;
+  };
 
   const medications: OrganizedMedication[] = [];
+  let medicationCursor = 0;
   for (const m of capped('medication', answer.medications)) {
-    const name = place('medication', m.name);
+    const name = placeFact('medication', m.name, [m.dose, m.when], medicationCursor);
     if (name === null) continue;
     let doseText: string | null = null;
     if (m.dose !== null) {
@@ -200,20 +249,25 @@ export function applyOrganization(answer: OrganizeAnswer, ctx: OrganizeContext):
       if (dose === null) continue;
       doseText = text.slice(dose.start, dose.end);
     }
-    medications.push({ ...name, name: text.slice(name.start, name.end), doseText, action: m.action, at: factAt('medication', m.when) });
+    medicationCursor = name.start;
+    medications.push({ ...name, name: text.slice(name.start, name.end), doseText, action: m.action, at: factAt('medication', m.when, name.start) });
   }
 
   const events: OrganizedEvent[] = [];
+  let eventCursor = 0;
   for (const e of capped('event', answer.events)) {
-    const span = place('event', e.title);
+    const span = placeFact('event', e.title, [e.when], eventCursor);
     if (span === null) continue;
-    events.push({ ...span, kind: e.kind, title: text.slice(span.start, span.end), at: factAt('event', e.when) });
+    eventCursor = span.start;
+    events.push({ ...span, kind: e.kind, title: text.slice(span.start, span.end), at: factAt('event', e.when, span.start) });
   }
 
   const problems: OrganizedProblem[] = [];
+  let problemCursor = 0;
   for (const p of capped('problem', answer.problems)) {
-    const span = place('problem', p.name);
+    const span = placeFact('problem', p.name, [], problemCursor);
     if (span === null) continue;
+    problemCursor = span.start;
     problems.push({ ...span, name: text.slice(span.start, span.end), status: p.status, activity: p.activity, at });
   }
 
@@ -221,7 +275,26 @@ export function applyOrganization(answer: OrganizeAnswer, ctx: OrganizeContext):
   // ほかの文は、AI が指した場所だけを、決定論で読む（「K 3.5 を目標に」のような、測定でない数を、AI が指さないことに頼る）
   const observations: OrganizedObservation[] = [];
   if (READ_VALUES_KINDS.includes(kind)) {
-    for (const row of readLabText(text).rows) observations.push({ row, at, origin: 'parser' });
+    // 文全体を決定論で読む。ただし AI が尿の検査と指した範囲（CD-023）は、その範囲だけを尿の項目の名前で読み直す
+    const urine: Span[] = [];
+    for (const m of capped('measurement', answer.measurements)) {
+      if (m.specimen !== 'urine' || !quoteShapeOk(m.quote)) continue;
+      for (let from = 0; ; ) {
+        const found = locate(text, folded, m.quote, from);
+        if (found === null) break;
+        if (!urine.some((u) => u.start === found.start)) {
+          urine.push(found);
+          break;
+        }
+        from = found.start + 1;
+      }
+    }
+    const inUrine = (row: LabRow): boolean => urine.some((u) => row.start >= u.start && row.end <= u.end);
+    for (const row of readLabText(text).rows) if (!inUrine(row)) observations.push({ row, at: atOfSpan(row.start), origin: 'parser' });
+    for (const u of urine) {
+      for (const row of readLabText(text.slice(u.start, u.end), { specimen: 'urine' }).rows) observations.push({ row: { ...row, start: row.start + u.start, end: row.end + u.start }, at: atOfSpan(u.start), origin: 'parser' });
+    }
+    observations.sort((a, b) => a.row.start - b.row.start);
   } else {
     const used: Span[] = [];
     for (const m of capped('measurement', answer.measurements)) {
@@ -242,10 +315,12 @@ export function applyOrganization(answer: OrganizeAnswer, ctx: OrganizeContext):
       } else count(report, 'measurement', 'bad_quote');
       if (span === null) continue;
       used.push(span);
-      const read = readLabText(text.slice(span.start, span.end));
-      if (read.unread.length > 0) count(report, 'measurement', 'unread');
+      const read = readLabText(text.slice(span.start, span.end), { specimen: m.specimen });
+      // 数えるのは、何も読めなかった引用と、項目の名前は読めたのに値を読めなかった引用だけ。
+      // 「SpO2 96%（室内気）」の「室内気」のような、項目でない語が残っただけの引用は数えない（数が、ほぼすべての記載に付いて、意味をなくすため）
+      if (read.rows.length === 0 || read.unread.some((u) => u.reason !== 'unknown')) count(report, 'measurement', 'unread');
       if (read.rows.length === 0) continue;
-      const rowAt = factAt('measurement', m.when);
+      const rowAt = factAt('measurement', m.when, span.start);
       for (const row of read.rows) observations.push({ row: { ...row, start: row.start + span.start, end: row.end + span.start }, at: rowAt, origin: 'ai' });
     }
   }

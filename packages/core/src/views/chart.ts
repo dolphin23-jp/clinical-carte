@@ -1,6 +1,7 @@
 // グラフのための計算（保存しない。判定しない）。温度板・検査の推移・投薬の時間軸が、同じ時間の軸を使う。
 // 正常範囲・基準・色分けは、ここにない（AGENTS.md の 1）。グラフに置くのは、数で書かれ、不等号のない値だけ。
 // 単位は、書かれた単位がカタログの単位と違う値を、温度板に置かない（換算しない。表には残る）。
+import { compareDateTime } from '../time/datetime.ts';
 import { LAB_NAMES } from '../labs/catalog.gen.ts';
 
 /** グラフの上の位置（ミリ秒。日本の時刻を、時刻帯の変換なしで数にしたもの）。日だけの値は、その日の正午に置き、印を付ける */
@@ -54,7 +55,10 @@ export interface ChartPoint extends ChartTime {
 }
 
 export interface VitalPanel {
-  readonly id: 'bt' | 'hr' | 'bp' | 'rr' | 'spo2';
+  /** 段の種類（色の見分けに使う）。map 以降は、値があるときだけの段 */
+  readonly id: 'bt' | 'hr' | 'bp' | 'rr' | 'spo2' | 'map' | 'o2' | 'jcs' | 'gcs' | 'uo';
+  /** 段ごとに違う鍵（尿量は、書かれた単位ごとに段を分けるため） */
+  readonly key: string;
   readonly name: string;
   readonly unit: string;
   readonly points: readonly ChartPoint[];
@@ -88,7 +92,7 @@ const SINGLE: readonly { id: VitalPanel['id']; name: string; unit: string; item:
   { id: 'spo2', name: 'SpO2', unit: '%', item: 'SpO2' },
 ];
 
-/** 温度板の段（体温・心拍数・血圧・呼吸数・SpO2 の順）。値のない段も返す（空の段として描く） */
+/** 温度板の段（体温・心拍数・血圧・呼吸数・SpO2 の順）。この5つは、値のない段も返す（空の段として描く）。MAP・酸素流量・JCS・GCS・尿量は、値があるときだけ */
 export function vitalPanels(observations: readonly ChartObservation[]): VitalPanel[] {
   const point = (o: ChartObservation & { value: number; at: string }, extra: Partial<ChartPoint> = {}): ChartPoint | null => {
     const time = chartTime(o.at);
@@ -113,9 +117,27 @@ export function vitalPanels(observations: readonly ChartObservation[]): VitalPan
     if (p !== null) bp.push(p);
   }
 
-  const panels: VitalPanel[] = SINGLE.map((s) => ({ id: s.id, name: s.name, unit: s.unit, points: single(s.item) }));
-  panels.splice(2, 0, { id: 'bp', name: '血圧', unit: 'mmHg', points: bp.sort(byTime) });
-  return panels;
+  const panels: VitalPanel[] = SINGLE.map((s) => ({ id: s.id, key: s.id, name: s.name, unit: s.unit, points: single(s.item) }));
+  panels.splice(2, 0, { id: 'bp', key: 'bp', name: '血圧', unit: 'mmHg', points: bp.sort(byTime) });
+
+  // 値があるときだけの段（2026-11-21 の本人の決定）：MAP・酸素流量・JCS・GCS・尿量。判定しない（範囲の帯・色分けなし）
+  const extra = (id: VitalPanel['id'], name: string, unit: string, item: string): VitalPanel => ({ id, key: id, name, unit, points: single(item) });
+  const optional: VitalPanel[] = [extra('map', 'MAP', 'mmHg', 'MAP'), extra('o2', '酸素流量', 'L/分', '酸素流量'), extra('jcs', 'JCS', '', 'JCS'), extra('gcs', 'GCS', '点', 'GCS')];
+  // 尿量：書かれた単位ごとに段を分ける（合計・時間あたり・体重あたりを、同じ目盛りに混ぜない。換算しない）
+  const urine = new Map<string, { unit: string; points: ChartPoint[] }>();
+  for (const o of observations) {
+    if (o.name !== '尿量' || !plottable(o)) continue;
+    const p = point(o);
+    if (p === null) continue;
+    const k = o.unit === null ? '' : unitKey(o.unit);
+    const group = urine.get(k) ?? { unit: o.unit ?? '', points: [] };
+    group.points.push(p);
+    urine.set(k, group);
+  }
+  for (const [k, g] of urine) optional.push({ id: 'uo', key: `uo:${k}`, name: g.unit === '' ? '尿量（単位の記載なし）' : '尿量', unit: g.unit, points: g.points.sort(byTime) });
+  // MAP は血圧の下、酸素流量は SpO2 の下、意識と尿量は最後
+  const order: VitalPanel['id'][] = ['bt', 'hr', 'bp', 'map', 'rr', 'spo2', 'o2', 'jcs', 'gcs', 'uo'];
+  return [...panels, ...optional.filter((p) => p.points.length > 0)].sort((a, b) => order.indexOf(a.id) - order.indexOf(b.id));
 }
 
 export interface LabTrend {
@@ -150,7 +172,17 @@ export function labTrends(observations: readonly ChartObservation[]): LabTrend[]
     }
     group.points.push({ ...time, at: o.at, value: o.value, text: o.valueText });
   }
-  return [...groups.entries()].map(([key, g]) => ({ key, name: g.name, unit: g.unit, points: g.points.sort(byTime), hidden: g.hidden }));
+  // 同じ項目の推移（単位の違うもの・単位の書かれていないもの）は、隣どうしに並べる。単位の書かれていない値を、書かれた単位の推移に入れない
+  // （「WBC 12.3」と「WBC 12300 /μL」のように、単位がないことは同じ目盛りであることを意味しない。桁を当てない・換算しない）
+  const entries = [...groups.entries()];
+  const firstIndex = new Map<string, number>();
+  entries.forEach(([, g], i) => {
+    if (!firstIndex.has(g.name)) firstIndex.set(g.name, i);
+  });
+  return entries
+    .map(([key, g], i) => ({ key, g, i }))
+    .sort((a, b) => (firstIndex.get(a.g.name) ?? 0) - (firstIndex.get(b.g.name) ?? 0) || a.i - b.i)
+    .map(({ key, g }) => ({ key, name: g.name, unit: g.unit, points: g.points.sort(byTime), hidden: g.hidden }));
 }
 
 /** 時間の範囲：値の最初から最後まで。受診の開始・終わりも含める。値が1つ・同じ時刻だけのときは、前後に半日ずつ広げる */
@@ -221,8 +253,19 @@ export function niceTicks(min: number, max: number, count = 4): { min: number; m
 }
 
 /** いちばん新しい値（日時のある値のうち） */
+/**
+ * いちばん新しい値。日時の比べ方は、どの画面でも同じ（compareDateTime：同じ日なら、時刻のない値〔日だけ〕は、時刻のある値より前）。
+ * グラフの上では日だけの値を日の真ん中に置くが、「最新」はその位置で決めない（2026-11-21：画面ごとに「最新」が食い違ったため）
+ */
 export function latestPoint(points: readonly ChartPoint[]): ChartPoint | null {
-  return points.length === 0 ? null : (points[points.length - 1] ?? null);
+  let best: ChartPoint | null = null;
+  for (const p of points) if (best === null || compareDateTime(p.at, best.at) >= 0) best = p;
+  return best;
+}
+
+/** 「最新」が時刻のある値で、同じ日に時刻のない（日だけの）値もある：どちらが新しいかは、記録から分からない */
+export function untimedSameDay(points: readonly ChartPoint[], latest: ChartPoint | null): boolean {
+  return latest !== null && !latest.dateOnly && points.some((p) => p.dateOnly && p.at === latest.at.slice(0, 10));
 }
 
 export interface MedicationSpan {

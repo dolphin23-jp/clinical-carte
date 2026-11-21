@@ -589,6 +589,12 @@ export async function getEncounter(db: Db, id: string): Promise<Encounter | null
   return toEncounter(await db.prepare('SELECT id, patient_id, kind, started, ended FROM encounters WHERE id = ?').bind(id).first());
 }
 
+/** 受診の種類を変える（開始・終わりの日時は、そのまま） */
+export async function setEncounterKind(db: Db, id: string, kind: EncounterKind): Promise<number> {
+  const r = await db.prepare('UPDATE encounters SET kind = ? WHERE id = ?').bind(kind, id).run();
+  return r.meta?.changes ?? 0;
+}
+
 export async function setEncounterEnd(db: Db, id: string, end: string | null): Promise<number> {
   const r = await db.prepare('UPDATE encounters SET ended = ? WHERE id = ?').bind(end, id).run();
   return r.meta?.changes ?? 0;

@@ -1,7 +1,7 @@
 import fc from 'fast-check';
 import { describe, expect, test } from 'vitest';
 
-import { isDateTime, parseWhen, type WhenContext } from '../src/index.ts';
+import { isDateTime, parseWhen, type WhenContext, whenCandidates } from '../src/index.ts';
 
 const ctx: WhenContext = { refDay: '2026-11-20', encounterStart: '2026-11-18T22:10' };
 
@@ -26,6 +26,13 @@ describe('日時の言い方を、決まった規則で読む', () => {
     ['入院3日目', '2026-11-20'],
     ['第1病日', '2026-11-18'],
     ['5病日目', '2026-11-22'],
+    ['翌日11:00', '2026-11-21T11:00'],
+    ['3週間前の外来', '2026-10-30'],
+    ['2週前', '2026-11-06'],
+    ['翌朝', '2026-11-21'],
+    ['前日 22:00', '2026-11-19T22:00'],
+    // 「6時間後」の「6時」は時刻ではない。後ろに書かれた時刻を読む
+    ['6時間後（17:00ごろ）', '2026-11-20T17:00'],
   ])('%s → %s', (quote, expected) => {
     expect(parseWhen(quote, ctx)).toBe(expected);
   });
@@ -36,7 +43,7 @@ describe('日時の言い方を、決まった規則で読む', () => {
   });
 
   test('読めないものは null（推測で埋めない）', () => {
-    for (const quote of ['', '先週', '数日前', '入院後', '2026-02-30', '25:00', '13/40', 'R8.11.20', '午後']) {
+    for (const quote of ['', '先週', '数日前', '入院後', '2026-02-30', '25:00', '13/40', 'R8.11.20', '午後', '6時間後', '2026年6月', '3か月前', '3ヶ月前']) {
       expect(parseWhen(quote, ctx), quote).toBeNull();
     }
   });
@@ -54,5 +61,22 @@ describe('日時の言い方を、決まった規則で読む', () => {
         expect(r === null || isDateTime(r)).toBe(true);
       }),
     );
+  });
+});
+
+describe('文の中の日時の候補（入れる欄で選ぶ手がかり）', () => {
+  test('書かれた順に、重なりなく、3つまで', () => {
+    const text = ['2026-11-21 10:50 救急', '来院 2026-11-21 10:35', '11/18 から発熱。', '【初期評価 10:38】', '10:50 再掲'].join('\n');
+    expect(whenCandidates(text, ctx)).toEqual(['2026-11-21T10:50', '2026-11-21T10:35', '2026-11-18']);
+    expect(whenCandidates('10:55 導尿。11:00 輸液。', ctx, 5)).toEqual(['2026-11-20T10:55', '2026-11-20T11:00']);
+  });
+
+  test('日時でない「数/数」「数:数」を候補にしない（血圧・瞳孔径・比・範囲）', () => {
+    expect(whenCandidates('BP 84/40 瞳孔3/3 mm 比 1:2 RBC 10/HPF', ctx)).toEqual([]);
+  });
+
+  test('書かれていなければ、空（推測で作らない）', () => {
+    expect(whenCandidates('解熱。食事摂取良好。', ctx)).toEqual([]);
+    expect(whenCandidates('11/19 解熱', { refDay: null, encounterStart: null })).toEqual([]);
   });
 });

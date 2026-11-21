@@ -1,5 +1,5 @@
 // いちばん新しいバイタル（患者の画面の上）。数と、いつの値かを出すだけ（判定しない・色分けしない）。
-import { latestPoint, type VitalPanel } from '@clinical-carte/core';
+import { latestPoint, untimedSameDay, type VitalPanel } from '@clinical-carte/core';
 
 import { shortWhen } from './charts/format.ts';
 
@@ -10,7 +10,7 @@ export function LatestStrip({ panels }: { panels: readonly VitalPanel[] }) {
     <div className="latest" data-testid="latest">
       {items.map(({ p, last }) =>
         last === null ? null : (
-          <div key={p.id} className="stat" data-testid="latest-item">
+          <div key={p.key} className="stat" data-testid="latest-item">
             <span className="stat-label">
               <span className={`stat-key swatch-${p.id}`} aria-hidden="true" />
               {p.name}
@@ -18,7 +18,10 @@ export function LatestStrip({ panels }: { panels: readonly VitalPanel[] }) {
             <span className="stat-value">
               <span className="stat-num">{last.text}</span> <span className="stat-unit">{p.unit}</span>
             </span>
-            <span className="stat-when">{shortWhen(last.at, last)}</span>
+            <span className="stat-when">
+              {shortWhen(last.at, last)}
+              {untimedSameDay(p.points, last) && '・同じ日に時刻のない値あり'}
+            </span>
           </div>
         ),
       )}

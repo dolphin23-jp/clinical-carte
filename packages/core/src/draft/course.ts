@@ -73,7 +73,7 @@ export function courseMaterial(input: MaterialInput): DraftMaterial {
     if (mentions.length === 0) continue;
     const ref = `T${String(problems.length + 1)}`;
     problems.push({ ref, threadId: t.id, name: t.name, status: t.status });
-    for (const n of problemNotes(mentions, input.segments)) {
+    for (const n of problemNotes(mentions, input.segments, input.threads.flatMap((x) => x.mentions))) {
       const text = own.get(n.sourceId)?.text.slice(n.start, n.end).trim() ?? '';
       if (text === '') continue;
       pool.push({ problem: ref, sourceId: n.sourceId, at: n.at, day: dayOf(n.at), from: SEGMENT_LABEL_NAMES[n.label], text: text.slice(0, DRAFT_QUOTE_MAX) });

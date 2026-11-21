@@ -13,15 +13,15 @@ const NOTE = '#1 市中肺炎\nO) CRP 6.8\nA) 抗菌薬に反応\nP) セフト�
 const ANSWER: OrganizeAnswer = {
   ...EMPTY_ORGANIZE,
   segments: [
-    { label: 'problem_heading', start: '#1 市中肺炎' },
-    { label: 'objective', start: 'O) CRP' },
-    { label: 'assessment', start: 'A) 抗菌薬' },
-    { label: 'plan', start: 'P) セフ' },
+    { label: 'problem_heading', start: '#1 市中肺炎', when: null },
+    { label: 'objective', start: 'O) CRP', when: null },
+    { label: 'assessment', start: 'A) 抗菌薬', when: null },
+    { label: 'plan', start: 'P) セフ', when: null },
   ],
   problems: [{ name: '#1 市中肺炎', status: 'diagnosis', activity: null }],
   medications: [{ name: 'セフトリアキソン', dose: '2g', action: 'continue', when: null }],
   events: [{ kind: 'test', title: '胸部X線を撮影', when: null }],
-  measurements: [{ quote: 'CRP 6.8', when: null }],
+  measurements: [{ quote: 'CRP 6.8', when: null, specimen: null }],
 };
 const DRAFT: DraftAnswer = {
   sections: [

@@ -84,6 +84,21 @@ describe('患者と受診', () => {
     expect((await w.call('PATCH', `/api/encounters/${encounterId}`, { cookie, body: { end: null } })).status).toBe(200);
   });
 
+  test('受診の種類を変える（外来 → 入院）。開始・終わりの日時は変えない。終わりと種類を一度に送る・知らない種類は 400', async () => {
+    const { w, cookie, patientId } = await setup();
+    const added = (await (await w.call('POST', `/api/patients/${patientId}/encounters`, { cookie, body: { kind: 'outpatient', start: '2026-12-10T10:35' } })).json()) as { encounter: { id: string } };
+    const id = added.encounter.id;
+    const r = await w.call('PATCH', `/api/encounters/${id}`, { cookie, body: { kind: 'inpatient' } });
+    expect(r.status).toBe(200);
+    expect(((await r.json()) as { encounter: { kind: string; start: string; end: string | null } }).encounter).toMatchObject({ kind: 'inpatient', start: '2026-12-10T10:35', end: null });
+    const record = (await (await w.call('GET', `/api/patients/${patientId}`, { cookie })).json()) as { encounters: { id: string; kind: string; start: string }[] };
+    expect(record.encounters.find((e) => e.id === id)).toMatchObject({ kind: 'inpatient', start: '2026-12-10T10:35' });
+    for (const body of [{ kind: 'ward' }, { kind: 'inpatient', end: null }, {}]) {
+      expect((await w.call('PATCH', `/api/encounters/${id}`, { cookie, body })).status, JSON.stringify(body)).toBe(400);
+    }
+    expect((await w.call('PATCH', `/api/encounters/01JD0000000000000000000000`, { cookie, body: { kind: 'er' } })).status).toBe(404);
+  });
+
   test('一覧は、いちばん新しい受診の開始が新しい順', async () => {
     const { w, cookie } = await setup();
     await w.call('POST', '/api/patients', { cookie, body: { ...PATIENT, age: 30, encounter: { kind: 'er', start: '2026-11-20T03:00' } } });

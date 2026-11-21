@@ -235,4 +235,33 @@ describe('入れやすさ', () => {
     expect(await fits(page)).toBe(true);
     if (SHOTS !== undefined) await page.screenshot({ path: `${SHOTS}/composer-iphone.png`, fullPage: true });
   });
+
+  test('日時：はじめと保存のあとは時刻なし。文に書かれた日時をチップで選べる。℃ と括弧つきの血圧も読む', async () => {
+    const page = await openPatient();
+    await page.getByTestId('fab-compose').click();
+    expect(await page.getByTestId('at-time').inputValue()).toBe(''); // 画面を開いた時刻を、既定にしない
+    await page.getByTestId('when-day-only').waitFor();
+    await page.getByTestId('kind-chip-vital').click();
+    await page.getByTestId('text').fill('【初期評価 2026-11-18 10:38】\nBT 39.0℃、BP 84/40（MAP 約55）');
+    expect(await page.getByTestId('when-candidates').textContent()).toContain('2026-11-18 10:38');
+    if (SHOTS !== undefined) await page.getByTestId('composer').screenshot({ path: `${SHOTS}/composer-when-iphone.png` });
+    await page.getByTestId('when-candidate-0').click();
+    expect([await page.getByTestId('at-day').inputValue(), await page.getByTestId('at-time').inputValue()]).toEqual(['2026-11-18', '10:38']);
+    expect(await page.getByTestId('when-day-only').count()).toBe(0);
+    await sendAndWait(page);
+    expect(await page.getByTestId('composer-done').textContent()).toContain('読んだ値 3 件');
+    // 保存のあと：時刻は空に戻る（前の記載の時刻を、次の記載に黙って使わない）。日は残る
+    expect([await page.getByTestId('at-day').inputValue(), await page.getByTestId('at-time').inputValue()]).toEqual(['2026-11-18', '']);
+
+    // 文に時刻が書かれていて、時刻を空のまま送るときは、確かめずに送る。整理のときに AI が文の時刻を読み取る、と案内する
+    await page.getByTestId('text').fill('【再評価 2026-11-18 11:50】\nBT 38.4');
+    expect(await page.getByTestId('when-day-only').textContent()).toContain('11:50');
+    if (SHOTS !== undefined) await page.getByTestId('composer').screenshot({ path: `${SHOTS}/composer-auto-time-iphone.png` });
+    await sendAndWait(page);
+    // 時刻の書かれていない文は、日だけで入ると案内する
+    await page.getByTestId('text').fill('BT 37.9');
+    expect(await page.getByTestId('when-day-only').textContent()).toContain('時刻なし（日だけ）で入れます');
+    await sendAndWait(page);
+    expect(problems).toEqual([]);
+  });
 });

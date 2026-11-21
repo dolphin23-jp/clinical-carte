@@ -11,6 +11,7 @@ import { handle, type HandlerDeps } from '../src/handler.ts';
 import { MIGRATIONS as MIGRATION_LIST } from '../src/migrations.gen.ts';
 import { type Runtime, webRuntime } from '../src/runtime.ts';
 import type { DiscussResult, DrafterResult, LinkerResult, Organizer, OrganizerResult, ProposerResult, ResearchResult } from '../src/organizer.ts';
+import type { OrganizePromptChoice } from '../src/prompt.ts';
 import type { Selector, SelectorResult } from '../src/selector.ts';
 
 export const MIGRATIONS = resolve(import.meta.dirname, '..', 'migrations');
@@ -163,6 +164,8 @@ export const EMPTY_ORGANIZE: OrganizeAnswer = { kind: null, when: null, segments
 export interface FakeOrganizer extends Organizer {
   /** 整理に渡された文（何が AI に届くかを、試験が確かめる） */
   readonly seen: string[];
+  /** 整理の指示の選び先（本番は、いつも current。評価だけが previous を選べる） */
+  readonly prompts: OrganizePromptChoice[];
   /** つなぎに渡された資料（JSON） */
   readonly linked: string[];
   /** 草案に渡された資料（JSON） */
@@ -181,7 +184,7 @@ export interface FakeApAnswers {
 
 /** AI の整理の代役：文を受け取り、決めた答えを返す（既定は、何も見つけない）。つなぎは、既定では何もつながない */
 export function fakeOrganizer(
-  answer: (text: string) => OrganizerResult = () => ({ ok: true, answer: EMPTY_ORGANIZE }),
+  answer: (text: string, prompt: OrganizePromptChoice) => OrganizerResult = () => ({ ok: true, answer: EMPTY_ORGANIZE }),
   link: (message: string) => LinkerResult = () => ({ ok: true, answer: { links: [] } }),
   draft: (message: string) => DrafterResult = () => ({ ok: true, answer: { sections: [] } }),
   ap: FakeApAnswers = {},
@@ -190,10 +193,12 @@ export function fakeOrganizer(
   const proposed: string[] = [];
   const discussed: string[] = [];
   const seen: string[] = [];
+  const prompts: OrganizePromptChoice[] = [];
   const linked: string[] = [];
   const drafted: string[] = [];
   return {
     seen,
+    prompts,
     linked,
     drafted,
     researched,
@@ -211,9 +216,10 @@ export function fakeOrganizer(
       discussed.push(message);
       return Promise.resolve(ap.discuss?.(message) ?? { ok: true, answer: { paragraphs: [] } });
     },
-    organize: (text) => {
+    organize: (text, prompt = 'current') => {
       seen.push(text);
-      return Promise.resolve(answer(text));
+      prompts.push(prompt);
+      return Promise.resolve(answer(text, prompt));
     },
     link: (message) => {
       linked.push(message);

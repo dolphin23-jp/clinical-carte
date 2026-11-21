@@ -98,3 +98,39 @@ export interface EventFact {
 export function eventTimeline(facts: readonly EventFact[]): EventFact[] {
   return [...facts].sort((a, b) => compareDateTime(a.at, b.at) || a.id.localeCompare(b.id));
 }
+
+const dayOf = (at: string | null): string | null => (at === null ? null : at.slice(0, 10));
+const untimed = (at: string | null): boolean => at !== null && at.length === 10;
+
+/**
+ * 同じ日の二重をたたむ（見せ方だけ。消さない・事実を変えない。2026-11-21 の本人の決定）：
+ * 時刻のない（日だけの）投薬の記載で、同じ薬・同じ動きの、同じ日の時刻つきの記載があるもの。
+ * 方針（P）の行と、経過の行（実施の記録）が別の記載に書かれたとき、同じ投与が2つ並ばないように。
+ */
+export function foldedMedicationIds(facts: readonly MedicationFact[]): Set<string> {
+  const out = new Set<string>();
+  for (const f of facts) {
+    if (!untimed(f.at) || f.action === null) continue;
+    const twin = facts.some((g) => g !== f && !untimed(g.at) && dayOf(g.at) === f.at && g.action === f.action && nameKey(g.name) === nameKey(f.name));
+    if (twin) out.add(f.id);
+  }
+  return out;
+}
+
+/** できごとの題を比べる形（そろえて、記号・空白を除く） */
+const titleKey = (t: string): string => nameKey(t).replace(/[\p{P}\p{S}]/gu, '');
+/** 頭の字が同じとみなす長さ（「血液培養2セット：提出済み」と「血液培養2セット・尿培養（提出済み、10:45）」） */
+export const EVENT_FOLD_PREFIX = 6;
+
+/** 時刻のない（日だけの）できごとで、同じ種類・題の頭の字が同じ、同じ日の時刻つきのできごとがあるもの（見せ方だけ） */
+export function foldedEventIds(facts: readonly EventFact[]): Set<string> {
+  const out = new Set<string>();
+  for (const f of facts) {
+    if (!untimed(f.at)) continue;
+    const head = titleKey(f.title).slice(0, EVENT_FOLD_PREFIX);
+    if (head.length < EVENT_FOLD_PREFIX) continue;
+    const twin = facts.some((g) => g !== f && !untimed(g.at) && dayOf(g.at) === f.at && g.kind === f.kind && titleKey(g.title).startsWith(head));
+    if (twin) out.add(f.id);
+  }
+  return out;
+}

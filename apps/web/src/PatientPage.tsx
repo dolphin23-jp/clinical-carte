@@ -4,6 +4,8 @@ import {
   ENCOUNTER_KIND_LABELS,
   ENCOUNTER_KINDS,
   type EncounterKind,
+  foldedEventIds,
+  foldedMedicationIds,
   headline,
   hospitalDay,
   labTrends,
@@ -43,6 +45,7 @@ import {
   type PatientRecord,
   type Segment,
   setEncounterEnd,
+  setEncounterKind,
   type Source,
   type UserEdit,
 } from './net/api.ts';
@@ -87,7 +90,7 @@ export function PatientPage({ patientId, onBack, onLeft }: { patientId: string; 
   const [tab, setTab] = useState<Tab>('state');
   const [kindFilter, setKindFilter] = useState<SourceKind | 'all'>('all');
   const composerRef = useRef<HTMLElement>(null);
-  const [panel, setPanel] = useState<'none' | 'encounter' | 'end' | 'delete'>('none');
+  const [panel, setPanel] = useState<'none' | 'encounter' | 'end' | 'kind' | 'delete'>('none');
 
   const load = useCallback(() => {
     void getRecord(patientId).then((result) => {
@@ -137,6 +140,11 @@ export function PatientPage({ patientId, onBack, onLeft }: { patientId: string; 
   const shownSources = kindFilter === 'all' || !kindsHere.includes(kindFilter) ? sources : sources.filter((s) => s.kind === kindFilter);
 
   const panels = vitalPanels(observations);
+  // 同じ日の二重（時刻のない方針の行と、時刻つきの実施の行）は、経過表・いまでは、時刻つきのほうだけを出す（消さない。投薬・できごとのタブで見られる）
+  const foldedMeds = foldedMedicationIds(medications);
+  const foldedEvents = foldedEventIds(events);
+  const shownMeds = medications.filter((m) => !foldedMeds.has(m.id));
+  const shownEvents = events.filter((e) => !foldedEvents.has(e.id));
   const toComposer = () => {
     composerRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
   };
@@ -191,6 +199,18 @@ export function PatientPage({ patientId, onBack, onLeft }: { patientId: string; 
                 {current.end === null ? '終わり（退院・帰宅）' : '終わりを直す'}
               </button>
             )}
+            {current !== null && (
+              <button
+                className="button small"
+                type="button"
+                onClick={() => {
+                  setPanel(panel === 'kind' ? 'none' : 'kind');
+                }}
+                data-testid="set-kind"
+              >
+                {current.kind === 'inpatient' ? '種類を変える' : '入院にする・種類を変える'}
+              </button>
+            )}
           </div>
         </div>
         {panel === 'encounter' && (
@@ -199,6 +219,16 @@ export function PatientPage({ patientId, onBack, onLeft }: { patientId: string; 
             onDone={(e) => {
               setPanel('none');
               setEncounterId(e.id);
+              load();
+            }}
+            onLeft={onLeft}
+          />
+        )}
+        {panel === 'kind' && current !== null && (
+          <KindForm
+            encounter={current}
+            onDone={() => {
+              setPanel('none');
               load();
             }}
             onLeft={onLeft}
@@ -253,8 +283,8 @@ export function PatientPage({ patientId, onBack, onLeft }: { patientId: string; 
               segments: record.segments,
               threads: record.problemThreads,
               mentions: record.problems,
-              medications,
-              events,
+              medications: shownMeds,
+              events: shownEvents,
               observations,
             })}
             sources={record.sources}
@@ -264,7 +294,7 @@ export function PatientPage({ patientId, onBack, onLeft }: { patientId: string; 
           />
         )}
         {tab === 'overview' && current !== null && (
-          <Timeline panels={panels} medications={medicationTimeline(medications)} events={events} encounterStart={current.start} encounterEnd={current.end} inpatient={current.kind === 'inpatient'} />
+          <Timeline panels={panels} medications={medicationTimeline(shownMeds)} events={shownEvents} encounterStart={current.start} encounterEnd={current.end} inpatient={current.kind === 'inpatient'} />
         )}
         {tab === 'values' && (
           <>
@@ -594,6 +624,66 @@ function EncounterForm({ patientId, onDone, onLeft }: { patientId: string; onDon
       <div className="actions">
         <button className="button primary" type="submit" disabled={busy || day === ''} data-testid="create-encounter">
           足す
+        </button>
+      </div>
+    </form>
+  );
+}
+
+/** 受診の種類を変える（救急・外来で受けて、同じ受診のまま入院になったとき）。開始・終わりの日時は変えない */
+function KindForm({ encounter, onDone, onLeft }: { encounter: Encounter; onDone: () => void; onLeft: () => void }) {
+  const [kind, setKind] = useState<EncounterKind>('inpatient');
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState<string | null>(null);
+  const start = encounter.start.slice(0, 10);
+  return (
+    <form
+      className="form"
+      onSubmit={(event) => {
+        event.preventDefault();
+        if (busy || kind === encounter.kind) return;
+        setBusy(true);
+        void setEncounterKind(encounter.id, kind).then((result) => {
+          setBusy(false);
+          if (result.ok) onDone();
+          else if (result.error === 'unregistered') onLeft();
+          else setMessage(errorMessage(result.error));
+        });
+      }}
+      data-testid="kind-form"
+    >
+      <fieldset className="field">
+        <legend className="field-label">この受診の種類（いま：{ENCOUNTER_KIND_LABELS[encounter.kind]}）</legend>
+        <div className="chips" role="radiogroup" aria-label="受診の種類">
+          {ENCOUNTER_KINDS.map((k) => (
+            <button
+              key={k}
+              type="button"
+              role="radio"
+              aria-checked={kind === k}
+              className={kind === k ? 'chip on' : 'chip'}
+              onClick={() => {
+                setKind(k);
+              }}
+              disabled={busy}
+              data-testid={`kind-${k}`}
+            >
+              {ENCOUNTER_KIND_LABELS[k]}
+            </button>
+          ))}
+        </div>
+      </fieldset>
+      <p className="note">
+        開始の日時（{showDateTime(encounter.start)}）は変えません。入院にすると、開始の日（{start}）が1病日になります。救急・外来の記録は、そのまま同じ受診に残ります。
+      </p>
+      {message !== null && (
+        <p className="alert" role="alert">
+          {message}
+        </p>
+      )}
+      <div className="actions">
+        <button className="button primary" type="submit" disabled={busy || kind === encounter.kind} data-testid="save-kind">
+          {ENCOUNTER_KIND_LABELS[kind]}にする
         </button>
       </div>
     </form>

@@ -45,8 +45,11 @@ export type NewPatient = z.infer<typeof NewPatient>;
 export const PatientPatch = z.strictObject({ age: Age, ageOn: Day, sex: z.enum(SEXES) });
 export type PatientPatch = z.infer<typeof PatientPatch>;
 
-/** 受診の終わり（退院・帰宅の日時）。null で、終わりを消す */
-export const EncounterPatch = z.strictObject({ end: DateTime.nullable() });
+/**
+ * 受診を直す：終わり（退院・帰宅の日時。null で消す）か、種類（救急・外来・入院）のどちらか1つ。
+ * 種類を変えても、開始の日時は変えない（救急から同じ日に入院したとき、救急の日が1病日。2026-11-21 の本人の決定）
+ */
+export const EncounterPatch = z.union([z.strictObject({ end: DateTime.nullable() }), z.strictObject({ kind: z.enum(ENCOUNTER_KINDS) })]);
 export type EncounterPatch = z.infer<typeof EncounterPatch>;
 
 // --- 取り込んだ文（docs/04 の 3.3）
