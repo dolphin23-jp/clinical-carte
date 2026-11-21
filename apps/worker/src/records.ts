@@ -523,6 +523,31 @@ export interface PatientRecord {
   readonly userEdits: UserEdit[];
   /** A/P（段5。本人が残した・採用した、決まったことだけ） */
   readonly apNotes: ApNote[];
+  /** 単位の「同じ目盛り」（CA-051。全患者に共通。外したものは入れない） */
+  readonly scaleLinks: ScaleLinkRow[];
+}
+
+export interface ScaleLinkRow {
+  readonly id: string;
+  readonly name: string;
+  readonly unitA: string;
+  readonly unitB: string;
+  readonly createdAt: string;
+}
+
+const toScaleLink = (row: Row | null): ScaleLinkRow | null => {
+  const id = text(row, 'id');
+  const name = text(row, 'name');
+  const unitA = text(row, 'unit_a');
+  const unitB = text(row, 'unit_b');
+  const createdAt = text(row, 'created_at');
+  return id === null || name === null || unitA === null || unitB === null || createdAt === null ? null : { id, name, unitA, unitB, createdAt };
+};
+
+/** 使っている「同じ目盛り」の組（外したものは除く） */
+export async function listScaleLinks(db: Db): Promise<ScaleLinkRow[]> {
+  const rows = await db.prepare('SELECT id, name, unit_a, unit_b, created_at FROM scale_links WHERE removed_at IS NULL ORDER BY created_at, id').all();
+  return rows.results.map(toScaleLink).filter(present);
 }
 
 /** 問題の列（読み出し） */
@@ -531,7 +556,7 @@ export const PROBLEM_COLUMNS = 'id, source_id, encounter_id, name, status, activ
 export async function getRecord(db: Db, id: string): Promise<PatientRecord | null> {
   const patient = await getPatient(db, id);
   if (patient === null) return null;
-  const [encounters, sources, observations, segments, medications, events, problems, threads, history, factEdits, userEdits, apNotes] = await Promise.all([
+  const [encounters, sources, observations, segments, medications, events, problems, threads, history, factEdits, userEdits, apNotes, scaleLinks] = await Promise.all([
     db.prepare('SELECT id, patient_id, kind, started, ended FROM encounters WHERE patient_id = ? ORDER BY started, id').bind(id).all(),
     db.prepare('SELECT id, patient_id, encounter_id, kind, author_role, at, entered_at, text, replaced, organized, organized_version, organize_report, next_day_from FROM sources WHERE patient_id = ? ORDER BY id').bind(id).all(),
     db
@@ -547,6 +572,7 @@ export async function getRecord(db: Db, id: string): Promise<PatientRecord | nul
     db.prepare('SELECT id, at, fact, target, field, before, after FROM fact_edits WHERE patient_id = ? ORDER BY at DESC, id DESC LIMIT 500').bind(id).all(),
     db.prepare('SELECT id, at, target_type, target, field, before, after FROM user_edits WHERE patient_id = ? ORDER BY at DESC, id DESC LIMIT 500').bind(id).all(),
     db.prepare(`SELECT ${AP_COLUMNS} FROM ap_notes WHERE patient_id = ? ORDER BY day, entered_at, id`).bind(id).all(),
+    listScaleLinks(db),
   ]);
   return {
     patient,
@@ -562,6 +588,7 @@ export async function getRecord(db: Db, id: string): Promise<PatientRecord | nul
     factEdits: factEdits.results.map(toFactEdit).filter(present),
     userEdits: userEdits.results.map(toUserEdit).filter(present),
     apNotes: apNotes.results.map(toApNote).filter(present),
+    scaleLinks,
   };
 }
 

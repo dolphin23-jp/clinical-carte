@@ -206,7 +206,7 @@ AI が返すのは、次の3つだけ（構造化した出力）。
 
 - 打った原文・AI へ送った文・AI の答えそのものは、どの表にも書かない。ログにも出さない。
 - 表を足すときは、先にこの一覧を直す。
-- いまある表（段0〜段5）は `devices`・`entrance_daily`・`patients`・`encounters`・`sources`・`observations`・`usage_daily`・`schema_migrations`・`segments`・`medications`・`events`・`problems`・`problem_threads`・`history`・`fact_edits`・`user_edits`・`ap_notes`・`ap_history`。`apps/worker/test/writes.test.ts` が、migrations が作る表と、ソースの SQL が書く表を、この一覧と突き合わせる。
+- いまある表（段0〜段5）は `devices`・`entrance_daily`・`patients`・`encounters`・`sources`・`observations`・`usage_daily`・`schema_migrations`・`segments`・`medications`・`events`・`problems`・`problem_threads`・`history`・`fact_edits`・`user_edits`・`ap_notes`・`ap_history`・`scale_links`。`apps/worker/test/writes.test.ts` が、migrations が作る表と、ソースの SQL が書く表を、この一覧と突き合わせる。
 
 ## 7. 段1 で作ったものと、案との違い
 
@@ -317,3 +317,15 @@ AI が返すのは、次の3つだけ（構造化した出力）。
 - **場所は、サーバーが保存した文で決め直す**：画面から送るのは「翌日と答えた」の真偽だけ（`nextDay`）。打った文の位置は、氏名などの置き換えでずれるので使わない。
 - **打ち直したとき**：答えがあれば答えのとおり、なければ、前に翌日と答えた文だけ、新しい文で場所を決め直す。
 - 日の書かれた時刻（「11/17 0:15」）・相対の言い方（「昨日」）・記載の日時は、この列で変えない。
+
+## 14. 続きを足す（CA-050）と、単位の「同じ目盛り」（CA-051）
+
+- **続きを足す**：新しい表は作らない。`sources.text` の末尾に、改行と、足す文（選別を通し、置き換えた後の字）を足す。`replaced` の件数を足し合わせ、AI の行は消して整理し直す（検査結果・バイタルの文は、文全体を決定論で読み直す）。本人の行・区切りの始まりは、そのまま（それまでの文は変わらない）。`user_edits` に field = text、after = append の印（足した文は残さない）。
+- **単位の「同じ目盛り」**：作った表は `apps/worker/migrations/0009_scale_links.sql`。
+
+| 表 | 中身 |
+|---|---|
+| `scale_links` | id・name（検査の正規の名前。検査名の表にあるもの）・unit_a・unit_b（単位の書き方。検査名の表にあるもの。'' は単位の記載なし）・created_at・removed_at（外した日時。行は消さない） |
+
+- **患者に付かない**（全患者に共通。本人の決定）：項目の名前と単位の書き方だけで、患者・記録の字は入らない。サーバーは、表にない名前・単位、バイタル、同じ単位の組を断る（`scaleLinkProblem`）。同じ組（向きは問わない）は1つ。
+- 見るとき（`labTrends`）に、決めた組の推移を1つにつなぐ。換算の倍率は持たない。

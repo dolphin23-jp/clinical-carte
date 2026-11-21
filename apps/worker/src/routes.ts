@@ -10,6 +10,10 @@ import {
   ProposalRequest,
   SegmentPatch,
   SourcePatch,
+  ScaleLinkNew,
+  scaleLinkProblem,
+  scaleUnitKey,
+  SourceAppend,
   SourceTextPut,
   FACT_KINDS,
   type FactKind,
@@ -33,7 +37,7 @@ import type { z } from 'zod';
 import type { Db } from './db.ts';
 import { addApNotes, type ApOutcome, deleteApNote, patchApNote } from './ap.ts';
 import { draftCourse, draftMaterialFor } from './draft.ts';
-import { addFact, patchSegment, patchSource, retypeSource } from './edits.ts';
+import { addFact, appendSource, patchSegment, patchSource, retypeSource } from './edits.ts';
 import { patchFact } from './facts.ts';
 import { intake } from './intake.ts';
 import { organizeSource } from './organize.ts';
@@ -52,6 +56,7 @@ import {
   getPatient,
   getRecord,
   listPatients,
+  listScaleLinks,
   type NewObservation,
   observationOf,
   type Patient,
@@ -416,6 +421,47 @@ export async function recordApi(request: Request, path: string, deps: RecordDeps
     if (body === null) return bad();
     const r = await patchSource(db, id, body, runtime);
     return r.ok ? reply(200, { ok: true }) : r.error === 'not_found' ? missing() : bad();
+  }
+
+  // 単位の「同じ目盛り」（CA-051。全患者に共通）：組を決める・外す。字は打たない（項目・単位は表から選ぶ）ので、選別を通さない
+  if (path === '/api/scale-links' && method === 'POST') {
+    const body = await readBody(request, ScaleLinkNew);
+    if (body === null || scaleLinkProblem(body) !== null) return bad();
+    const existing = (await listScaleLinks(db)).find(
+      (l) => l.name === body.name && [scaleUnitKey(l.unitA || null), scaleUnitKey(l.unitB || null)].sort().join('\u0000') === [scaleUnitKey(body.unitA || null), scaleUnitKey(body.unitB || null)].sort().join('\u0000'),
+    );
+    if (existing !== undefined) return reply(200, { id: existing.id });
+    const id = newId(runtime);
+    await db.prepare('INSERT INTO scale_links (id, name, unit_a, unit_b, created_at) VALUES (?, ?, ?, ?, ?)').bind(id, body.name, body.unitA, body.unitB, japanDateTime(runtime.now())).run();
+    return reply(200, { id });
+  }
+  const oneScaleLink = /^\/api\/scale-links\/([^/]+)$/.exec(path);
+  if (oneScaleLink && method === 'DELETE') {
+    const id = oneScaleLink[1] ?? '';
+    if (!isUlid(id)) return bad();
+    const r = await db.prepare('UPDATE scale_links SET removed_at = ? WHERE id = ? AND removed_at IS NULL').bind(japanDateTime(runtime.now()), id).run();
+    return (r.meta?.changes ?? 0) === 0 ? missing() : reply(200, { ok: true });
+  }
+
+  // 続きを足す（CA-050）：足す文だけを、入れるときと同じ選別に通す。AI の1回に数える。続けて、画面が整理し直す
+  const sourceAppend = /^\/api\/sources\/([^/]+)\/append$/.exec(path);
+  if (sourceAppend && method === 'POST') {
+    const id = sourceAppend[1] ?? '';
+    if (!isUlid(id)) return bad();
+    const body = await readBody(request, SourceAppend);
+    if (body === null) return bad();
+    if (deps.selector === null) return reply(503, { error: 'no_ai' });
+    if (deps.dailyAiLimit > 0 && (await callsOn(db, today)) >= deps.dailyAiLimit) return reply(429, { error: 'ai_limit' });
+    await countCall(db, today);
+    const r = await appendSource(db, id, body.text, deps.selector, runtime, body.nextDay);
+    if (!r.ok) {
+      if (r.error === 'not_found') return missing();
+      if (r.error === 'empty') return bad();
+      if (r.error === 'too_long') return reply(400, { error: 'too_long' });
+      if (r.error === 'ai') return r.failure === 'refused' ? reply(422, { error: 'ai_refused' }) : reply(502, { error: r.failure === 'unavailable' ? 'ai_unavailable' : 'ai_bad_answer' });
+      return reply(422, { error: 'selection_failed' });
+    }
+    return reply(200, { ok: true });
   }
 
   // 文を打ち直す（C-1）：入れるときと同じ選別を通す。AI の1回に数える。続けて、画面が整理し直す

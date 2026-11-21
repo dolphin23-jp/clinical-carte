@@ -103,5 +103,11 @@ export const MIGRATIONS: readonly Migration[] = [
     "statements": [
       "ALTER TABLE sources ADD COLUMN next_day_from INTEGER CHECK (next_day_from IS NULL OR next_day_from >= 0)"
     ]
+  },
+  {
+    "name": "0009_scale_links",
+    "statements": [
+      "CREATE TABLE IF NOT EXISTS scale_links ( id TEXT PRIMARY KEY, name TEXT NOT NULL CHECK (length(name) BETWEEN 1 AND 60), unit_a TEXT NOT NULL CHECK (length(unit_a) <= 30), unit_b TEXT NOT NULL CHECK (length(unit_b) <= 30), created_at TEXT NOT NULL CHECK (length(created_at) = 16), removed_at TEXT CHECK (removed_at IS NULL OR length(removed_at) = 16) )"
+    ]
   }
 ];

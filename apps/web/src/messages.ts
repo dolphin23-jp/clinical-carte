@@ -1,5 +1,5 @@
 // サーバーの誤りの名前を、画面の文にする。
-import { MAX_DEVICES } from '@clinical-carte/core';
+import { MAX_DEVICES, TEXT_LIMIT } from '@clinical-carte/core';
 
 import type { ApiError } from './net/api.ts';
 
@@ -43,6 +43,8 @@ export function errorMessage(error: ApiError, left?: number): string {
       return '問いに、電話番号・メールなどの形があるので、送りませんでした。消してから、もう一度送ってください。';
     case 'bad_span':
       return '選んだ範囲を足せませんでした。1行の中で選び、値は「Na 128」のように名前と値をひと続きに選んでください。';
+    case 'too_long':
+      return `足すと、1つの記載の上限（${String(TEXT_LIMIT)} 字）を超えます。新しい記載として入れてください。文は保存していません。`;
     case 'selection_failed':
       return '識別情報の場所を確かめられませんでした。文は保存していません。もう一度送るか、氏名・番号などを消してから送ってください。';
   }
