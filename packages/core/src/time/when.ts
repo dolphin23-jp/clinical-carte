@@ -17,6 +17,9 @@ export interface WhenContext {
   readonly refDay: string | null;
   /** 受診の開始の日（病日を読むため）。なければ null */
   readonly encounterStart: string | null;
+  /** 日の書かれていない時刻だけの言い方（「0:15」）を読む日。なければ refDay。
+   *  記載の中で日をまたいだと本人が確かめた場所より後ろの時刻は、翌日（CA-047） */
+  readonly timeDay?: string | null;
 }
 
 const two = (n: number): string => String(n).padStart(2, '0');
@@ -97,7 +100,10 @@ export function parseWhen(quote: string, ctx: WhenContext): string | null {
   const day = readDay(text, ctx);
   if (day === null) return null;
   const time = readTime(text.replace(/(?<!\d)\d{4}[-/年]\d{1,2}[-/月]\d{1,2}日?/u, '').replace(/\d{1,2}(?:\/|月)\d{1,2}日?/u, ''));
-  if (day === NO_DAY) return time === null || ctx.refDay === null ? null : `${ctx.refDay}T${time}`;
+  if (day === NO_DAY) {
+    const base = ctx.timeDay ?? ctx.refDay;
+    return time === null || base === null ? null : `${base}T${time}`;
+  }
   return time === null ? day : `${day}T${time}`;
 }
 
@@ -118,4 +124,62 @@ export function whenCandidates(text: string, ctx: WhenContext, max = 3): string[
     if (out.length >= max) break;
   }
   return out;
+}
+
+/** 日を足す（YYYY-MM-DD）。実在する日であること */
+export function shiftDay(day: string, n: number): string {
+  return addDays(day, n);
+}
+
+/**
+ * 行の頭に書かれた日時（「16:00 BT 39.0…」の 16:00、「11/17 9:30 回診」）の引用。なければ null。
+ * 温度板・経過の行を写した文で、その行の値の時刻にする（AI に頼らない。2026-11-21）。
+ * 「16時〜22時」のような幅の始まり、「1/2 量」のような単位の続く「数/数」は、日時にしない。
+ */
+const LINE_HEAD =
+  /^[ \t\u3000]*((?:\d{4}[-/年]\d{1,2}[-/月]\d{1,2}日?|\d{1,2}\/\d{1,2}(?![\d/]|[A-Za-zμ%])|\d{1,2}月\d{1,2}日)(?:[ \t\u3000]*\d{1,2}:\d{2}(?![\d:]))?|\d{1,2}:\d{2}(?![\d:])|\d{1,2}時(?!間)(?:\d{1,2}分)?)(?![ \t\u3000]*[〜~～\-－])/u;
+
+/** 全角の英数字・記号を半角に（長さを変えない） */
+const halfWidth = (text: string): string => text.replace(/[\uFF01-\uFF5E]/g, (c) => String.fromCharCode(c.charCodeAt(0) - 0xfee0));
+
+export function lineHeadWhen(line: string): string | null {
+  return LINE_HEAD.exec(halfWidth(line))?.[1] ?? null;
+}
+
+/** 時刻だけの言い方（日の書かれていない「0:15」「6時」）か */
+const TIME_TOKEN = /(?<![\d:/])(\d{1,2})(?::(\d{2})|時(?!間)(?:(\d{1,2})分)?)(?![\d:])/gu;
+/** 時刻の直前に、日が書かれている（「11/18 22:00」「11月18日 22時」「2026-11-18 22:00」） */
+const DAY_BEFORE = /(?:\d{1,2}\/\d{1,2}|\d{1,2}月\d{1,2}日|\d{4}[-/年]\d{1,2}[-/月]\d{1,2}日?)[ \u3000]*$/u;
+
+/** 日をまたいだと見る、時刻の逆戻りの幅（時間）。これより小さい逆戻り（経過の行を、あとから書き足したもの）は聞かない */
+export const NEXT_DAY_BACK_HOURS = 12;
+
+export interface NextDayPoint {
+  /** 逆戻りした時刻の、文の中の場所（そろえた文の場所。長さは変えていない） */
+  readonly at: number;
+  /** その時刻（HH:mm） */
+  readonly time: string;
+  /** それまでの、いちばん遅い時刻（HH:mm） */
+  readonly before: string;
+}
+
+/**
+ * 記載の中で、日をまたいだかもしれない場所：日の書かれていない時刻が、それまでのいちばん遅い時刻から
+ * NEXT_DAY_BACK_HOURS 時間以上さかのぼった、最初の場所（「23:30 … 0:15 …」の 0:15）。なければ null。
+ * 日をまたいだかどうかは決めない（書かれていない）。入れる欄で、本人に1回だけ確かめる（CA-047）。
+ */
+export function nextDayPoint(text: string): NextDayPoint | null {
+  const folded = halfWidth(text);
+  let max = -1;
+  for (const m of folded.matchAll(TIME_TOKEN)) {
+    const at = m.index;
+    if (DAY_BEFORE.test(folded.slice(Math.max(0, at - 16), at))) continue;
+    const h = Number(m[1]);
+    const min = m[2] !== undefined ? Number(m[2]) : m[3] !== undefined ? Number(m[3]) : 0;
+    if (h > 23 || min > 59) continue;
+    const t = h * 60 + min;
+    if (max >= 0 && max - t >= NEXT_DAY_BACK_HOURS * 60) return { at, time: `${two(h)}:${two(min)}`, before: `${two(Math.floor(max / 60))}:${two(max % 60)}` };
+    if (t > max) max = t;
+  }
+  return null;
 }

@@ -464,7 +464,7 @@ function Related({ view, segments, facts }: { view: ThreadView; segments: readon
           {vitals
             .map((n) => {
               const o = latestOf(n);
-              return o === undefined ? n : `${n} ${o.valueText}${o.unit === null ? '' : ` ${o.unit}`}（${showDateTime(o.at)}）`;
+              return o === undefined ? n : `${n} ${o.comparator ?? ''}${o.valueText}${o.unit === null ? '' : ` ${o.unit}`}（${showDateTime(o.at)}）`;
             })
             .join('・')}
         </p>

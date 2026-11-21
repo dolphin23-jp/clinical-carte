@@ -1,6 +1,6 @@
-// 段3e・段4 の E2E：記録の種類の絞り込み、事実を外す・直す（と、見方から消えること・直した記録）、草案（保存しない・根拠の引用）。
+// 段3e の E2E：記録の種類の絞り込み、事実を外す・直す（と、見方から消えること・直した記録）。
 // AI は試験の代役。文はすべて架空。
-import type { DraftAnswer, OrganizeAnswer } from '@clinical-carte/core';
+import type { OrganizeAnswer } from '@clinical-carte/core';
 import type { Browser, BrowserContext, Page } from 'playwright-core';
 import { devices as presets } from 'playwright-core';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from 'vitest';
@@ -23,18 +23,6 @@ const ANSWER: OrganizeAnswer = {
   events: [{ kind: 'test', title: '胸部X線を撮影', when: null }],
   measurements: [{ quote: 'CRP 6.8', when: null, specimen: null }],
 };
-const DRAFT: DraftAnswer = {
-  sections: [
-    {
-      problem: 'T1',
-      sentences: [
-        { text: '3病日、抗菌薬に反応し、セフトリアキソン 2g を継続した。', cites: ['Q1', 'Q2'] },
-        { text: 'CRP は 1 まで下がった。', cites: ['Q1'] },
-      ],
-    },
-  ],
-};
-
 let app: BuiltApp;
 let browser: Browser;
 let server: DevServer;
@@ -54,7 +42,7 @@ beforeEach(async () => {
     dist: app.dir,
     key: TEST_KEY,
     selector: fakeSelector(),
-    organizer: fakeOrganizer((text) => ({ ok: true, answer: text === NOTE ? ANSWER : EMPTY_ORGANIZE }), undefined, () => ({ ok: true, answer: DRAFT })),
+    organizer: fakeOrganizer((text) => ({ ok: true, answer: text === NOTE ? ANSWER : EMPTY_ORGANIZE })),
   });
 });
 afterEach(async () => {
@@ -121,6 +109,7 @@ describe('段3e：種類で絞る・事実を直す', () => {
     const ev = page.getByTestId('source-facts').first().getByTestId('fact-row').filter({ hasText: '胸部X線' });
     await ev.getByTestId('fact-exclude').click();
     await expect.poll(() => ev.getAttribute('data-excluded')).toBe('true');
+    await page.getByTestId('tab-course').click();
     await page.getByTestId('tab-events').click();
     expect(await page.getByTestId('events').textContent()).not.toContain('胸部X線');
     expect(await fits(page)).toBe(true);
@@ -128,6 +117,7 @@ describe('段3e：種類で絞る・事実を直す', () => {
       await page.getByTestId('tab-notes').click();
       await page.getByTestId('source-facts').first().locator('summary').click();
       await page.screenshot({ path: `${SHOTS}/facts-iphone.png`, fullPage: true });
+      await page.getByTestId('tab-course').click();
       await page.getByTestId('tab-events').click();
     }
     // 戻す
@@ -135,33 +125,8 @@ describe('段3e：種類で絞る・事実を直す', () => {
     const facts2 = page.getByTestId('source-facts').first();
     if ((await facts2.getAttribute('open')) === null) await facts2.locator('summary').click();
     await facts2.getByTestId('fact-row').filter({ hasText: '胸部X線' }).getByTestId('fact-exclude').click();
+    await page.getByTestId('tab-course').click();
     await page.getByTestId('tab-events').click();
     await expect.poll(() => page.getByTestId('events').textContent()).toContain('胸部X線');
-  });
-});
-
-describe('段4：草案', () => {
-  test('問題ごとの入院後経過の草案が出る。根拠の引用が開ける。根拠にない数の文は出ず、数だけ出る。保存しない', async () => {
-    const page = await openPatient();
-    await send(page, 'progress_note', NOTE, '2026-11-19');
-    await page.getByTestId('tab-draft').click();
-    await page.getByTestId('draft-make').click();
-    const section = page.getByTestId('draft-section');
-    await section.first().waitFor();
-    expect(await section.locator('h3').textContent()).toBe('#1 市中肺炎');
-    const sentences = page.getByTestId('draft-sentence');
-    expect(await sentences.count()).toBe(1);
-    await sentences.first().locator('summary').click();
-    const quotes = await sentences.first().getByTestId('draft-quote').allTextContents();
-    expect(quotes.join(' ')).toContain('A) 抗菌薬に反応');
-    expect(await page.getByTestId('draft-report').textContent()).toContain('確かめを通らず出さなかった文 1（根拠の引用にない数がある 1）');
-    expect(await page.getByTestId('draft').textContent()).toContain('保存しません');
-    expect(await page.getByTestId('draft').textContent()).not.toContain('コピー');
-    expect(await fits(page)).toBe(true);
-    if (SHOTS !== undefined) await page.screenshot({ path: `${SHOTS}/draft-iphone.png`, fullPage: true });
-    // ほかのタブへ移って戻ると、草案は消えている（画面のメモリだけ）
-    await page.getByTestId('tab-state').click();
-    await page.getByTestId('tab-draft').click();
-    expect(await page.getByTestId('draft-section').count()).toBe(0);
   });
 });

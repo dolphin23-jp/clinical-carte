@@ -1,6 +1,7 @@
-// 記載と A/P の E2E（段5。CA-030〜035）：日ごとの S・O と値、自分で書く A/P、AI の案から選んで残す（印と参照）、直すと「AI 案を直した」、
-// AI との議論（保存しない）から A・P に足す。AI と書籍の検索は試験の代役。文はすべて架空。
-import type { OrganizeAnswer, ProposalAnswer } from '@clinical-carte/core';
+// カルテ記載の E2E（段I。CA-054）：種類と日を選んで「出す」と、出来上がった1つの記載が出る（一文ずつの採用はしない）。
+// 記録にない数には下線と「※」。自分で直す・AI と相談して直す（やりとりは保存しない）・保存する（選別を通す。印）・開いて直す・消す。
+// AI と書籍の検索は試験の代役。文はすべて架空。
+import type { OrganizeAnswer } from '@clinical-carte/core';
 import type { Browser, BrowserContext, Page } from 'playwright-core';
 import { devices as presets } from 'playwright-core';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from 'vitest';
@@ -23,21 +24,31 @@ const ANSWER: OrganizeAnswer = {
   problems: [{ name: '#1 市中肺炎', status: 'diagnosis', activity: null }],
 };
 
+// 解決と書かれた問題がある記載（経過のひな形）
+const NOTE2 = '#1 市中肺炎\nA) 抗菌薬に反応\n#2 低K血症\nA) 補正後、解決。';
+const ANSWER2: OrganizeAnswer = {
+  ...EMPTY_ORGANIZE,
+  segments: [
+    { label: 'problem_heading', start: '#1 市中肺炎', when: null },
+    { label: 'assessment', start: 'A) 抗菌薬', when: null },
+    { label: 'problem_heading', start: '#2 低K血症', when: null },
+    { label: 'assessment', start: 'A) 補正後', when: null },
+  ],
+  problems: [
+    { name: '#1 市中肺炎', status: 'diagnosis', activity: null },
+    { name: '#2 低K血症', status: 'problem', activity: 'resolved' },
+  ],
+};
+
 const BOOK: BookHit = { title: '架空の内科学', path: '呼吸器 > 肺炎', page: '120', snippet: '臨床の改善を見て、静注から経口へ切り替える。' };
 const books: BookSearcher = { search: () => Promise.resolve([BOOK]), check: () => Promise.resolve('ok') };
 
-const PROPOSAL: ProposalAnswer = {
-  problems: [
-    {
-      problem: 'T1',
-      assessment: [{ text: '体温 37.1 で、抗菌薬に反応している。', cites: ['Q4', 'Q1'], basis: 'record' }],
-      plan: [
-        { text: '改善が続けば、経口への切り替えを検討する。', cites: ['B1'], basis: 'source', kind: 'tx' },
-        { text: 'アモキシシリン 500mg に切り替える。', cites: ['B1'], basis: 'source', kind: 'tx' },
-      ],
-    },
-  ],
-};
+// AI の代役の記載：体温 37.1・2g は記録にある。38.5 は記録にない（印が付く）
+const DOC_SECTIONS = [
+  { key: 's', text: '咳は減った', refs: ['R1'] },
+  { key: 'o', text: '体温 37.1（前日 38.5）', refs: ['R1'] },
+  { key: 'ap', text: '#1 市中肺炎\nA) 抗菌薬に反応。\nP) セフトリアキソン 2g 継続。改善が続けば経口への切り替えを検討（推論）', refs: ['R1', 'B1'] },
+];
 
 let app: BuiltApp;
 let browser: Browser;
@@ -56,12 +67,14 @@ afterAll(async () => {
 });
 beforeEach(async () => {
   organizer = fakeOrganizer(
-    () => ({ ok: true, answer: ANSWER }),
-    undefined,
+    (text) => ({ ok: true, answer: text.includes('#2 低K血症') ? ANSWER2 : ANSWER }),
     undefined,
     {
-      propose: () => ({ ok: true, answer: PROPOSAL }),
-      discuss: () => ({ ok: true, answer: { paragraphs: [{ text: '臨床的に安定すれば、経口への切り替えは選択肢です。', cites: ['B1'], basis: 'source' }] } }),
+      document: () => ({ ok: true, answer: { sections: DOC_SECTIONS } }),
+      revise: (message) => {
+        const sent = JSON.parse(message) as { current: { key: string; text: string }[] };
+        return { ok: true, answer: { reply: 'S を短くしました。', sections: sent.current.map((x) => (x.key === 's' ? { key: 's', text: '咳は軽減', refs: [] } : { ...x, refs: [] })) } };
+      },
     },
   );
   server = await startDevServer({ dist: app.dir, key: TEST_KEY, selector: fakeSelector(), organizer, books });
@@ -71,8 +84,8 @@ afterEach(async () => {
   await server.close();
 });
 
-async function openNotes(): Promise<Page> {
-  const context = await browser.newContext({ ...presets['iPhone 15'], colorScheme: 'light' });
+async function openNotes(note = NOTE, viewport?: { width: number; height: number }): Promise<Page> {
+  const context = await browser.newContext(viewport === undefined ? { ...presets['iPhone 15'], colorScheme: 'light' } : { viewport, colorScheme: 'light' });
   contexts.push(context);
   const page = await context.newPage();
   await page.goto(server.url);
@@ -89,92 +102,121 @@ async function openNotes(): Promise<Page> {
   await page.getByTestId('kind-chip-progress_note').click();
   await page.getByTestId('at-day').fill('2026-11-19');
   await page.getByTestId('at-time').fill('09:00');
-  await page.getByTestId('text').fill(NOTE);
+  await page.getByTestId('text').fill(note);
   await page.getByTestId('send').click();
   await expect.poll(() => page.getByTestId('source').count(), { timeout: 10_000 }).toBe(1);
   await expect.poll(() => page.getByTestId('composer-organizing').textContent()).not.toContain('整理しています');
+  await page.getByTestId('composer-close').click();
+  await page.getByTestId('tab-course').click();
   await page.getByTestId('tab-chart').click();
-  await page.getByTestId('note-view').waitFor();
+  await page.getByTestId('doc-view').first().waitFor();
   return page;
 }
 
 const fits = (page: Page) => page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth);
 
-describe('記載', () => {
-  test('日ごとに、問題ごとの S・O が、写した字のまま出る。自分で書いた A/P が残り、直せる・消せる', async () => {
+describe('カルテ記載（段I）', () => {
+  test('「出す」で、出来上がった記載が見出しの順に出る。記録にない数には印。採用のボタンはない。保存するまで残らない', async () => {
     const page = await openNotes();
-    expect(await page.getByTestId('note-day').textContent()).toBe('2026-11-19（3病日）');
-    const problem = page.getByTestId('note-problem').first();
-    expect(await problem.getByTestId('note-s').textContent()).toContain('S) 咳は減った');
-    expect(await problem.getByTestId('note-o').textContent()).toContain('O) 体温 37.1');
+    // 入院の受診では、プログレスノートが先。日は、記録の最後の日
+    expect(await page.getByTestId('doc-type-progress').getAttribute('aria-checked')).toBe('true');
+    expect(await page.getByTestId('doc-day').inputValue()).toBe('2026-11-19');
+    await page.getByTestId('doc-generate').click();
+    const doc = page.getByTestId('doc');
+    await doc.waitFor();
+    expect(await doc.getByTestId('doc-section').evaluateAll((els) => els.map((e) => e.getAttribute('data-key')))).toEqual(['s', 'o', 'ap']);
+    const text = (await doc.textContent()) ?? '';
+    expect(text).toContain('【A/P】');
+    expect(text).toContain('セフトリアキソン 2g 継続');
+    // 記録にない数（38.5）だけに印
+    expect(await doc.getByTestId('num-mark').allTextContents()).toEqual(['38.5※']);
+    expect(await page.getByTestId('doc-marks-legend').textContent()).toContain('1 個');
+    expect(await page.getByTestId('doc-origin').textContent()).toBe('AI が書いた');
+    expect(await page.getByTestId('doc-state').textContent()).toBe('まだ保存していません');
+    // 一文ずつの採用・コピーのボタンはない
+    expect(await page.locator('[data-testid^="ap-proposal"]').count()).toBe(0);
+    expect(text).not.toContain('採用');
+    expect(text).not.toContain('コピー');
+    // 書籍には問題の名前だけ。AI には保存した文
+    expect(organizer.documented.at(-1)).toContain('A) 抗菌薬に反応');
+    expect(await page.getByTestId('doc-saved-list').textContent()).toContain('保存した記載（0）');
+    expect(await fits(page)).toBe(true);
+    if (SHOTS !== undefined) await page.screenshot({ path: `${SHOTS}/doc-iphone.png`, fullPage: true });
+  });
 
-    await problem.getByTestId('ap-own').locator(':scope > summary').click();
-    await problem.getByTestId('ap-own-text').fill('抗菌薬に反応している');
-    await problem.getByTestId('ap-own-save').click();
-    await expect.poll(() => problem.getByTestId('ap-note').count()).toBe(1);
-    expect(await problem.getByTestId('ap-origin').textContent()).toBe('先生');
-
-    await problem.getByTestId('ap-edit').click();
-    await problem.getByTestId('ap-edit-text').fill('抗菌薬に反応している（2日目）');
-    await problem.getByTestId('ap-edit-save').click();
-    await expect.poll(() => problem.getByTestId('ap-note').textContent()).toContain('（2日目）');
-    expect(await problem.getByTestId('ap-origin').textContent()).toBe('先生');
-
-    await problem.getByTestId('ap-delete').click();
-    await problem.getByTestId('ap-delete-yes').click();
-    await expect.poll(() => problem.getByTestId('ap-note').count()).toBe(0);
+  test('自分で直して保存すると「AI が書いて先生が直した」。AI と相談して直す（やりとりは保存しない）。開いて直す・消す', async () => {
+    const page = await openNotes();
+    await page.getByTestId('doc-generate').click();
+    await page.getByTestId('doc').waitFor();
+    // AI と相談：S を短く
+    await page.getByTestId('doc-ask-text').fill('S を短くして');
+    await page.getByTestId('doc-ask').click();
+    await expect.poll(() => page.getByTestId('doc-reply').count()).toBe(1);
+    expect(await page.getByTestId('doc-reply').textContent()).toContain('S を短くしました');
+    expect(await page.locator('[data-key="s"]').textContent()).toContain('咳は軽減');
+    expect(await page.locator('[data-key="s"]').textContent()).toContain('AI が直した');
+    // 戻せる
+    await page.getByTestId('doc-undo').click();
+    expect(await page.locator('[data-key="s"]').textContent()).toContain('咳は減った');
+    // 自分で直す
+    await page.getByTestId('doc-edit').click();
+    await page.getByTestId('doc-edit-text').first().fill('咳は減った。夜間も眠れている');
+    await page.getByTestId('doc-edit').click();
+    expect(await page.getByTestId('doc-origin').textContent()).toBe('AI が書いて先生が直した');
+    await page.getByTestId('doc-save').click();
+    await expect.poll(() => page.getByTestId('doc-state').textContent()).toBe('保存しました');
+    await expect.poll(() => page.getByTestId('doc-saved-item').count()).toBe(1);
+    expect(await page.getByTestId('doc-saved-item').textContent()).toContain('AI が書いて先生が直した');
+    // 開いて直す：数の印は、AI を使わずに付く
+    await page.getByTestId('doc-generate').click();
+    await page.getByTestId('doc-saved-open').click();
+    await expect.poll(() => page.getByTestId('doc-state').textContent()).toBe('保存しました');
+    await expect.poll(() => page.getByTestId('num-mark').count()).toBe(1);
+    await page.getByTestId('doc-edit').click();
+    await page.getByTestId('doc-edit-text').first().fill('咳は減った');
+    await page.getByTestId('doc-save').click();
+    await expect.poll(() => page.getByTestId('doc-state').textContent()).toBe('保存しました');
+    expect(await page.getByTestId('doc-saved-item').count()).toBe(1);
+    // やりとりは保存しない：記録の答えに、頼みの字はない
+    await page.getByTestId('doc-saved-delete').click();
+    await page.getByTestId('doc-saved-confirm-delete').click();
+    await expect.poll(() => page.getByTestId('doc-saved-item').count()).toBe(0);
     expect(await fits(page)).toBe(true);
   });
 
-  test('AI の案：確かめを通った文だけが出て、選んだものだけが印と参照つきで残る。直すと「AI 案を直した」になる', async () => {
+  test('種類を選べる（入院の受診では、プログレスノート・入院時記録・中間・退院サマリー。ほかの種類も選べる）。見出しだけで自分で書ける', async () => {
     const page = await openNotes();
-    await page.getByTestId('ap-proposal-make').click();
-    const sentences = page.getByTestId('ap-proposal-sentence');
-    await expect.poll(() => sentences.count()).toBe(2); // 出典にない用量の文は出ない
-    expect(await page.getByTestId('ap-proposal-report').textContent()).toContain('根拠の出典にない数（用量・閾値を含む）がある 1');
-    expect(await page.getByTestId('ap-proposal').textContent()).not.toContain('アモキシシリン');
-    // 何も選ばなければ、何も残らない
-    expect(await page.getByTestId('ap-proposal-adopt').isDisabled()).toBe(true);
-    // 書籍の根拠を開ける
-    await sentences.nth(1).locator('.ap-cites > summary').click();
-    expect(await sentences.nth(1).getByTestId('ap-cite').textContent()).toContain('架空の内科学');
-
-    await sentences.nth(1).getByTestId('ap-proposal-pick').check();
-    await page.getByTestId('ap-proposal-adopt').click();
-    const problem = page.getByTestId('note-problem').first();
-    await expect.poll(() => problem.getByTestId('ap-note').count()).toBe(1);
-    expect(await problem.getByTestId('ap-origin').textContent()).toBe('AI 案から採用');
-    expect(await problem.getByTestId('ap-refs').textContent()).toContain('書籍『架空の内科学』 120（呼吸器 > 肺炎）');
-    expect(await problem.getByTestId('ap-note').textContent()).not.toContain(BOOK.snippet); // 参照に本文は入らない
-    if (SHOTS !== undefined) await page.screenshot({ path: `${SHOTS}/notes-iphone.png`, fullPage: true });
-
-    await problem.getByTestId('ap-edit').click();
-    await problem.getByTestId('ap-edit-text').fill('改善が続けば、明日、経口への切り替えを検討する。');
-    await problem.getByTestId('ap-edit-save').click();
-    await expect.poll(() => problem.getByTestId('ap-origin').textContent()).toBe('AI 案を直した');
-    // 外の検索（書籍）には問題の名前だけ。ネットは選ばなければ使わない
-    expect(organizer.researched).toHaveLength(0);
+    for (const t of ['progress', 'admission', 'interim_summary', 'discharge_summary']) await page.getByTestId(`doc-type-${t}`).waitFor();
+    await page.getByTestId('doc-type-discharge_summary').click();
+    await page.getByTestId('doc-blank').click();
+    const headings = await page.getByTestId('doc').locator('.doc-heading').allTextContents();
+    expect(headings).toEqual(['【診断】', '【主訴】', '【入院までの経過】', '【入院時の主な所見】', '【入院後経過】', '【退院時処方】', '【転帰】', '【退院後の方針】']);
+    expect(await page.getByTestId('doc-origin').textContent()).toBe('先生が書いた');
+    await page.getByTestId('doc-type-other').selectOption('er_record');
+    expect(await page.getByTestId('doc-generate').textContent()).toBe('救急外来記録を出す');
     expect(await fits(page)).toBe(true);
   });
 
-  test('AI と話す：やりとりは保存しない。答えの文を P に足すと、それだけが残る', async () => {
-    const page = await openNotes();
-    const problem = page.getByTestId('note-problem').first();
-    await problem.getByTestId('discuss').locator(':scope > summary').click();
-    await problem.getByTestId('discuss-question').fill('経口に切り替える時期は？');
-    await problem.getByTestId('discuss-send').click();
-    await expect.poll(() => problem.getByTestId('discuss-sentence').count()).toBe(1);
-    expect(await problem.getByTestId('turn-doctor').textContent()).toContain('経口に切り替える時期は？');
-    await problem.getByTestId('discuss-to-p').click();
-    await expect.poll(() => problem.getByTestId('ap-note').count()).toBe(1);
-    expect(await problem.getByTestId('ap-origin').textContent()).toBe('AI 案から採用');
-    // 保存したのは足した1文だけ（問いもやりとりも、保存先にない）
-    const saved = server.db.raw.prepare('SELECT text FROM ap_notes').all() as { text: string }[];
-    expect(saved.map((r) => r.text)).toEqual(['臨床的に安定すれば、経口への切り替えは選択肢です。']);
-    const everything = JSON.stringify(server.db.raw.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all().map((t) => server.db.raw.prepare(`SELECT * FROM ${(t as { name: string }).name}`).all()));
-    expect(everything).not.toContain('経口に切り替える時期は？');
+  test('PC の幅でも、はみ出さない', async () => {
+    const page = await openNotes(NOTE, { width: 1280, height: 900 });
+    await page.getByTestId('doc-generate').first().click();
+    await page.getByTestId('doc').first().waitFor();
+    expect(await fits(page)).toBe(true);
+    if (SHOTS !== undefined) await page.screenshot({ path: `${SHOTS}/doc-pc.png`, fullPage: true });
+  });
+
+  test('経過の入れる欄に、いまの問題の見出しのひな形が出る（書かれた名前のまま。中身は先生が書く）', async () => {
+    const page = await openNotes(NOTE2);
+    await page.getByTestId('fab-compose').click();
+    await page.getByTestId('kind-chip-progress_note').click();
+    const template = page.getByTestId('template-0');
+    expect(await template.textContent()).toContain('いまの問題の見出し（1）'); // 解決と書かれた #2 は入らない
+    await page.getByTestId('text').fill('');
+    await template.click();
+    expect(await page.getByTestId('text').inputValue()).toBe('#1 市中肺炎\n');
     expect(await fits(page)).toBe(true);
   });
+
 });
 
 describe('書籍の参照元の設定', () => {

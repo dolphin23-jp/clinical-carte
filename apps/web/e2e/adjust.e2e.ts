@@ -171,6 +171,7 @@ describe('記載を調節する', () => {
     if (SHOTS !== undefined) await page.screenshot({ path: `${SHOTS}/adjust-source-iphone.png`, fullPage: true });
     await page.getByTestId('tab-problems').click();
     await expect.poll(() => page.getByTestId('thread-name').allTextContents()).toContain('便秘');
+    await page.getByTestId('tab-course').click();
     await page.getByTestId('tab-medications').click();
     expect(await page.getByTestId('medications').textContent()).toContain('酸化マグネシウム');
     expect(await fits(page)).toBe(true);

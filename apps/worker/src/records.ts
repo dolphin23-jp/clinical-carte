@@ -1,6 +1,7 @@
 // 記録の読み書き（段1：患者・受診・取り込んだ文・測定値）。書く表は、docs/04 の 6 の一覧のとおり。
 // ここは、形を確かめた後の値だけを受け取る（形の確かめは handler.ts、文の選別は intake.ts）。
-import { roundSummary, type RoundSummary } from '@clinical-carte/core';
+import { COURSE_CATEGORIES, type CourseCategory, DOC_ORIGINS, DOC_TYPES, type DocOrigin, type DocType, type ListItem, ListItemShape, roundSummary, type RoundSummary, type SavedDocument, SavedSection } from '@clinical-carte/core';
+import { z } from 'zod';
 import { ApRef, type ApOrigin, type ApPart, type FactField, type FactKind, type PlanKind, USER_EDIT_FIELDS, USER_EDIT_TARGETS, type UserEditField, type UserEditTarget } from '@clinical-carte/core';
 import type { AuthorRole, Comparator, EncounterKind, EventKind, HistoryAction, LabRow, MedicationAction, OrganizeReport, ProblemActivity, ProblemStatus, SegmentLabel, Sex, SourceKind } from '@clinical-carte/core';
 
@@ -39,6 +40,8 @@ export interface Source {
   readonly organizedVersion: string | null;
   /** 整理で確かめられなかった件数（種類と理由ごと） */
   readonly organizeReport: OrganizeReport;
+  /** 日をまたいだ場所（CA-047）。ここより後ろの、日の書かれていない時刻は翌日。なければ null */
+  readonly nextDayFrom: number | null;
 }
 
 export interface Segment {
@@ -59,6 +62,8 @@ export interface Medication {
   readonly doseText: string | null;
   readonly action: MedicationAction | null;
   readonly at: string | null;
+  /** 日時がおおよそのときの印（CA-056） */
+  readonly atApprox?: string | null;
   readonly start: number;
   readonly end: number;
   /** 本人が外した（見方から除く。戻せる） */
@@ -74,6 +79,7 @@ export interface Event {
   readonly kind: EventKind;
   readonly title: string;
   readonly at: string | null;
+  readonly atApprox?: string | null;
   readonly start: number;
   readonly end: number;
   readonly excluded: boolean;
@@ -158,6 +164,33 @@ export interface Observation {
   readonly end: number;
   readonly excluded: boolean;
   readonly edited: boolean;
+  /** 日時がおおよそのときの印（CA-056） */
+  readonly atApprox?: string | null;
+  /** AI が読んだ項目と値か（CA-056） */
+  readonly readBy?: 'rule' | 'ai';
+  /** AI が読んだ数が、書かれた場所の字に見つからない */
+  readonly unseen?: boolean;
+}
+
+/** 経過の出来事（CA-056） */
+export interface CourseItem {
+  readonly id: string;
+  readonly sourceId: string;
+  readonly encounterId: string;
+  readonly at: string | null;
+  readonly atApprox: string | null;
+  readonly category: CourseCategory;
+  readonly summary: string;
+  readonly start: number;
+  readonly end: number;
+}
+
+/** AI のプロブレムリスト（CA-057） */
+export interface ProblemListRow {
+  readonly madeAt: string;
+  readonly promptVersion: string;
+  readonly basis: string;
+  readonly items: readonly ListItem[];
 }
 
 export interface FactEdit {
@@ -249,6 +282,7 @@ function toSource(row: Row | null): Source | null {
     organized: organized === 'done' || organized === 'failed' ? organized : null,
     organizedVersion: text(row, 'organized_version'),
     organizeReport: toReport(text(row, 'organize_report')),
+    nextDayFrom: typeof row?.['next_day_from'] === 'number' ? row['next_day_from'] : null,
   };
 }
 
@@ -278,7 +312,37 @@ function toObservation(row: Row | null): Observation | null {
     start,
     end,
     ...editState(row),
+    atApprox: text(row, 'at_approx'),
+    readBy: text(row, 'read_by') === 'ai' ? 'ai' : 'rule',
+    unseen: int(row, 'unseen') === 1,
   };
+}
+
+function toCourse(row: Row): CourseItem | null {
+  const id = text(row, 'id');
+  const sourceId = text(row, 'source_id');
+  const encounterId = text(row, 'encounter_id');
+  const category = text(row, 'category');
+  const summary = text(row, 'summary');
+  const span = spanOf(row);
+  if (id === null || sourceId === null || encounterId === null || category === null || summary === null || span === null) return null;
+  if (!(COURSE_CATEGORIES as readonly string[]).includes(category)) return null;
+  return { id, sourceId, encounterId, at: text(row, 'at'), atApprox: text(row, 'at_approx'), category: category as CourseCategory, summary, ...span };
+}
+
+export function problemListOf(row: Row | null): ProblemListRow | null {
+  const madeAt = text(row, 'made_at');
+  const promptVersion = text(row, 'prompt_version');
+  const basis = text(row, 'basis');
+  if (row === null || madeAt === null || promptVersion === null || basis === null) return null;
+  let items: ListItem[] = [];
+  try {
+    const parsed: unknown = JSON.parse(text(row, 'items') ?? '[]');
+    if (Array.isArray(parsed)) items = parsed.map((x) => ListItemShape.safeParse(x)).flatMap((r) => (r.success ? [r.data] : []));
+  } catch {
+    // 読めない中身は、空として扱う
+  }
+  return { madeAt, promptVersion, basis, items };
 }
 
 /** 外した印と、本人が直したか（列がない古い読み出しでは、どちらも false） */
@@ -321,7 +385,7 @@ function toMedication(row: Row): Medication | null {
   const span = spanOf(row);
   if (id === null || sourceId === null || encounterId === null || name === null || span === null) return null;
   const action = text(row, 'action');
-  return { id, sourceId, encounterId, name, doseText: text(row, 'dose_text'), action: action as MedicationAction | null, at: text(row, 'at'), ...span, ...editState(row) };
+  return { id, sourceId, encounterId, name, doseText: text(row, 'dose_text'), action: action as MedicationAction | null, at: text(row, 'at'), atApprox: text(row, 'at_approx'), ...span, ...editState(row) };
 }
 
 function toEvent(row: Row): Event | null {
@@ -332,7 +396,7 @@ function toEvent(row: Row): Event | null {
   const title = text(row, 'title');
   const span = spanOf(row);
   if (id === null || sourceId === null || encounterId === null || kind === null || title === null || span === null) return null;
-  return { id, sourceId, encounterId, kind: kind as EventKind, title, at: text(row, 'at'), ...span, ...editState(row) };
+  return { id, sourceId, encounterId, kind: kind as EventKind, title, at: text(row, 'at'), atApprox: text(row, 'at_approx'), ...span, ...editState(row) };
 }
 
 function toProblem(row: Row): Problem | null {
@@ -400,6 +464,33 @@ function toApNote(row: Row): ApNote | null {
     // 読めない参照は、ないものとして扱う
   }
   return { id, encounterId, threadId, day, part, planKind: kind === 'dx' || kind === 'tx' || kind === 'ex' || kind === 'other' ? kind : null, text: body, origin, refs, enteredAt, updatedAt };
+}
+
+/** 残したカルテ記載の列（読み出し。段I） */
+export const DOCUMENT_COLUMNS = 'id, encounter_id, type, day, sections, origin, entered_at, updated_at';
+
+function toDocument(row: Row): SavedDocument | null {
+  const id = text(row, 'id');
+  const encounterId = text(row, 'encounter_id');
+  const type = text(row, 'type');
+  const day = text(row, 'day');
+  const origin = text(row, 'origin');
+  const enteredAt = text(row, 'entered_at');
+  const updatedAt = text(row, 'updated_at');
+  if (id === null || encounterId === null || type === null || day === null || origin === null || enteredAt === null || updatedAt === null) return null;
+  if (!(DOC_TYPES as readonly string[]).includes(type) || !(DOC_ORIGINS as readonly string[]).includes(origin)) return null;
+  let sections: z.infer<typeof SavedSection>[] = [];
+  try {
+    const parsed = z.array(SavedSection).safeParse(JSON.parse(text(row, 'sections') ?? '[]'));
+    if (parsed.success) sections = parsed.data;
+  } catch {
+    // 読めない中身は、空として扱う
+  }
+  return { id, encounterId, type: type as DocType, day, sections, origin: origin as DocOrigin, enteredAt, updatedAt };
+}
+
+export function documentOf(row: Row): SavedDocument | null {
+  return toDocument(row);
 }
 
 /** A/P の列（読み出し） */
@@ -520,6 +611,37 @@ export interface PatientRecord {
   readonly userEdits: UserEdit[];
   /** A/P（段5。本人が残した・採用した、決まったことだけ） */
   readonly apNotes: ApNote[];
+  /** 単位の「同じ目盛り」（CA-051。全患者に共通。外したものは入れない） */
+  readonly scaleLinks: ScaleLinkRow[];
+  /** 残したカルテ記載（段I。CA-054） */
+  readonly documents: SavedDocument[];
+  /** 経過の出来事（CA-056） */
+  readonly course: CourseItem[];
+  /** AI のプロブレムリスト（CA-057。まだなければ null） */
+  readonly problemList: ProblemListRow | null;
+}
+
+export interface ScaleLinkRow {
+  readonly id: string;
+  readonly name: string;
+  readonly unitA: string;
+  readonly unitB: string;
+  readonly createdAt: string;
+}
+
+const toScaleLink = (row: Row | null): ScaleLinkRow | null => {
+  const id = text(row, 'id');
+  const name = text(row, 'name');
+  const unitA = text(row, 'unit_a');
+  const unitB = text(row, 'unit_b');
+  const createdAt = text(row, 'created_at');
+  return id === null || name === null || unitA === null || unitB === null || createdAt === null ? null : { id, name, unitA, unitB, createdAt };
+};
+
+/** 使っている「同じ目盛り」の組（外したものは除く） */
+export async function listScaleLinks(db: Db): Promise<ScaleLinkRow[]> {
+  const rows = await db.prepare('SELECT id, name, unit_a, unit_b, created_at FROM scale_links WHERE removed_at IS NULL ORDER BY created_at, id').all();
+  return rows.results.map(toScaleLink).filter(present);
 }
 
 /** 問題の列（読み出し） */
@@ -528,22 +650,26 @@ export const PROBLEM_COLUMNS = 'id, source_id, encounter_id, name, status, activ
 export async function getRecord(db: Db, id: string): Promise<PatientRecord | null> {
   const patient = await getPatient(db, id);
   if (patient === null) return null;
-  const [encounters, sources, observations, segments, medications, events, problems, threads, history, factEdits, userEdits, apNotes] = await Promise.all([
+  const [encounters, sources, observations, segments, medications, events, problems, threads, history, factEdits, userEdits, apNotes, scaleLinks, documents, course, problemList] = await Promise.all([
     db.prepare('SELECT id, patient_id, kind, started, ended FROM encounters WHERE patient_id = ? ORDER BY started, id').bind(id).all(),
-    db.prepare('SELECT id, patient_id, encounter_id, kind, author_role, at, entered_at, text, replaced, organized, organized_version, organize_report FROM sources WHERE patient_id = ? ORDER BY id').bind(id).all(),
+    db.prepare('SELECT id, patient_id, encounter_id, kind, author_role, at, entered_at, text, replaced, organized, organized_version, organize_report, next_day_from FROM sources WHERE patient_id = ? ORDER BY id').bind(id).all(),
     db
-      .prepare('SELECT id, source_id, encounter_id, at, name, name_raw, kind, value, comparator, value_text, unit, span_start, span_end, excluded, origin FROM observations WHERE patient_id = ? ORDER BY source_id, ord')
+      .prepare('SELECT id, source_id, encounter_id, at, name, name_raw, kind, value, comparator, value_text, unit, span_start, span_end, excluded, origin, at_approx, read_by, unseen FROM observations WHERE patient_id = ? ORDER BY source_id, ord')
       .bind(id)
       .all(),
     db.prepare('SELECT id, source_id, label, span_start, span_end, origin FROM segments WHERE patient_id = ? ORDER BY source_id, span_start').bind(id).all(),
-    db.prepare('SELECT id, source_id, encounter_id, name, dose_text, action, at, span_start, span_end, excluded, origin FROM medications WHERE patient_id = ? ORDER BY source_id, span_start').bind(id).all(),
-    db.prepare('SELECT id, source_id, encounter_id, kind, title, at, span_start, span_end, excluded, origin FROM events WHERE patient_id = ? ORDER BY source_id, span_start').bind(id).all(),
+    db.prepare('SELECT id, source_id, encounter_id, name, dose_text, action, at, at_approx, span_start, span_end, excluded, origin FROM medications WHERE patient_id = ? ORDER BY source_id, span_start').bind(id).all(),
+    db.prepare('SELECT id, source_id, encounter_id, kind, title, at, at_approx, span_start, span_end, excluded, origin FROM events WHERE patient_id = ? ORDER BY source_id, span_start').bind(id).all(),
     db.prepare(`SELECT ${PROBLEM_COLUMNS} FROM problems WHERE patient_id = ? ORDER BY source_id, span_start`).bind(id).all(),
     db.prepare(`SELECT ${THREAD_COLUMNS} FROM problem_threads WHERE patient_id = ? ORDER BY id`).bind(id).all(),
     db.prepare('SELECT id, at, action, target, before, after FROM history WHERE patient_id = ? ORDER BY at DESC, id DESC LIMIT 200').bind(id).all(),
     db.prepare('SELECT id, at, fact, target, field, before, after FROM fact_edits WHERE patient_id = ? ORDER BY at DESC, id DESC LIMIT 500').bind(id).all(),
     db.prepare('SELECT id, at, target_type, target, field, before, after FROM user_edits WHERE patient_id = ? ORDER BY at DESC, id DESC LIMIT 500').bind(id).all(),
     db.prepare(`SELECT ${AP_COLUMNS} FROM ap_notes WHERE patient_id = ? ORDER BY day, entered_at, id`).bind(id).all(),
+    listScaleLinks(db),
+    db.prepare(`SELECT ${DOCUMENT_COLUMNS} FROM documents WHERE patient_id = ? ORDER BY day DESC, updated_at DESC, id DESC`).bind(id).all(),
+    db.prepare('SELECT id, source_id, encounter_id, at, at_approx, category, summary, span_start, span_end FROM course_items WHERE patient_id = ? ORDER BY source_id, span_start').bind(id).all(),
+    db.prepare('SELECT made_at, prompt_version, basis, items FROM problem_lists WHERE patient_id = ?').bind(id).first(),
   ]);
   return {
     patient,
@@ -559,6 +685,10 @@ export async function getRecord(db: Db, id: string): Promise<PatientRecord | nul
     factEdits: factEdits.results.map(toFactEdit).filter(present),
     userEdits: userEdits.results.map(toUserEdit).filter(present),
     apNotes: apNotes.results.map(toApNote).filter(present),
+    scaleLinks,
+    documents: documents.results.map(toDocument).filter(present),
+    course: course.results.map(toCourse).filter(present),
+    problemList: problemListOf(problemList),
   };
 }
 
@@ -601,10 +731,10 @@ export async function setEncounterEnd(db: Db, id: string, end: string | null): P
 }
 
 /** 文から作った行の表（文を消すと、一緒に消える。整理し直すと、入れ替わる） */
-export const FACT_TABLES = ['observations', 'segments', 'medications', 'events', 'problems'] as const;
+export const FACT_TABLES = ['observations', 'segments', 'medications', 'events', 'problems', 'course_items'] as const;
 
 /** 患者に付く、文からではない行の表（患者を消すと、一緒に消える。文を消しても残る：筋は、記載がなくなると見えなくなるだけ） */
-export const PATIENT_TABLES = ['problem_threads', 'history', 'fact_edits', 'user_edits', 'ap_notes', 'ap_history'] as const;
+export const PATIENT_TABLES = ['problem_threads', 'history', 'fact_edits', 'user_edits', 'ap_notes', 'ap_history', 'documents', 'document_history', 'problem_lists', 'problem_list_edits'] as const;
 
 /** 問題の行を、表から読む */
 export function problemOf(row: Record<string, unknown>): Problem | null {
@@ -626,8 +756,8 @@ export interface NewObservation {
 export async function saveSource(db: Db, source: Source, observations: readonly NewObservation[]): Promise<void> {
   await db.batch([
     db
-      .prepare('INSERT INTO sources (id, patient_id, encounter_id, kind, author_role, at, entered_at, text, replaced) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)')
-      .bind(source.id, source.patientId, source.encounterId, source.kind, source.authorRole, source.at, source.enteredAt, source.text, JSON.stringify(source.replaced)),
+      .prepare('INSERT INTO sources (id, patient_id, encounter_id, kind, author_role, at, entered_at, text, replaced, next_day_from) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
+      .bind(source.id, source.patientId, source.encounterId, source.kind, source.authorRole, source.at, source.enteredAt, source.text, JSON.stringify(source.replaced), source.nextDayFrom),
     ...observations.map(({ id, row }, index) =>
       db
         .prepare(
@@ -643,7 +773,7 @@ export function observationOf(source: Source, { id, row }: NewObservation): Obse
 }
 
 export async function getSource(db: Db, id: string): Promise<Source | null> {
-  return toSource(await db.prepare('SELECT id, patient_id, encounter_id, kind, author_role, at, entered_at, text, replaced, organized, organized_version, organize_report FROM sources WHERE id = ?').bind(id).first());
+  return toSource(await db.prepare('SELECT id, patient_id, encounter_id, kind, author_role, at, entered_at, text, replaced, organized, organized_version, organize_report, next_day_from FROM sources WHERE id = ?').bind(id).first());
 }
 
 /** 整理に失敗した印を付ける（それまでの整理の行は、残す） */

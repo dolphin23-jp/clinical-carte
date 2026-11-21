@@ -149,18 +149,58 @@ export interface LabTrend {
   readonly points: readonly ChartPoint[];
   /** グラフに置けなかった値の数（不等号・定性・日時なし） */
   readonly hidden: number;
+  /** 先生が「同じ目盛り」と決めてつないだ推移（CA-051）：つないだ単位の書き方（書かれていないものは null）と、決めの id。つないでいなければ、ない */
+  readonly joined?: { readonly units: readonly (string | null)[]; readonly linkIds: readonly string[] };
 }
 
-/** 検査の推移：項目と、書かれた単位ごとに、日時の順。最初に出てきた順 */
-export function labTrends(observations: readonly ChartObservation[]): LabTrend[] {
-  const groups = new Map<string, { name: string; unit: string | null; points: ChartPoint[]; hidden: number }>();
+/** 先生が決めた「同じ目盛り」（CA-051。全患者に共通）：項目の名前と、2つの単位の書き方（'' は単位の記載なし）。換算はしない */
+export interface ScaleLink {
+  readonly id: string;
+  readonly name: string;
+  readonly unitA: string;
+  readonly unitB: string;
+}
+
+/** 単位の書き方の、比べるための形（'' は単位の記載なし） */
+export const scaleUnitKey = (unit: string | null): string => (unit === null ? '' : unitKey(unit.trim()));
+
+/**
+ * 検査の推移：項目と、書かれた単位ごとに、日時の順。最初に出てきた順。
+ * 先生が「同じ目盛り」と決めた組（links。CA-051）は、1つの推移につなぐ（換算しない。点の字には、書かれた単位を添える）
+ */
+export function labTrends(observations: readonly ChartObservation[], links: readonly ScaleLink[] = []): LabTrend[] {
+  // 決めた組を、項目ごとに、単位の鍵どうしでつなぐ（a〜b、b〜c なら a〜c も同じ推移）
+  const parent = new Map<string, string>();
+  const find = (k: string): string => {
+    let r = k;
+    while (parent.has(r) && parent.get(r) !== r) r = parent.get(r) ?? r;
+    return r;
+  };
+  const linkIdsOf = new Map<string, string[]>();
+  for (const l of links) {
+    const a = `${l.name}\u0000${scaleUnitKey(l.unitA === '' ? null : l.unitA)}`;
+    const b = `${l.name}\u0000${scaleUnitKey(l.unitB === '' ? null : l.unitB)}`;
+    if (a === b) continue;
+    const ra = find(a);
+    const rb = find(b);
+    if (ra !== rb) parent.set(rb, ra);
+    parent.set(a, find(a));
+    parent.set(b, find(b));
+  }
+  for (const l of links) {
+    const root = find(`${l.name}\u0000${scaleUnitKey(l.unitA === '' ? null : l.unitA)}`);
+    linkIdsOf.set(root, [...(linkIdsOf.get(root) ?? []), l.id]);
+  }
+  const groups = new Map<string, { name: string; unit: string | null; units: (string | null)[]; points: ChartPoint[]; hidden: number }>();
   for (const o of observations) {
     if (o.kind === 'vital') continue;
     const name = o.name ?? o.nameRaw;
     const unit = o.unit === null ? null : o.unit.trim();
-    const key = `${name}\u0000${unit === null ? '' : unitKey(unit)}`;
-    const group = groups.get(key) ?? { name, unit, points: [], hidden: 0 };
+    const own = `${name}\u0000${scaleUnitKey(unit)}`;
+    const key = find(own);
+    const group = groups.get(key) ?? { name, unit, units: [], points: [], hidden: 0 };
     groups.set(key, group);
+    if (!group.units.some((u) => scaleUnitKey(u) === scaleUnitKey(unit))) group.units.push(unit);
     if (!plottable(o)) {
       group.hidden += 1;
       continue;
@@ -170,7 +210,9 @@ export function labTrends(observations: readonly ChartObservation[]): LabTrend[]
       group.hidden += 1;
       continue;
     }
-    group.points.push({ ...time, at: o.at, value: o.value, text: o.valueText });
+    // つないだ推移では、点の字に書かれた単位を添える（どの書き方の値かを、いつも見せる）
+    const joined = linkIdsOf.has(key);
+    group.points.push({ ...time, at: o.at, value: o.value, text: joined ? `${o.valueText}${unit === null ? '（単位の記載なし）' : ` ${unit}`}` : o.valueText });
   }
   // 同じ項目の推移（単位の違うもの・単位の書かれていないもの）は、隣どうしに並べる。単位の書かれていない値を、書かれた単位の推移に入れない
   // （「WBC 12.3」と「WBC 12300 /μL」のように、単位がないことは同じ目盛りであることを意味しない。桁を当てない・換算しない）
@@ -182,7 +224,11 @@ export function labTrends(observations: readonly ChartObservation[]): LabTrend[]
   return entries
     .map(([key, g], i) => ({ key, g, i }))
     .sort((a, b) => (firstIndex.get(a.g.name) ?? 0) - (firstIndex.get(b.g.name) ?? 0) || a.i - b.i)
-    .map(({ key, g }) => ({ key, name: g.name, unit: g.unit, points: g.points.sort(byTime), hidden: g.hidden }));
+    .map(({ key, g }) => {
+      const ids = linkIdsOf.get(key);
+      const base = { key, name: g.name, unit: g.unit, points: g.points.sort(byTime), hidden: g.hidden };
+      return ids !== undefined && g.units.length > 1 ? { ...base, joined: { units: g.units, linkIds: ids } } : base;
+    });
 }
 
 /** 時間の範囲：値の最初から最後まで。受診の開始・終わりも含める。値が1つ・同じ時刻だけのときは、前後に半日ずつ広げる */
@@ -292,4 +338,41 @@ export function medicationSpans(entries: readonly { readonly action: string | nu
     else spans.push({ from: prev.time.t, to: cur.time.t });
   }
   return spans;
+}
+
+/** 二重をたたむ値の形（サーバーの行の、使う分だけ） */
+export interface FoldObservation {
+  readonly id: string;
+  readonly sourceId: string;
+  readonly at: string | null;
+  readonly name: string | null;
+  readonly nameRaw: string;
+  readonly value: number | null;
+  readonly comparator: string | null;
+  readonly valueText: string;
+}
+
+/**
+ * 同じ値の二重（CA-049）：経過・入院時などの記載の中で挙げ直した値のうち、同じ日に、検査結果・バイタルの文に、同じ項目・同じ値（不等号も同じ）が
+ * あるもの。経過表・検査の推移と表・いま・問題では出さない（消さない。記録の各記載の「整理した事実」には残る）。
+ * 検査結果・バイタルの文どうしは、たたまない（別の時刻に測った同じ値でありうる）。fromValueSheet は、その文が検査結果・バイタルの文か。
+ */
+export function foldedObservationIds(list: readonly FoldObservation[], fromValueSheet: (sourceId: string) => boolean): Set<string> {
+  const key = (o: FoldObservation): string | null => {
+    if (o.at === null) return null;
+    const name = o.name ?? o.nameRaw.normalize('NFKC').toLowerCase().replace(/\s+/g, '');
+    const value = o.value !== null && Number.isFinite(o.value) ? String(o.value) : o.valueText.normalize('NFKC').replace(/\s+/g, '');
+    return `${o.at.slice(0, 10)}|${name}|${o.comparator ?? ''}|${value}`;
+  };
+  const sheet = new Set<string>();
+  for (const o of list) {
+    const k = key(o);
+    if (k !== null && fromValueSheet(o.sourceId)) sheet.add(k);
+  }
+  const out = new Set<string>();
+  for (const o of list) {
+    const k = key(o);
+    if (k !== null && !fromValueSheet(o.sourceId) && sheet.has(k)) out.add(o.id);
+  }
+  return out;
 }

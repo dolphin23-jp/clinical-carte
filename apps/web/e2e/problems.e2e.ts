@@ -227,6 +227,10 @@ describe('いまの状態（段3b）', () => {
     await state.waitFor();
     expect(await page.getByTestId('one-liner').textContent()).toBe('72歳 男性。入院 2026-11-17〜（記録の上では 2病日まで）。いまの問題：#1 市中肺炎。');
     expect(await page.getByTestId('state-asof').textContent()).toContain('記録の上で最後：2026-11-18 09:00');
+    // いまの問題は、はじめは名前の1行だけ。押すと、最後の A・P が開く
+    expect(await page.getByTestId('state-note').count()).toBe(0);
+    expect(await page.getByTestId('state-problem-head').first().textContent()).toContain('#1 市中肺炎');
+    await page.getByTestId('state-problem-head').first().click();
     const note = await page.getByTestId('state-note').first().textContent();
     expect(note).toContain('A) 抗菌薬に反応している');
     expect(note).toContain('P) 抗菌薬を継続');
@@ -248,9 +252,11 @@ describe('記載全体の P と、経過表の足した段（2026-11-21 の本�
     await send(page, D5, '2026-11-18');
     await page.getByTestId('tab-state').click();
     await page.getByTestId('state').waitFor();
+    await page.getByTestId('state-open-all').click();
     expect(await page.getByTestId('state-shared-plan').textContent()).toContain('P) 輸液は少量ずつ');
     const notes = await page.getByTestId('state-problem').allTextContents();
     expect(notes.find((t) => t.includes('#2 急性腎障害'))).not.toContain('P) 輸液');
+    await page.getByTestId('tab-course').click();
     await page.getByTestId('tab-overview').click();
     for (const key of ['map', 'jcs', 'o2']) await page.getByTestId(`panel-${key}`).waitFor();
     expect(await fits(page)).toBe(true);
@@ -274,18 +280,19 @@ describe('問題の記載に書かれた値・薬（段3c）と、回診リス�
     await page.getByTestId('tab-problems').click();
     const pneu = page.getByTestId('problem-line').filter({ has: page.getByTestId('thread-name').filter({ hasText: '#1 市中肺炎' }) });
     const related = pneu.getByTestId('thread-related');
-    await related.locator('summary').click();
+    await related.locator(':scope > summary').click();
     const names = await related.getByTestId('trend').locator('.trend-name').allTextContents();
     expect(names.sort()).toEqual(['CRP', 'WBC']); // Na は #2 の範囲なので、#1 には出ない
     expect(await related.getByTestId('thread-related-meds').textContent()).toContain('セフトリアキソン');
     const hypoNa = page.getByTestId('problem-line').filter({ has: page.getByTestId('thread-name').filter({ hasText: '#2 低Na血症' }) });
-    await hypoNa.getByTestId('thread-related').locator('summary').click();
+    await hypoNa.getByTestId('thread-related').locator(':scope > summary').click();
     expect(await hypoNa.getByTestId('thread-related').getByTestId('trend').locator('.trend-name').allTextContents()).toEqual(['Na']);
     expect(await fits(page)).toBe(true);
     if (SHOTS !== undefined) await page.screenshot({ path: `${SHOTS}/related-iphone.png`, fullPage: true });
 
     // 「いま」にも、記載に書かれた値の最新と薬
     await page.getByTestId('tab-state').click();
+    await page.getByTestId('state-open-all').click();
     const values = page.getByTestId('state-problem-values').first();
     expect(await values.textContent()).toContain('CRP 6.8');
     expect(await page.getByTestId('state-problem-meds').first().textContent()).toContain('セフトリアキソン 継続');

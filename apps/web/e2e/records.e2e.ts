@@ -80,6 +80,12 @@ async function send(page: Page, text: string, kind?: string): Promise<void> {
   await page.getByTestId('send').click();
 }
 
+/** 受診の切り替え・直す操作は、畳んだ欄の中（段H）。開いていなければ開く */
+async function encounterMenu(page: Page): Promise<void> {
+  const d = page.getByTestId('encounter-details');
+  if (!(await d.evaluate((el) => (el as HTMLDetailsElement).open))) await d.locator(':scope > summary').click();
+}
+
 const fits = (page: Page) => page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth);
 
 describe('患者', () => {
@@ -169,6 +175,59 @@ describe('文を入れる', () => {
   });
 });
 
+describe('続きを足す（CA-050）', () => {
+  test('保存した記載の末尾に文を足せる。足す文も選別を通り、氏名は置き換わる。前の文はそのまま', async () => {
+    const page = await open();
+    await newPatient(page);
+    await send(page, '午前の回診。解熱傾向。', '経過（プログレスノート）');
+    await page.getByTestId('composer-done').waitFor();
+    const card = page.getByTestId('source').first();
+    await card.getByTestId('append').locator(':scope > summary').click();
+    await card.getByTestId('append-text').fill(`夕方、${NAME}さんの家族に説明。`);
+    await card.getByTestId('append-save').click();
+    await expect.poll(() => page.getByTestId('source-text').first().textContent()).toBe(`午前の回診。解熱傾向。\n夕方、${IDENTIFIER_TOKENS.person}さんの家族に説明。`);
+    expect(await page.content()).not.toContain(NAME);
+    expect(problems).toEqual([]);
+  });
+});
+
+describe('日をまたいだ記載（CA-047）', () => {
+  test('時刻が大きくさかのぼると、入れる前に1回だけ確かめる。答えるまで入れられず、答えは記録の札に出る', async () => {
+    const page = await open();
+    await newPatient(page);
+    await page.getByTestId('kind').selectOption({ label: '看護記録' });
+    await page.getByTestId('at-day').fill('2026-11-20');
+    await page.getByTestId('text').fill('23:30 不穏あり。');
+    expect(await page.getByTestId('composer').getByTestId('next-day').count()).toBe(0);
+    await page.getByTestId('text').fill('23:30 不穏あり。\n0:15 報告。\n3:00 BT 37.4');
+    const ask = page.getByTestId('composer').getByTestId('next-day');
+    await ask.waitFor();
+    expect(await ask.textContent()).toContain('23:30 のあとに 00:15');
+    expect(await page.getByTestId('send').isDisabled()).toBe(true);
+    expect(await page.getByTestId('next-day-yes').textContent()).toBe('翌日（11/21）');
+    await page.getByTestId('next-day-yes').click();
+    expect(await page.getByTestId('send').isDisabled()).toBe(false);
+    await page.getByTestId('send').click();
+    await page.getByTestId('composer-done').waitFor();
+    // 保存のあと、欄は空になり、確かめも消える
+    expect(await page.getByTestId('composer').getByTestId('next-day').count()).toBe(0);
+    expect(await page.getByTestId('source').first().textContent()).toContain('0:15 からあとの、日の書かれていない時刻は翌日として読んでいます');
+    expect(problems).toEqual([]);
+  });
+
+  test('「同じ日」を選ぶと、札は出ない', async () => {
+    const page = await open();
+    await newPatient(page);
+    await page.getByTestId('at-day').fill('2026-11-20');
+    await page.getByTestId('text').fill('22:00 発熱。\n6:00 解熱。');
+    await page.getByTestId('next-day-no').click();
+    await page.getByTestId('send').click();
+    await page.getByTestId('composer-done').waitFor();
+    expect(await page.getByTestId('source').first().textContent()).not.toContain('翌日として読んでいます');
+    expect(problems).toEqual([]);
+  });
+});
+
 describe('検査・バイタル', () => {
   test('ずらりと打つと、値が表に並ぶ。読めなかった部分は、理由つきで出る。色・矢印は付かない', async () => {
     const page = await open();
@@ -179,13 +238,15 @@ describe('検査・バイタル', () => {
     const unread = page.getByTestId('unread').first();
     expect(await unread.textContent()).toContain('「昨日より改善」');
 
+    await page.getByTestId('tab-course').click();
+
     await page.getByTestId('tab-values').click();
     const table = page.getByTestId('lab-table');
     await table.waitFor();
     const rows = await table.locator('tbody tr').allTextContents();
     // バイタルが先
     expect(rows).toEqual(['収縮期血圧78', '拡張期血圧40', 'WBC12.3', 'CRP<0.1', '尿潜血(-)']);
-    expect(await table.locator('thead').textContent()).toContain('2026-11-20 09:00');
+    expect(await table.locator('thead').textContent()).toContain('2026-11-20'); // 列は日ごと（段H）
     // 判定を示すもの（色のクラス・矢印）がない
     const html = await table.innerHTML();
     expect(html).not.toMatch(/↑|↓|high|low|abnormal|alert|warn/i);
@@ -202,9 +263,10 @@ describe('検査・バイタル', () => {
     await page.getByTestId('text').fill('WBC 15.1');
     await page.getByTestId('send').click();
     await expect.poll(() => page.getByTestId('source').count()).toBe(2);
+    await page.getByTestId('tab-course').click();
     await page.getByTestId('tab-values').click();
     const table = page.getByTestId('lab-table');
-    expect(await table.locator('thead th').allTextContents()).toEqual(['項目', '2026-11-19 06:30', '2026-11-20 09:00']);
+    expect(await table.locator('thead th').allTextContents()).toEqual(['項目', '2026-11-19', '2026-11-20']); // 列は日ごと（段H）
     expect(await table.locator('tbody tr').allTextContents()).toEqual(['WBC15.112.3', 'CRP8.5']);
   });
 });
@@ -213,11 +275,13 @@ describe('受診', () => {
   test('終わり（退院）を入れると、見出しに出る。受診を足すと、切り替えられる', async () => {
     const page = await open();
     await newPatient(page);
+    await encounterMenu(page);
     await page.getByTestId('set-end').click();
     await page.getByTestId('end-day').fill('2026-12-01');
     await page.getByTestId('save-end').click();
     await expect.poll(() => page.getByTestId('headline').textContent()).toBe('72歳 男 ｜ 入院 2026-11-18〜2026-12-01');
 
+    await encounterMenu(page);
     await page.getByTestId('add-encounter').click();
     await page.getByTestId('encounter-form').locator('input[type=date]').fill('2026-12-15');
     await page.getByTestId('create-encounter').click();
@@ -230,6 +294,7 @@ describe('受診', () => {
     const page = await open();
     await newPatient(page, '62', '男', '救急', '2026-11-21');
     expect(await page.getByTestId('headline').textContent()).toContain('救急 2026-11-21');
+    await encounterMenu(page);
     await page.getByTestId('set-kind').click();
     expect(await page.getByTestId('kind-inpatient').getAttribute('aria-checked')).toBe('true');
     await page.getByTestId('save-kind').click();
@@ -241,6 +306,7 @@ describe('受診', () => {
   test('終わりを、始まりより前にはできない', async () => {
     const page = await open();
     await newPatient(page);
+    await encounterMenu(page);
     await page.getByTestId('set-end').click();
     await page.getByTestId('end-day').fill('2026-11-01');
     await page.getByTestId('save-end').click();
@@ -260,6 +326,7 @@ describe('消す', () => {
     await expect.poll(() => page.getByTestId('source').count()).toBe(0);
     expect(server.db.raw.prepare('SELECT COUNT(*) AS n FROM observations').get()).toEqual({ n: 0 });
 
+    await encounterMenu(page); // 患者を消すは、受診の欄の中（段H）
     await page.getByTestId('delete-patient').click();
     await page.getByTestId('confirm-delete-patient').click();
     await page.getByTestId('home').waitFor();
@@ -281,6 +348,7 @@ describe('電話の幅と、端末の保存先', () => {
       await page.getByTestId('composer-done').waitFor();
       await expect.poll(() => page.getByTestId('text').inputValue()).toBe('');
     }
+    await page.getByTestId('tab-course').click();
     await page.getByTestId('tab-values').click();
     await page.getByTestId('lab-table').waitFor();
     expect(await fits(page)).toBe(true);
@@ -295,5 +363,29 @@ describe('電話の幅と、端末の保存先', () => {
     }));
     expect(seen).toEqual({ cookie: '', local: 0, session: 0, databases: 0, caches: 0 });
     expect(problems).toEqual([]);
+  });
+});
+
+describe('記録のタブの縮め（段I）', () => {
+  test('いちばん新しい記載だけが開き、ほかは「日時・種類・冒頭の1行」の1行。押すと開く。すべて開く・畳む', async () => {
+    const page = await open('iPhone 15');
+    await newPatient(page);
+    await send(page, '1つ目の記載。午前の回診。\n2行目');
+    await send(page, '2つ目の記載。午後の回診。');
+    await page.getByTestId('tab-notes').click();
+    const rows = page.getByTestId('source');
+    await expect.poll(() => rows.count()).toBe(2);
+    // 新しい順：はじめの1件は開いて全文、2件目は1行
+    expect(await rows.nth(0).getByTestId('source-text').count()).toBe(1);
+    expect(await rows.nth(1).getByTestId('source-text').count()).toBe(0);
+    expect(await rows.nth(1).getByTestId('source-summary').textContent()).toContain('1つ目の記載。午前の回診。');
+    expect(await rows.nth(1).getByTestId('source-summary').textContent()).not.toContain('2行目');
+    await rows.nth(1).getByTestId('source-summary').click();
+    expect(await rows.nth(1).getByTestId('source-text').textContent()).toContain('2行目');
+    await page.getByTestId('sources-open-all').click();
+    expect(await page.getByTestId('source-text').count()).toBe(0);
+    await page.getByTestId('sources-open-all').click();
+    expect(await page.getByTestId('source-text').count()).toBe(2);
+    expect(await fits(page)).toBe(true);
   });
 });

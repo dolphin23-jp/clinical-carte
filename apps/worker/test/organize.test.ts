@@ -1,5 +1,5 @@
 // 整理の API（段2）：保存した文を AI に整理させ、確かめた行だけを入れる。AI は、試験の代役。
-import type { OrganizeAnswer } from '@clinical-carte/core';
+import { type OrganizeAnswer, TEXT_LIMIT } from '@clinical-carte/core';
 import { describe, expect, test } from 'vitest';
 
 import type { OrganizerResult } from '../src/organizer.ts';
@@ -216,5 +216,94 @@ describe('文に書かれた時刻を、自動で記録の時刻にする（2026
       ['心拍数', '2026-11-21T10:44'],
       ['K', '2026-11-21T10:50'],
     ]);
+  });
+});
+
+describe('日をまたいだ記載（CA-047）', () => {
+  // 氏名が、日をまたぐ時刻より前にある：置き換えで文の長さが変わっても、場所は保存した文で決め直す
+  const NIGHT = `夜勤帯 ${NAME}さん\n23:30 不穏あり。\n0:15 報告。\n3:00 BT 37.4`;
+  const NIGHT_ANSWER: OrganizeAnswer = { ...EMPTY_ORGANIZE, when: '23:30', measurements: [{ quote: 'BT 37.4', when: '3:00', specimen: null }] };
+
+  const enter = async (nextDay: boolean | undefined) => {
+    const organizer = fakeOrganizer(() => ({ ok: true, answer: NIGHT_ANSWER }));
+    const w = world({ selector: fakeSelector([{ kind: 'person', quote: NAME }]), organizer });
+    const { cookie } = await registered(w);
+    const created = (await (await w.call('POST', '/api/patients', { cookie, body: { age: 80, ageOn: '2026-11-16', sex: 'female', encounter: { kind: 'inpatient', start: '2026-11-16' } } })).json()) as { patient: { id: string }; encounter: { id: string } };
+    const body = { kind: 'nursing', authorRole: 'nurse', at: '2026-11-16', text: NIGHT, ...(nextDay === undefined ? {} : { nextDay }) };
+    const saved = (await (await w.call('POST', `/api/encounters/${created.encounter.id}/sources`, { cookie, body })).json()) as { source: { id: string; text: string; nextDayFrom: number | null } };
+    expect((await w.call('POST', `/api/sources/${saved.source.id}/organize`, { cookie, body: {} })).status).toBe(200);
+    const rec = await recordOf({ w, cookie, patientId: created.patient.id, sourceId: saved.source.id });
+    return { saved: saved.source, rec, w, cookie, sourceId: saved.source.id };
+  };
+
+  test('確かめて「翌日」なら、保存した文の場所を持ち、そこより後ろの時刻だけの言い方を翌日に読む', async () => {
+    const { saved, rec } = await enter(true);
+    expect(saved.text).not.toContain(NAME);
+    expect(saved.nextDayFrom).toBe(saved.text.indexOf('0:15'));
+    expect(rec.sources[0]?.at).toBe('2026-11-16T23:30');
+    expect(rec.observations.map((o) => o.at)).toEqual(['2026-11-17T03:00']);
+  });
+
+  test('確かめていない・「同じ日」なら、これまでどおり', async () => {
+    for (const nextDay of [undefined, false]) {
+      const { saved, rec } = await enter(nextDay);
+      expect(saved.nextDayFrom).toBeNull();
+      expect(rec.observations.map((o) => o.at)).toEqual(['2026-11-16T03:00']);
+    }
+  });
+
+  test('打ち直すと、答えのとおりに決め直す（答えがなければ、前の答えのまま）', async () => {
+    const { w, cookie, sourceId } = await enter(true);
+    const retype = (body: unknown) => w.call('PUT', `/api/sources/${sourceId}/text`, { cookie, body });
+    const row = () => w.db.raw.prepare('SELECT text, next_day_from FROM sources WHERE id = ?').get(sourceId) as { text: string; next_day_from: number | null };
+    expect((await retype({ text: `追記\n${NIGHT}` })).status).toBe(200);
+    expect(row().next_day_from).toBe(row().text.indexOf('0:15'));
+    expect((await retype({ text: NIGHT, nextDay: false })).status).toBe(200);
+    expect(row().next_day_from).toBeNull();
+    expect((await retype({ text: NIGHT })).status).toBe(200);
+    expect(row().next_day_from).toBeNull();
+  });
+});
+
+describe('続きを足す（CA-050）', () => {
+  test('足す文だけを選別に通し、改行をはさんで末尾に足す。前の文は1字も変えない。整理はやり直し、印だけを残す', async () => {
+    const s = await setup();
+    await s.w.call('POST', `/api/sources/${s.sourceId}/organize`, { cookie: s.cookie, body: {} });
+    const before = s.w.db.raw.prepare('SELECT text, replaced FROM sources WHERE id = ?').get(s.sourceId) as { text: string; replaced: string };
+    const seenBefore = (s.w.deps.selector as unknown as { seen: string[] }).seen.length;
+    const r = await s.w.call('POST', `/api/sources/${s.sourceId}/append`, { cookie: s.cookie, body: { text: `夕方 ${NAME}さんの家族に説明。` } });
+    expect(r.status).toBe(200);
+    // 選別に送ったのは、足す文だけ
+    expect((s.w.deps.selector as unknown as { seen: string[] }).seen.slice(seenBefore)).toEqual([`夕方 ${NAME}さんの家族に説明。`]);
+    const after = s.w.db.raw.prepare('SELECT text, replaced, organized FROM sources WHERE id = ?').get(s.sourceId) as { text: string; replaced: string; organized: string | null };
+    expect(after.text.startsWith(`${before.text}\n`)).toBe(true);
+    expect(after.text).not.toContain(NAME);
+    expect(JSON.parse(after.replaced)).toEqual({ person: (JSON.parse(before.replaced) as { person: number }).person + 1 });
+    expect(after.organized).toBeNull();
+    const edits = s.w.db.raw.prepare("SELECT field, before, after FROM user_edits WHERE target = ?").all(s.sourceId);
+    expect(edits).toEqual([{ field: 'text', before: null, after: 'append' }]);
+  });
+
+  test('足すと上限を超える・空の文は、保存しない', async () => {
+    const s = await setup();
+    const stored = () => (s.w.db.raw.prepare('SELECT text FROM sources WHERE id = ?').get(s.sourceId) as { text: string }).text;
+    const before = stored();
+    const long = 'あ'.repeat(TEXT_LIMIT - before.length);
+    expect((await s.w.call('POST', `/api/sources/${s.sourceId}/append`, { cookie: s.cookie, body: { text: long } })).status).toBe(400);
+    expect((await s.w.call('POST', `/api/sources/${s.sourceId}/append`, { cookie: s.cookie, body: { text: '   ' } })).status).toBe(400);
+    expect(stored()).toBe(before);
+    // ちょうど上限までは足せる（改行の1字を含む）
+    expect((await s.w.call('POST', `/api/sources/${s.sourceId}/append`, { cookie: s.cookie, body: { text: long.slice(1) } })).status).toBe(200);
+    expect(stored().length).toBe(TEXT_LIMIT);
+  });
+
+  test('日をまたいだ答え（CA-047）：足したあとの文で場所を決める。答えがなければ、前の場所のまま', async () => {
+    const s = await setup();
+    const row = () => s.w.db.raw.prepare('SELECT text, next_day_from FROM sources WHERE id = ?').get(s.sourceId) as { text: string; next_day_from: number | null };
+    expect((await s.w.call('POST', `/api/sources/${s.sourceId}/append`, { cookie: s.cookie, body: { text: '23:30 不穏。\n0:15 報告。', nextDay: true } })).status).toBe(200);
+    const first = row();
+    expect(first.next_day_from).toBe(first.text.indexOf('0:15'));
+    expect((await s.w.call('POST', `/api/sources/${s.sourceId}/append`, { cookie: s.cookie, body: { text: '3:00 入眠。' } })).status).toBe(200);
+    expect(row().next_day_from).toBe(first.next_day_from);
   });
 });

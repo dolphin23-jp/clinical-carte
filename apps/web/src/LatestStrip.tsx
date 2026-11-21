@@ -1,4 +1,4 @@
-// いちばん新しいバイタル（患者の画面の上）。数と、いつの値かを出すだけ（判定しない・色分けしない）。
+// いちばん新しいバイタル（「いま」の上。段H で見出しから移し、横1行の小さな札にした）。数と、いつの値かを出すだけ（判定しない・色分けしない）。
 import { latestPoint, untimedSameDay, type VitalPanel } from '@clinical-carte/core';
 
 import { shortWhen } from './charts/format.ts';

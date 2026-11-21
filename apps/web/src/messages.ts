@@ -1,5 +1,5 @@
 // サーバーの誤りの名前を、画面の文にする。
-import { MAX_DEVICES } from '@clinical-carte/core';
+import { MAX_DEVICES, TEXT_LIMIT } from '@clinical-carte/core';
 
 import type { ApiError } from './net/api.ts';
 
@@ -35,14 +35,16 @@ export function errorMessage(error: ApiError, left?: number): string {
       return 'AI の答えを読めませんでした。文は保存していません。もう一度送ってください。';
     case 'conflict':
       return 'ほかの端末で、先に直されていました。読み込み直した内容を確かめて、もう一度直してください。';
-    case 'draft_empty':
-      return '草案にできる記載がありません（問題ごとの A・P の区切りが、まだありません）。記録の「整理し直す」で、区切りが付きます。';
-    case 'ap_empty':
-      return 'この日までの、この問題の記載がありません（問題の区切りが、まだありません）。記録の「整理し直す」で、区切りが付きます。';
+    case 'document_empty':
+      return 'この日までに、この記載の資料になる記録がありません。日か種類を選び直してください。';
+    case 'list_empty':
+      return 'まだ整理した記録がないので、プロブレムリストを組めません。記録を入れて整理してから、もう一度試してください。';
     case 'shape':
-      return '問いに、電話番号・メールなどの形があるので、送りませんでした。消してから、もう一度送ってください。';
+      return '記載か頼みに、電話番号・メールなどの形があるので、送りませんでした。消してから、もう一度送ってください。';
     case 'bad_span':
       return '選んだ範囲を足せませんでした。1行の中で選び、値は「Na 128」のように名前と値をひと続きに選んでください。';
+    case 'too_long':
+      return `足すと、1つの記載の上限（${String(TEXT_LIMIT)} 字）を超えます。新しい記載として入れてください。文は保存していません。`;
     case 'selection_failed':
       return '識別情報の場所を確かめられませんでした。文は保存していません。もう一度送るか、氏名・番号などを消してから送ってください。';
   }

@@ -198,6 +198,11 @@ AI が返すのは、次の3つだけ（構造化した出力）。
 | `user_edits` | 本人が調節したとき（CA-029：問題の確からしさ・状態・並び・外す・統合を解く・打った名前、記載の種類・日時・書いた人、区切りの見出し、値の項目名、なぞって足した、文を打ち直した） |
 | `ap_notes` | 本人が A/P を残す・直す・消すとき（段5。本人が書いたもの・AI の案から本人が選んだもの。文は選別を通した後の字） |
 | `ap_history` | 本人が A/P を残す・直す・種類を選び直す・消すとき（段5。**文は入らない**） |
+| `documents` | 本人がカルテ記載を「保存する」・直す・消すとき（段I。CA-054。文は選別を通した後の字） |
+| `document_history` | 本人がカルテ記載を残す・直す・消すとき（段I。**文は入らない**） |
+| `course_items` | 整理（段J。CA-056）のとき（その文の行を入れ替える）・文を消すとき・患者を消すとき。AI の短い要約と、引用の場所 |
+| `problem_lists` | AI がプロブレムリストを組んだとき・本人が直したとき（CA-057。患者ごとに1つ） |
+| `problem_list_edits` | 本人がプロブレムリストを直したとき（CA-057。名前の前後は選別を通した後の字） |
 | `devices` | 端末の登録・外すとき・その日はじめて使ったとき（1日に1回） |
 | `entrance_daily` | 合鍵を間違えたとき |
 | `usage_daily` | AI を呼んだとき |
@@ -206,7 +211,7 @@ AI が返すのは、次の3つだけ（構造化した出力）。
 
 - 打った原文・AI へ送った文・AI の答えそのものは、どの表にも書かない。ログにも出さない。
 - 表を足すときは、先にこの一覧を直す。
-- いまある表（段0〜段5）は `devices`・`entrance_daily`・`patients`・`encounters`・`sources`・`observations`・`usage_daily`・`schema_migrations`・`segments`・`medications`・`events`・`problems`・`problem_threads`・`history`・`fact_edits`・`user_edits`・`ap_notes`・`ap_history`。`apps/worker/test/writes.test.ts` が、migrations が作る表と、ソースの SQL が書く表を、この一覧と突き合わせる。
+- いまある表（段0〜段5）は `devices`・`entrance_daily`・`patients`・`encounters`・`sources`・`observations`・`usage_daily`・`schema_migrations`・`segments`・`medications`・`events`・`problems`・`problem_threads`・`history`・`fact_edits`・`user_edits`・`ap_notes`・`ap_history`・`scale_links`・`documents`・`document_history`・`course_items`・`problem_lists`・`problem_list_edits`。`apps/worker/test/writes.test.ts` が、migrations が作る表と、ソースの SQL が書く表を、この一覧と突き合わせる。
 
 ## 7. 段1 で作ったものと、案との違い
 
@@ -274,7 +279,7 @@ AI が返すのは、次の3つだけ（構造化した出力）。
 - **直せること**：外す・戻す。投薬の動き（開始・変更・中止・継続・記載なし）。できごとの種類。日時（日だけ・日時・不明）。打つ欄はない（打った文は選別を通す決まり。docs/01 の 2）。値の数・名前・用量・できごとの題は直さない（文に書かれたとおりのもの。違うなら外す）。
 - **整理し直したとき**：同じ文の、同じ場所・同じ字（投薬の名前・できごとの題・測定値の書かれた名前）の行に、直した値・外した印を引き継ぎ、origin を self のままにする。場所や字が変われば引き継がない（直した記録は残る）。
 - **見方**：外した事実は、経過表・検査・投薬・問題・いま・草案・回診リストの計算から除く。記載ごとの「事実を見る・直す」には出す（戻せる）。
-- **草案（段4）は、どの表にも書かない**（保存しない）。AI を呼んだ回数だけが、`usage_daily` に数えられる。
+- **出したカルテ記載・相談のやりとりは、どの表にも書かない**（保存しない。段I）。AI を呼んだ回数だけが、`usage_daily` に数えられる。残すのは、本人が「保存する」を押した記載だけ（15）。
 
 ## 11. 本人の調節で作ったもの（CA-029）
 
@@ -305,3 +310,56 @@ AI が返すのは、次の3つだけ（構造化した出力）。
 - `origin` の `ai_edited` は、サーバーだけが付ける（AI の案から採用したものを本人が直したとき）。画面から送れるのは self と ai だけ。
 - 記載の S・O は保存しない：画面が、保存した文の区切りから、その場で並べる（決定論）。
 - 統合した筋に残した A/P は、統合先の筋に出す（`thread_id` は書き換えない）。
+
+## 13. 日をまたいだ記載で足した列（CA-047）
+
+作った列は、`apps/worker/migrations/0008_next_day.sql`。場所の決め方は、`packages/core/src/time/when.ts` の `nextDayPoint`。
+
+| 表 | 足した列 | 中身 |
+|---|---|---|
+| `sources` | next_day_from | 記載の中で、日をまたいだと本人が入れる欄で確かめた場所（**保存した文の中の位置**。整数だけ）。ここより後ろの、日の書かれていない時刻（「0:15」）は、整理のときに翌日として読む。確かめていない・「同じ日」と答えた文は NULL |
+
+- **場所は、サーバーが保存した文で決め直す**：画面から送るのは「翌日と答えた」の真偽だけ（`nextDay`）。打った文の位置は、氏名などの置き換えでずれるので使わない。
+- **打ち直したとき**：答えがあれば答えのとおり、なければ、前に翌日と答えた文だけ、新しい文で場所を決め直す。
+- 日の書かれた時刻（「11/17 0:15」）・相対の言い方（「昨日」）・記載の日時は、この列で変えない。
+
+## 14. 続きを足す（CA-050）と、単位の「同じ目盛り」（CA-051）
+
+- **続きを足す**：新しい表は作らない。`sources.text` の末尾に、改行と、足す文（選別を通し、置き換えた後の字）を足す。`replaced` の件数を足し合わせ、AI の行は消して整理し直す（検査結果・バイタルの文は、文全体を決定論で読み直す）。本人の行・区切りの始まりは、そのまま（それまでの文は変わらない）。`user_edits` に field = text、after = append の印（足した文は残さない）。
+- **単位の「同じ目盛り」**：作った表は `apps/worker/migrations/0009_scale_links.sql`。
+
+| 表 | 中身 |
+|---|---|
+| `scale_links` | id・name（検査の正規の名前。検査名の表にあるもの）・unit_a・unit_b（単位の書き方。検査名の表にあるもの。'' は単位の記載なし）・created_at・removed_at（外した日時。行は消さない） |
+
+- **患者に付かない**（全患者に共通。本人の決定）：項目の名前と単位の書き方だけで、患者・記録の字は入らない。サーバーは、表にない名前・単位、バイタル、同じ単位の組を断る（`scaleLinkProblem`）。同じ組（向きは問わない）は1つ。
+- 見るとき（`labTrends`）に、決めた組の推移を1つにつなぐ。換算の倍率は持たない。
+
+## 15. カルテ記載（段I。CA-054）
+
+作った表は、`apps/worker/migrations/0010_documents.sql`。形と確かめは、`packages/core/src/notes/document.ts`。
+
+| 表 | 列 |
+|---|---|
+| `documents` | id・patient_id・encounter_id・type（er_record・outpatient_first・outpatient_revisit・admission・progress・interim_summary・discharge_summary）・day（その記載の日。日付だけ）・sections（見出しごとの文と根拠の参照の JSON：`[{ key, text, refs }]`。text は**選別を通した後の字**で、1つの見出しは 6,000 字・全体で 18,000 字まで。refs は場所・題・頁・URL だけで、**本文・抜き出しは入れない**。20 件まで）・origin（ai：AI が書いたまま・ai_edited：AI が書いて先生が直した・self：先生が書いた）・entered_at・updated_at |
+| `document_history` | id・patient_id・at・document_id・action（add・edit・delete）・origin。**文は残さない** |
+
+- 見出しは、種類ごとに決めたもの（`DOC_SECTIONS`）だけ。同じ見出しは1回。中身のない見出しは、選別に通さず空のまま残す（書かれていないことを補わない）。全部が空なら残さない。
+- 患者を消すと、記載と履歴も消える（`PATIENT_TABLES`）。
+- 出した記載・相談のやりとり・数の照らし合わせの表（数だけ）は保存しない。
+
+## 16. AI による振り分けと、AI のプロブレムリスト（段J。CA-056・CA-057）
+
+作った表と列は、`apps/worker/migrations/0011_ai_sort.sql`。
+
+| 表 | 足した列・作った列 |
+|---|---|
+| `medications`・`events`・`observations` | at_approx（日時がおおよそのときの印。「夕方ごろ」「11/15〜11/17ごろ」「ごろ」。正確なら NULL） |
+| `observations` | read_by（rule：字を決定論で読んだ・ai：AI が読んだ項目と値）・unseen（AI の数が、書かれた場所の字に見つからない：1） |
+| `course_items` | id・patient_id・encounter_id・source_id・at・at_approx・category（onset・change・intake・visit・test・treatment・finding・other）・summary（**AI の短い要約**。80 字まで。数は引用にあるものだけ）・span_start・span_end（引用の場所）・origin（ai） |
+| `problem_lists` | patient_id（患者ごとに1つ）・made_at・prompt_version・basis（記録の印）・items（項目の JSON：key・name〔AI が整えた名前。先生が直したら、選別を通した後の字〕・certainty・activity・threadIds・course〔経過の出来事の文の id と場所〕・basis〔根拠の短い文〕・since・self〔先生が直した欄〕・hidden） |
+| `problem_list_edits` | id・patient_id・at・item_key・field（name・certainty・activity・hidden・move）・before・after |
+
+- `course_items` は、文から作る行（`FACT_TABLES`）：整理し直すと入れ替わり、文を消すと消える。
+- AI の答えそのもの（読んだ値の元の答え・要約の元の答え・プロブレムリストの元の答え）は、確かめた後の行と項目だけを残し、答えそのものは保存もログもしない。
+

@@ -1,4 +1,4 @@
-// 整理（段2。docs/00 の 5）：保存した文を AI に整理させ、core の applyOrganization で確かめて、文の行（区切り・投薬・できごと・問題・測定値）を入れ替える。
+// 整理（段2。docs/00 の 5）：保存した文を AI に整理させ、core の applyOrganization で確かめて、文の行（区切り・投薬・できごと・問題・測定値・経過の出来事〔CA-056〕）を入れ替える。
 // 文そのもの（sources.text）は変えない。整理に失敗したら、それまでの行を残し、失敗の印だけを付ける。
 // AI に送るのは、保存した文（識別情報を置き換えた後）だけ。AI の答えそのものは、保存もログもしない。
 import { applyOrganization, carryKey, segmentEnds, ulid, ULID_RANDOM_BYTES } from '@clinical-carte/core';
@@ -24,7 +24,7 @@ export async function organizeSource(db: Db, sourceId: string, organizer: Organi
     return { ok: false, reason: 'ai', failure: answered.reason };
   }
 
-  const organized = applyOrganization(answered.answer, { text: source.text, kind: source.kind, at: source.at, encounterStart: encounter.start });
+  const organized = applyOrganization(answered.answer, { text: source.text, kind: source.kind, at: source.at, encounterStart: encounter.start, nextDayFrom: source.nextDayFrom });
   const id = (): string => ulid(runtime.now(), runtime.randomBytes(ULID_RANDOM_BYTES));
   const base = [source.patientId, source.encounterId, source.id] as const;
 
@@ -70,13 +70,15 @@ export async function organizeSource(db: Db, sourceId: string, organizer: Organi
       .filter((m) => !medKeys.has(carryKey(m.start, m.end, m.name)))
       .map((m) =>
         db
-          .prepare("INSERT INTO medications (id, patient_id, encounter_id, source_id, name, dose_text, action, at, span_start, span_end, origin) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'ai')")
-          .bind(id(), ...base, m.name, m.doseText, m.action, m.at, m.start, m.end),
+          .prepare("INSERT INTO medications (id, patient_id, encounter_id, source_id, name, dose_text, action, at, at_approx, span_start, span_end, origin) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'ai')")
+          .bind(id(), ...base, m.name, m.doseText, m.action, m.at, m.atApprox, m.start, m.end),
       ),
     ...organized.events
       .filter((e) => !eventKeys.has(carryKey(e.start, e.end, e.title)))
       .map((e) =>
-        db.prepare("INSERT INTO events (id, patient_id, encounter_id, source_id, kind, title, at, span_start, span_end, origin) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'ai')").bind(id(), ...base, e.kind, e.title, e.at, e.start, e.end),
+        db
+          .prepare("INSERT INTO events (id, patient_id, encounter_id, source_id, kind, title, at, at_approx, span_start, span_end, origin) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'ai')")
+          .bind(id(), ...base, e.kind, e.title, e.at, e.atApprox, e.start, e.end),
       ),
     ...organized.problems
       .filter((p) => !problemKeys.has(carryKey(p.start, p.end, p.name)))
@@ -91,10 +93,16 @@ export async function organizeSource(db: Db, sourceId: string, organizer: Organi
       .map((o, index) =>
         db
           .prepare(
-            'INSERT INTO observations (id, patient_id, encounter_id, source_id, at, name, name_raw, kind, value, comparator, value_text, unit, span_start, span_end, ord, origin) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+            'INSERT INTO observations (id, patient_id, encounter_id, source_id, at, name, name_raw, kind, value, comparator, value_text, unit, span_start, span_end, ord, origin, at_approx, read_by, unseen) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
           )
-          .bind(id(), ...base, o.at, o.row.name, o.row.nameRaw, o.row.kind, o.row.value, o.row.comparator, o.row.valueText, o.row.unit, o.row.start, o.row.end, ordBase + index, o.origin),
+          .bind(id(), ...base, o.at, o.row.name, o.row.nameRaw, o.row.kind, o.row.value, o.row.comparator, o.row.valueText, o.row.unit, o.row.start, o.row.end, ordBase + index, o.origin, o.atApprox, o.readBy, o.unseen ? 1 : 0),
       ),
+    // 経過の出来事（CA-056）：AI の短い要約と、引用の場所
+    ...organized.course.map((c) =>
+      db
+        .prepare("INSERT INTO course_items (id, patient_id, encounter_id, source_id, at, at_approx, category, summary, span_start, span_end, origin) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'ai')")
+        .bind(id(), ...base, c.at, c.atApprox, c.category, c.summary, c.start, c.end),
+    ),
     db
       .prepare("UPDATE sources SET kind = ?, at = ?, organized = 'done', organized_version = ?, organize_report = ? WHERE id = ?")
       .bind(organized.kind, organized.at, ORGANIZE_PROMPT_VERSION, JSON.stringify(organized.report), source.id),

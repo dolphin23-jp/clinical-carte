@@ -44,7 +44,33 @@ export const EXTRA_LAB_NAMES: readonly LabName[] = [
  */
 export const EXTRA_ALIASES: readonly { readonly name: string; readonly aliases: readonly string[] }[] = [
   { name: '酸素流量', aliases: ['鼻カニュラ', '鼻カヌラ', '経鼻カニュラ', '酸素マスク', 'リザーバーマスク', 'リザーバー付きマスク'] },
+  // 2026-11-21：架空症例の試しで、よく書かれるのに読めなかった名前。書かれた名前（nameRaw）は残る（空腹時・随時の別は、名前に残る）。
+  // 【案。本人は未確認】PR（脈拍）・T・P・R の1字は、心電図の PR 間隔・リン（P）と取り違えるので、足さない
+  { name: '体温', aliases: ['KT'] },
+  { name: 'Glu', aliases: ['随時血糖', '空腹時血糖', 'FBS'] },
 ];
 
 /** carte で足す単位の書き方（尿量の、時間あたり・体重あたり・合計の書き方を、混ぜずに分けるため。換算しない） */
-export const EXTRA_UNITS: readonly string[] = ['mL', 'mL/hr', 'mL/h', 'mL/時', 'mL/kg/hr', 'mL/kg/h', 'mL/kg/時'];
+export const EXTRA_UNITS: readonly string[] = [
+  'mL',
+  'mL/hr',
+  'mL/h',
+  'mL/時',
+  'mL/kg/hr',
+  'mL/kg/h',
+  'mL/kg/時',
+  // 2026-11-21：よく書かれる単位の書き方（書かれたとおりに持つ。換算しない。単位の違う値は、推移を分ける：CA-043）
+  'bpm',
+  '回/分',
+  '度',
+  '×10^4/μL',
+  '×10^4',
+  '×10^3/μL',
+  '×10^3',
+  '×10^2/μL',
+  '×10^2',
+  'x10^4/μL',
+  'x10^4',
+  'x10^3/μL',
+  'x10^3',
+];

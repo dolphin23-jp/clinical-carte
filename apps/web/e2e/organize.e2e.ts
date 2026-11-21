@@ -98,6 +98,8 @@ describe('整理', () => {
     await send(page, NOTE);
     await expect.poll(() => page.getByTestId('segment-label').count()).toBe(3);
 
+    await page.getByTestId('tab-course').click();
+
     await page.getByTestId('tab-medications').click();
     const meds = page.getByTestId('medication-line');
     await meds.first().waitFor();
@@ -109,9 +111,13 @@ describe('整理', () => {
     await page.getByTestId('tab-problems').click();
     expect(await page.getByTestId('problem-line').first().textContent()).toContain('#1 市中肺炎');
 
+    await page.getByTestId('tab-course').click();
+
     await page.getByTestId('tab-events').click();
     expect(await page.getByTestId('event-line').first().textContent()).toContain('2026-11-19');
     expect(await page.getByTestId('event-line').first().textContent()).toContain('胸部X線を撮影');
+
+    await page.getByTestId('tab-course').click();
 
     await page.getByTestId('tab-values').click();
     const table = page.getByTestId('lab-table');
@@ -141,6 +147,7 @@ describe('整理', () => {
     next = { ok: false, reason: 'unavailable' };
     await send(page, NOTE);
     await expect.poll(() => page.getByTestId('composer-organizing').textContent()).toContain('整理できませんでした');
+    await page.getByTestId('tab-course').click();
     await page.getByTestId('tab-medications').click();
     expect(await page.getByTestId('medications').textContent()).toContain('まだ整理していない記載が 1 件');
   });
