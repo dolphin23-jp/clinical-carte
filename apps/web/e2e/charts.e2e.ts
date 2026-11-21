@@ -95,7 +95,7 @@ const fits = (page: Page) =>
 describe('経過表', () => {
   test('バイタルが、同じ時間の軸の段に並び、最新の値が見出しに出る。タップで、その時刻の値が下に出る', async () => {
     const page = await openPatient();
-    expect(await page.getByTestId('tab-overview').getAttribute('aria-selected')).toBe('true'); // 最初に開くのは経過表
+    expect(await page.getByTestId('tab-state').getAttribute('aria-selected')).toBe('true'); // 最初に開くのは「いま」（段3b）
     expect(await page.getByTestId('timeline').count()).toBe(0);
 
     await vitals(page, '2026-11-17', '10:00', { BT: '38.6', HR: '104', SBP: '132', DBP: '78', RR: '22', SpO2: '93' });

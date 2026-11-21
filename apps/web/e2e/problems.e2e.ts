@@ -178,3 +178,28 @@ describe('問題の筋', () => {
     expect(await fits(page)).toBe(true);
   });
 });
+
+describe('いまの状態（段3b）', () => {
+  test('最初に開くと、1行の要約・いまの問題と最後の A・P・24時間・投薬・背景が出る。字は保存した文のまま', async () => {
+    const page = await openPatient();
+    await send(page, D1, '2026-11-17');
+    await send(page, D2, '2026-11-18');
+    await page.getByTestId('tab-state').click();
+    const state = page.getByTestId('state');
+    await state.waitFor();
+    expect(await page.getByTestId('one-liner').textContent()).toBe('72歳 男性。入院 2026-11-17〜（記録の上では 2病日まで）。いまの問題：#1 市中肺炎。');
+    expect(await page.getByTestId('state-asof').textContent()).toContain('記録の上で最後：2026-11-18 09:00');
+    const note = await page.getByTestId('state-note').first().textContent();
+    expect(note).toContain('A) 抗菌薬に反応している');
+    expect(note).toContain('P) 抗菌薬を継続');
+    expect(await page.getByTestId('state-closed').textContent()).toContain('解決・非活動と書かれたもの：#2 低K血症');
+    const recent = (await page.getByTestId('state-recent-item').allTextContents()).join(' ');
+    expect(recent).toContain('#2 低K血症（解決と書かれている）');
+    // 判定の語を出さない
+    expect(await state.textContent()).not.toMatch(/異常|正常値|高値|低値|警告|悪化/u);
+    expect(await fits(page)).toBe(true);
+    if (SHOTS !== undefined) await page.screenshot({ path: `${SHOTS}/state-iphone.png`, fullPage: true });
+    await page.getByTestId('state-to-problems').click();
+    expect(await page.getByTestId('tab-problems').getAttribute('aria-selected')).toBe('true');
+  });
+});

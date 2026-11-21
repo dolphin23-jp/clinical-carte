@@ -8,6 +8,7 @@ import {
   hospitalDay,
   labTrends,
   medicationTimeline,
+  patientState,
   READ_VALUES_KINDS,
   readLabText,
   SOURCE_KIND_LABELS,
@@ -29,9 +30,11 @@ import { EventView, MedicationView } from './Facts.tsx';
 import { createEncounter, deletePatient, deleteSource, type Encounter, getRecord, organizeSource, type PatientRecord, type Segment, setEncounterEnd, type Source } from './net/api.ts';
 import { organizeSummary, reportText } from './organizeText.ts';
 import { SourceText } from './SourceText.tsx';
+import { StateView } from './StateView.tsx';
 
-type Tab = 'overview' | 'notes' | 'values' | 'medications' | 'problems' | 'events';
+type Tab = 'state' | 'overview' | 'notes' | 'values' | 'medications' | 'problems' | 'events';
 const TABS: readonly (readonly [Tab, string])[] = [
+  ['state', 'いま'],
   ['overview', '経過表'],
   ['notes', '記録'],
   ['values', '検査'],
@@ -57,7 +60,7 @@ export function PatientPage({ patientId, onBack, onLeft }: { patientId: string; 
   const [record, setRecord] = useState<PatientRecord | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [encounterId, setEncounterId] = useState<string | null>(null);
-  const [tab, setTab] = useState<Tab>('overview');
+  const [tab, setTab] = useState<Tab>('state');
   const composerRef = useRef<HTMLElement>(null);
   const [panel, setPanel] = useState<'none' | 'encounter' | 'end' | 'delete'>('none');
 
@@ -206,6 +209,26 @@ export function PatientPage({ patientId, onBack, onLeft }: { patientId: string; 
             </button>
           ))}
         </div>
+        {tab === 'state' && current !== null && (
+          <StateView
+            state={patientState({
+              patient: record.patient,
+              encounter: current,
+              today: record.today,
+              sources: record.sources,
+              segments: record.segments,
+              threads: record.problemThreads,
+              mentions: record.problems,
+              medications,
+              events,
+              observations,
+            })}
+            sources={record.sources}
+            onProblems={() => {
+              setTab('problems');
+            }}
+          />
+        )}
         {tab === 'overview' && current !== null && (
           <Timeline panels={panels} medications={medicationTimeline(medications)} events={events} encounterStart={current.start} encounterEnd={current.end} inpatient={current.kind === 'inpatient'} />
         )}

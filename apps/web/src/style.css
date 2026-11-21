@@ -1323,3 +1323,38 @@ select.input {
   color: var(--muted);
   font-size: 12px;
 }
+
+/* ===== いまの状態（段3b） ===== */
+.state {
+  display: grid;
+  gap: 14px;
+  min-width: 0;
+}
+
+.one-liner {
+  margin: 0;
+  padding: 12px 14px;
+  border-radius: 8px;
+  background: var(--tag-bg);
+  font-size: 16px;
+  font-weight: 700;
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+}
+
+.state-asof {
+  margin: -6px 0 0;
+  color: var(--muted);
+  font-size: 12.5px;
+  font-variant-numeric: tabular-nums;
+}
+
+.state-section {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
+.state-section .sub-title {
+  margin-top: 4px;
+}
