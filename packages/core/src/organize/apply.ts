@@ -146,22 +146,29 @@ export function applyOrganization(answer: OrganizeAnswer, ctx: OrganizeContext):
   let kind = ctx.kind;
   if (ctx.kind === 'unsorted' && answer.kind !== null && answer.kind !== 'unsorted') kind = answer.kind;
 
-  // 記載の日時：入れたときに分からなかったときだけ、文から
+  // 記載の日時：入れたときに分からなかったときは、文から。日だけで入れたときは、文に書かれた同じ日の時刻を足す
+  // （2026-11-21 の本人の決定：文に書かれた時刻を、AI が場所を指し、決定論で読んで、自動で記録の時刻にする）
   let at = ctx.at;
   const encounterStart = ctx.encounterStart.slice(0, 10);
-  if (ctx.at === null && answer.when !== null) {
+  if ((ctx.at === null || ctx.at.length === 10) && answer.when !== null) {
     const span = place('when', answer.when);
     if (span !== null) {
-      const parsed = parseWhen(text.slice(span.start, span.end), { refDay: null, encounterStart });
+      const parsed = parseWhen(text.slice(span.start, span.end), { refDay: ctx.at, encounterStart });
       if (parsed === null) count(report, 'when', 'when_unread');
-      else at = parsed;
+      else if (ctx.at === null) at = parsed;
+      // 日だけで入れた記載：同じ日の、時刻のある日時のときだけ使う（本人の選んだ日は変えない）
+      else if (parsed.length > 10 && parsed.slice(0, 10) === ctx.at) at = parsed;
     }
   }
   const whenCtx = { refDay: at === null ? null : at.slice(0, 10), encounterStart };
 
-  /** 事実の日時：引用があれば、それを読む（読めなければ null と数える）。なければ、記載の日時 */
-  const factAt = (category: ReportCategory, when: string | null): string | null => {
-    if (when === null) return at;
+  /** 区切りの時刻（区切りの見出しや最初の行に書かれた時刻。区切りの中の、自分の日時のない事実の日時になる） */
+  const segmentTimes: { start: number; end: number; at: string }[] = [];
+  const atOfSpan = (pos: number): string | null => segmentTimes.find((g) => pos >= g.start && pos < g.end)?.at ?? at;
+
+  /** 事実の日時：引用があれば、それを読む（読めなければ null と数える）。なければ、区切りの時刻、それもなければ記載の日時 */
+  const factAt = (category: ReportCategory, when: string | null, pos: number | null = null): string | null => {
+    if (when === null) return pos === null ? at : atOfSpan(pos);
     const span = place(category, when);
     if (span === null) return null;
     const parsed = parseWhen(text.slice(span.start, span.end), whenCtx);
@@ -176,7 +183,7 @@ export function applyOrganization(answer: OrganizeAnswer, ctx: OrganizeContext):
   };
 
   // 区切り：文の順に、前の区切りより後ろで見つかったものだけ
-  const starts: { label: SegmentLabel; start: number }[] = [];
+  const starts: { label: SegmentLabel; start: number; when: string | null }[] = [];
   let cursor = 0;
   for (const s of capped('segment', answer.segments)) {
     const span = place('segment', s.start, cursor);
@@ -185,10 +192,22 @@ export function applyOrganization(answer: OrganizeAnswer, ctx: OrganizeContext):
       count(report, 'segment', 'order');
       continue;
     }
-    starts.push({ label: s.label, start: span.start });
+    starts.push({ label: s.label, start: span.start, when: s.when });
     cursor = span.start + 1;
   }
   const segments: OrganizedSegment[] = starts.map((s, i) => ({ label: s.label, start: s.start, end: starts[i + 1]?.start ?? text.length }));
+  for (const [i, s] of starts.entries()) {
+    if (s.when === null) continue;
+    const span = place('segment', s.when);
+    if (span === null) continue;
+    const parsed = parseWhen(text.slice(span.start, span.end), whenCtx);
+    if (parsed === null) {
+      count(report, 'segment', 'when_unread');
+      continue;
+    }
+    const seg = segments[i];
+    if (seg !== undefined) segmentTimes.push({ start: seg.start, end: seg.end, at: parsed });
+  }
 
   /**
    * 事実の名前の場所。同じ字が文に何度も出るとき、最初の場所に決め打ちしない（問題一覧の「NSAIDs・ARBの関与」の ARB を、
@@ -231,7 +250,7 @@ export function applyOrganization(answer: OrganizeAnswer, ctx: OrganizeContext):
       doseText = text.slice(dose.start, dose.end);
     }
     medicationCursor = name.start;
-    medications.push({ ...name, name: text.slice(name.start, name.end), doseText, action: m.action, at: factAt('medication', m.when) });
+    medications.push({ ...name, name: text.slice(name.start, name.end), doseText, action: m.action, at: factAt('medication', m.when, name.start) });
   }
 
   const events: OrganizedEvent[] = [];
@@ -240,7 +259,7 @@ export function applyOrganization(answer: OrganizeAnswer, ctx: OrganizeContext):
     const span = placeFact('event', e.title, [e.when], eventCursor);
     if (span === null) continue;
     eventCursor = span.start;
-    events.push({ ...span, kind: e.kind, title: text.slice(span.start, span.end), at: factAt('event', e.when) });
+    events.push({ ...span, kind: e.kind, title: text.slice(span.start, span.end), at: factAt('event', e.when, span.start) });
   }
 
   const problems: OrganizedProblem[] = [];
@@ -271,9 +290,9 @@ export function applyOrganization(answer: OrganizeAnswer, ctx: OrganizeContext):
       }
     }
     const inUrine = (row: LabRow): boolean => urine.some((u) => row.start >= u.start && row.end <= u.end);
-    for (const row of readLabText(text).rows) if (!inUrine(row)) observations.push({ row, at, origin: 'parser' });
+    for (const row of readLabText(text).rows) if (!inUrine(row)) observations.push({ row, at: atOfSpan(row.start), origin: 'parser' });
     for (const u of urine) {
-      for (const row of readLabText(text.slice(u.start, u.end), { specimen: 'urine' }).rows) observations.push({ row: { ...row, start: row.start + u.start, end: row.end + u.start }, at, origin: 'parser' });
+      for (const row of readLabText(text.slice(u.start, u.end), { specimen: 'urine' }).rows) observations.push({ row: { ...row, start: row.start + u.start, end: row.end + u.start }, at: atOfSpan(u.start), origin: 'parser' });
     }
     observations.sort((a, b) => a.row.start - b.row.start);
   } else {
@@ -301,7 +320,7 @@ export function applyOrganization(answer: OrganizeAnswer, ctx: OrganizeContext):
       // 「SpO2 96%（室内気）」の「室内気」のような、項目でない語が残っただけの引用は数えない（数が、ほぼすべての記載に付いて、意味をなくすため）
       if (read.rows.length === 0 || read.unread.some((u) => u.reason !== 'unknown')) count(report, 'measurement', 'unread');
       if (read.rows.length === 0) continue;
-      const rowAt = factAt('measurement', m.when);
+      const rowAt = factAt('measurement', m.when, span.start);
       for (const row of read.rows) observations.push({ row: { ...row, start: row.start + span.start, end: row.end + span.start }, at: rowAt, origin: 'ai' });
     }
   }

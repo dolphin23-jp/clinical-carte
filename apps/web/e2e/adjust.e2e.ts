@@ -14,10 +14,10 @@ const NOTE = '#1 発熱\nA) 原因を検索\n#2 低K血症\nO) K 3.1 Na 128\n便
 const ANSWER: OrganizeAnswer = {
   ...EMPTY_ORGANIZE,
   segments: [
-    { label: 'problem_heading', start: '#1 発熱' },
-    { label: 'assessment', start: 'A) 原因' },
-    { label: 'problem_heading', start: '#2 低K' },
-    { label: 'objective', start: 'O) K' },
+    { label: 'problem_heading', start: '#1 発熱', when: null },
+    { label: 'assessment', start: 'A) 原因', when: null },
+    { label: 'problem_heading', start: '#2 低K', when: null },
+    { label: 'objective', start: 'O) K', when: null },
   ],
   problems: [
     { name: '#1 発熱', status: 'problem', activity: null },

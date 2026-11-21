@@ -253,19 +253,15 @@ describe('入れやすさ', () => {
     // 保存のあと：時刻は空に戻る（前の記載の時刻を、次の記載に黙って使わない）。日は残る
     expect([await page.getByTestId('at-day').inputValue(), await page.getByTestId('at-time').inputValue()]).toEqual(['2026-11-18', '']);
 
-    // 文に時刻が書かれているのに時刻なしで送ろうとすると、送る前に確かめる（送らない）。「このまま時刻なしで入れる」で送る
-    const before = await page.getByTestId('source').count();
+    // 文に時刻が書かれていて、時刻を空のまま送るときは、確かめずに送る。整理のときに AI が文の時刻を読み取る、と案内する
     await page.getByTestId('text').fill('【再評価 2026-11-18 11:50】\nBT 38.4');
-    await page.getByTestId('send').click();
-    expect(await page.getByTestId('day-only-check').textContent()).toContain('11:50');
-    if (SHOTS !== undefined) await page.getByTestId('composer').screenshot({ path: `${SHOTS}/composer-day-only-iphone.png` });
-    expect(await page.getByTestId('source').count()).toBe(before);
-    await page.getByTestId('send-day-only').click();
-    await expect.poll(() => page.getByTestId('source').count(), { timeout: 10_000 }).toBe(before + 1);
-    // 時刻の書かれていない文は、確かめずに送る
-    await page.getByTestId('text').fill('BT 37.9');
+    expect(await page.getByTestId('when-day-only').textContent()).toContain('11:50');
+    if (SHOTS !== undefined) await page.getByTestId('composer').screenshot({ path: `${SHOTS}/composer-auto-time-iphone.png` });
     await sendAndWait(page);
-    expect(await page.getByTestId('day-only-check').count()).toBe(0);
+    // 時刻の書かれていない文は、日だけで入ると案内する
+    await page.getByTestId('text').fill('BT 37.9');
+    expect(await page.getByTestId('when-day-only').textContent()).toContain('時刻なし（日だけ）で入れます');
+    await sendAndWait(page);
     expect(problems).toEqual([]);
   });
 });

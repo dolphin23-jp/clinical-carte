@@ -23,10 +23,10 @@ describe('区切り', () => {
     const r = applyOrganization(
       answer({
         segments: [
-          { label: 'subjective', start: 'S) 咳嗽は軽減。' },
-          { label: 'objective', start: 'O) BT 37.2' },
-          { label: 'assessment', start: 'A) 抗菌薬' },
-          { label: 'plan', start: 'P) メロペネム' },
+          { label: 'subjective', start: 'S) 咳嗽は軽減。', when: null },
+          { label: 'objective', start: 'O) BT 37.2', when: null },
+          { label: 'assessment', start: 'A) 抗菌薬', when: null },
+          { label: 'plan', start: 'P) メロペネム', when: null },
         ],
       }),
       ctx,
@@ -45,9 +45,9 @@ describe('区切り', () => {
     const r = applyOrganization(
       answer({
         segments: [
-          { label: 'objective', start: 'O) BT 37.2' },
-          { label: 'subjective', start: 'S) 咳嗽は軽減。' },
-          { label: 'plan', start: 'Plan:' },
+          { label: 'objective', start: 'O) BT 37.2', when: null },
+          { label: 'subjective', start: 'S) 咳嗽は軽減。', when: null },
+          { label: 'plan', start: 'Plan:', when: null },
         ],
       }),
       ctx,
@@ -280,7 +280,7 @@ describe('性質', () => {
             events: quotes.map((q) => ({ kind: 'other' as const, title: q, when: null })),
             problems: quotes.map((q) => ({ name: q, status: 'problem' as const, activity: null })),
             measurements: quotes.map((q) => ({ quote: q, when: null, specimen: null })),
-            segments: quotes.map((q) => ({ label: 'other' as const, start: q })),
+            segments: quotes.map((q) => ({ label: 'other' as const, start: q, when: q })),
           },
           { ...ctx, text },
         );
@@ -361,5 +361,51 @@ describe('同じ日の二重をたたむ（見せ方だけ）', () => {
       ev('d', 'procedure', '血液培養2セットを採取', '2026-11-21T10:40'),
     ];
     expect([...foldedEventIds(facts)]).toEqual(['a']);
+  });
+});
+
+describe('文に書かれた時刻を、自動で記録の時刻にする（2026-11-21 の本人の決定）', () => {
+  const text = ['初期評価（10:44）', 'BP 76/40、HR 36', '静脈血ガス（10:50）', 'K 7.8 mEq/L、pH 7.19', '10:55 アトロピン 0.5 mg を静注', 'A) 高K血症'].join('\n');
+  const day = { ...ctx, text, kind: 'er_note' as const, at: '2026-11-21', encounterStart: '2026-11-21T10:42' };
+  const ans = answer({
+    when: '10:44',
+    segments: [
+      { label: 'objective', start: '初期評価（10:44）', when: '10:44' },
+      { label: 'labs', start: '静脈血ガス（10:50）', when: '10:50' },
+      { label: 'assessment', start: 'A) 高K血症', when: null },
+    ],
+    measurements: [
+      { quote: 'BP 76/40、HR 36', when: null, specimen: null },
+      { quote: 'K 7.8 mEq/L、pH 7.19', when: null, specimen: null },
+    ],
+    medications: [{ name: 'アトロピン', dose: '0.5 mg', action: 'start', when: '10:55' }],
+  });
+
+  test('区切りの時刻：区切りの中の、自分の日時のない事実は、その時刻。自分の日時があれば、そちら', () => {
+    const r = applyOrganization(ans, day);
+    expect(r.observations.map((o) => [o.row.name, o.at])).toEqual([
+      ['収縮期血圧', '2026-11-21T10:44'],
+      ['拡張期血圧', '2026-11-21T10:44'],
+      ['心拍数', '2026-11-21T10:44'],
+      ['K', '2026-11-21T10:50'],
+      ['pH', '2026-11-21T10:50'],
+    ]);
+    expect(r.medications.map((m) => m.at)).toEqual(['2026-11-21T10:55']);
+  });
+
+  test('日だけで入れた記載は、文の同じ日の時刻を足す。違う日・時刻のある記載・読めない時刻は変えない', () => {
+    expect(applyOrganization(ans, day).at).toBe('2026-11-21T10:44');
+    expect(applyOrganization(ans, { ...day, at: '2026-11-21T09:00' }).at).toBe('2026-11-21T09:00');
+    const otherDay = applyOrganization(answer({ when: '11/20 23:00' }), { ...day, text: '11/20 23:00 来院' });
+    expect(otherDay.at).toBe('2026-11-21');
+    const unread = applyOrganization(answer({ when: '初期評価' }), day);
+    expect(unread.at).toBe('2026-11-21');
+    expect(unread.report).toEqual({ when: { when_unread: 1 } });
+  });
+
+  test('検査結果の文（文全体を読む）でも、区切りの時刻を使う', () => {
+    const r = applyOrganization(answer({ segments: [{ label: 'labs', start: '静脈血ガス（10:50）', when: '10:50' }] }), { ...day, kind: 'lab' });
+    expect(r.observations.filter((o) => o.row.name === 'K').map((o) => o.at)).toEqual(['2026-11-21T10:50']);
+    expect(r.observations.filter((o) => o.row.name === '心拍数').map((o) => o.at)).toEqual(['2026-11-21']);
   });
 });
