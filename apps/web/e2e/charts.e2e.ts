@@ -212,7 +212,8 @@ describe('経過（段H。CA-053）', () => {
     // 投薬・できごとの一覧は、選んだ日の分だけ
     await cells.nth(2).click();
     await page.getByTestId('tab-chart').click();
-    await page.getByTestId('note-view').waitFor();
+    await page.getByTestId('doc-view').waitFor();
+    expect(await page.getByTestId('doc-day').inputValue()).toBe('2026-11-19');
     expect(await fits(page)).toBe(true);
     expect(problems).toEqual([]);
   });
@@ -224,7 +225,7 @@ describe('経過（段H。CA-053）', () => {
     await page.getByTestId('timeline').waitFor();
     const side = page.locator('.course-side');
     expect(await side.count()).toBe(1);
-    expect(await side.getByTestId('note-view').count()).toBe(1);
+    expect(await side.getByTestId('doc-view').count()).toBe(1);
     expect(await fits(page)).toBe(true);
   });
 });

@@ -1424,68 +1424,8 @@ select.input {
   display: grid;
   gap: 4px;
 }
-
 /* ===== 草案（段4） ===== */
-.draft {
-  display: grid;
-  gap: 12px;
-  min-width: 0;
-}
 
-.draft-banner {
-  margin: 0;
-  padding: 10px 12px;
-  border: 1px dashed var(--accent);
-  border-radius: 8px;
-  color: var(--ink);
-  font-size: 13.5px;
-  font-weight: 600;
-}
-
-.draft-section {
-  display: grid;
-  gap: 4px;
-}
-
-.draft-sentences {
-  display: grid;
-  gap: 6px;
-  margin: 0;
-  padding-left: 1.4em;
-}
-
-.draft-sentence summary {
-  cursor: pointer;
-  overflow-wrap: anywhere;
-}
-
-.draft-cites {
-  margin-left: 4px;
-  color: var(--accent);
-  font-size: 12px;
-}
-
-.draft-quotes {
-  display: grid;
-  gap: 6px;
-  margin: 6px 0 0;
-  padding: 8px 10px;
-  list-style: none;
-  border-left: 3px solid var(--accent);
-  background: var(--bg);
-}
-
-.draft-quotes li {
-  display: grid;
-  gap: 2px;
-}
-
-.draft-quotes .part-label {
-  padding: 0;
-  background: none;
-  color: var(--muted);
-  font-size: 12px;
-}
 
 /* ===== 本人の調節（CA-029） ===== */
 .thread-order {
@@ -1544,26 +1484,6 @@ select.input {
   min-width: 0;
 }
 
-.note-problem,
-.ap-proposal {
-  display: grid;
-  gap: 8px;
-  padding: 12px;
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-  background: var(--surface);
-  min-width: 0;
-}
-
-.note-problem-title {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 6px 8px;
-  margin: 0;
-  font-size: 16px;
-}
-
 .note-part {
   display: grid;
   gap: 4px;
@@ -1597,58 +1517,9 @@ select.input {
   font-size: 14px;
 }
 
-.ap-notes,
-.ap-sentences,
-.discuss-turns {
-  display: grid;
-  gap: 8px;
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-
-.ap-note {
-  display: grid;
-  gap: 6px;
-  padding: 8px 10px;
-  border-left: 3px solid var(--accent);
-  background: var(--bg);
-  border-radius: 0 8px 8px 0;
-}
-
-.ap-note-head {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-}
-
 .tag.ai {
   border: 1px dashed var(--accent);
   background: transparent;
-}
-
-.ap-refs {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px 12px;
-  margin: 0;
-  padding: 0;
-  list-style: none;
-  color: var(--muted);
-  font-size: 12.5px;
-  overflow-wrap: anywhere;
-}
-
-.ap-refs a,
-.ap-cites a {
-  color: var(--accent);
-  overflow-wrap: anywhere;
-}
-
-.ap-area {
-  min-height: 96px;
-  resize: vertical;
-  line-height: 1.6;
 }
 
 .input.small {
@@ -1657,38 +1528,10 @@ select.input {
   font-size: 14px;
 }
 
-.ap-cites > summary {
-  color: var(--muted);
-  cursor: pointer;
-  font-size: 13px;
-}
-
 .tag.basis-inference {
   background: transparent;
   border: 1px solid var(--muted);
   color: var(--muted);
-}
-
-.ap-pick {
-  align-items: flex-start;
-  overflow-wrap: anywhere;
-  line-height: 1.6;
-}
-
-.ap-pick input {
-  margin-top: 4px;
-  width: 20px;
-  height: 20px;
-  flex: none;
-}
-
-.ap-proposal-problem {
-  display: grid;
-  gap: 6px;
-}
-
-.discuss[open] {
-  padding: 8px 0 0;
 }
 
 .turn {
@@ -1962,12 +1805,6 @@ select.input {
   margin: 0;
 }
 
-.draft-section {
-  margin-top: 20px;
-  padding-top: 12px;
-  border-top: 1px solid var(--line);
-}
-
 /* 広い画面（PC・横向きの iPad）：頁を広げ、経過は2列（左に経過表など、右にその日の記載） */
 .page.wide {
   max-width: 1280px;
@@ -2136,4 +1973,245 @@ select.input {
   margin-top: 14px;
   padding-top: 10px;
   border-top: 1px solid var(--line);
+}
+
+/* ===== 段I：いま・記録の縮め（名前・1行の札。押すと開く） ===== */
+.threads.compact {
+  gap: 6px;
+}
+
+.threads.compact .thread {
+  padding: 0;
+  gap: 0;
+}
+
+.thread-toggle,
+.source-toggle {
+  width: 100%;
+  min-height: 44px;
+  margin: 0;
+  padding: 8px 10px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.thread.open > .thread-note,
+.thread.open > .thread-sub {
+  margin: 0 10px 10px;
+}
+
+.thread-toggle .thread-when {
+  margin-left: auto;
+  color: var(--muted);
+  font-size: 12.5px;
+  font-variant-numeric: tabular-nums;
+}
+
+.fold-mark {
+  display: inline-block;
+  width: 1em;
+  color: var(--accent);
+}
+
+.sources-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin: 4px 0;
+}
+
+.source {
+  grid-template-columns: minmax(0, 1fr);
+  min-width: 0;
+}
+
+.source.folded {
+  padding: 0;
+}
+
+.source-toggle,
+.thread-toggle {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.source-toggle {
+  padding: 8px 2px;
+}
+
+.source-first {
+  flex: 1 1 100%;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 13.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ===== 段I：カルテ記載（出す・直す・相談・保存） ===== */
+.doc-view {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 12px;
+  min-width: 0;
+}
+
+.doc-pick,
+.doc,
+.doc-section,
+.doc-talk {
+  min-width: 0;
+}
+
+.doc-pick {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 8px;
+}
+
+.doc-options {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 16px;
+  font-size: 14px;
+}
+
+.doc-options select,
+.doc-other select {
+  min-height: 40px;
+  margin-left: 6px;
+  font: inherit;
+}
+
+.button.big {
+  min-height: 52px;
+  padding: 10px 22px;
+  font-size: 17px;
+}
+
+.doc {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--bg);
+}
+
+.doc-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px 10px;
+}
+
+.doc-section {
+  display: grid;
+  gap: 4px;
+}
+
+.doc-section.changed {
+  padding-left: 8px;
+  border-left: 3px solid var(--accent);
+}
+
+.doc-heading {
+  margin: 0;
+  font-size: 15px;
+}
+
+.doc-text {
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  line-height: 1.65;
+}
+
+.doc-empty {
+  margin: 0;
+  color: var(--muted);
+  font-size: 13.5px;
+}
+
+.doc-edit {
+  width: 100%;
+  min-height: 3em;
+  font: inherit;
+  line-height: 1.6;
+}
+
+.doc-refs,
+.doc-notes {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12.5px;
+  overflow-wrap: anywhere;
+}
+
+.doc-notes {
+  padding-left: 1.2em;
+}
+
+/* 記録・出典に見つからない数：下線と「※」（色で判定しない） */
+.num-unbacked {
+  text-decoration: underline;
+  text-decoration-style: wavy;
+  text-underline-offset: 3px;
+}
+
+.num-unbacked sup {
+  font-size: 0.7em;
+}
+
+.doc-inference {
+  font-size: 0.9em;
+  font-weight: 600;
+}
+
+.doc-talk {
+  display: grid;
+  gap: 6px;
+  padding-top: 8px;
+  border-top: 1px dashed var(--line);
+}
+
+.doc-talk textarea {
+  width: 100%;
+  font: inherit;
+}
+
+.talk {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: 14px;
+}
+
+.talk li {
+  padding: 6px 8px;
+  border-radius: 6px;
+  background: var(--surface);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.talk .tag {
+  margin-right: 6px;
+}
+
+.doc-saved .fact-main {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  align-items: baseline;
 }

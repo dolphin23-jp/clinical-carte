@@ -2,10 +2,10 @@
 // 答えは、決めた形（構造化した出力）で受け、確かめるのは core の applySelection。ここでは、保存もログもしない。
 import Anthropic from '@anthropic-ai/sdk';
 import { zodOutputFormat } from '@anthropic-ai/sdk/helpers/zod';
-import { DiscussAnswer, DraftAnswer, LinkAnswer, OrganizeAnswer, ProposalAnswer, SelectionAnswer } from '@clinical-carte/core';
+import { DocumentAnswer, LinkAnswer, OrganizeAnswer, ReviseAnswer, SelectionAnswer } from '@clinical-carte/core';
 
-import type { DiscussResult, DrafterResult, LinkerResult, Organizer, OrganizerResult, ProposerResult, ResearchResult } from './organizer.ts';
-import { AP_SYSTEM, DISCUSS_SYSTEM, DRAFT_SYSTEM, LINK_SYSTEM, ORGANIZE_PROMPTS, type OrganizePromptChoice, RESEARCH_SYSTEM, SELECT_SYSTEM, WEB_DOMAINS } from './prompt.ts';
+import type { DocumentResult, LinkerResult, Organizer, OrganizerResult, ResearchResult, ReviseResult } from './organizer.ts';
+import { DOC_REVISE_SYSTEM, DOC_SYSTEM, LINK_SYSTEM, ORGANIZE_PROMPTS, type OrganizePromptChoice, RESEARCH_SYSTEM, SELECT_SYSTEM, WEB_DOMAINS } from './prompt.ts';
 import type { WebHit } from './references.ts';
 import type { Selector, SelectorResult } from './selector.ts';
 
@@ -128,66 +128,51 @@ export function createAnthropicOrganizer(options: AnthropicOptions): Organizer {
         return { ok: false, reason: 'bad_answer' };
       }
     },
-    // A/P の案（段5）。送るのは、記録の引用・書籍の抜き出し・ネットの引用だけ（core の proposalMessage）。保存しない
-    async propose(message: string): Promise<ProposerResult> {
+    // カルテ記載（段I）。送るのは、保存した文（識別情報を置き換えた後）と整理した事実と、出典の抜き出しだけ（core の documentMessage）。
+    // 答えは保存もログもしない。出来上がった記載を書くので、考える量を多めにとる
+    async document(message: string): Promise<DocumentResult> {
       try {
         const response = await client.beta.messages.parse({
           model: options.model,
-          max_tokens: 16000,
+          max_tokens: 32000,
           betas: ['server-side-fallback-2026-07-01'],
           fallbacks: 'default',
           cache_control: { type: 'ephemeral' },
-          system: AP_SYSTEM,
-          output_config: { effort: 'high', format: zodOutputFormat(ProposalAnswer) },
+          system: DOC_SYSTEM,
+          output_config: { effort: 'high', format: zodOutputFormat(DocumentAnswer) },
           messages: [{ role: 'user', content: message }],
-        });
+        },
+        // 出来上がった記載を書くので、待つ時間を長めにとる
+        { timeout: 300_000 },
+        );
         if (response.stop_reason === 'refusal') return { ok: false, reason: 'refused' };
         if (response.stop_reason !== 'end_turn') return { ok: false, reason: 'bad_answer' };
-        const parsed = ProposalAnswer.safeParse(response.parsed_output);
+        const parsed = DocumentAnswer.safeParse(response.parsed_output);
         return parsed.success ? { ok: true, answer: parsed.data } : { ok: false, reason: 'bad_answer' };
       } catch (error) {
         if (error instanceof Anthropic.APIError) return { ok: false, reason: 'unavailable' };
         return { ok: false, reason: 'bad_answer' };
       }
     },
-    // 議論（段5）。保存しない
-    async discuss(message: string): Promise<DiscussResult> {
+    // カルテ記載を相談して直す（段I）。やりとりは保存しない
+    async revise(message: string): Promise<ReviseResult> {
       try {
         const response = await client.beta.messages.parse({
           model: options.model,
-          max_tokens: 16000,
+          max_tokens: 32000,
           betas: ['server-side-fallback-2026-07-01'],
           fallbacks: 'default',
           cache_control: { type: 'ephemeral' },
-          system: DISCUSS_SYSTEM,
-          output_config: { effort: 'high', format: zodOutputFormat(DiscussAnswer) },
+          system: DOC_REVISE_SYSTEM,
+          output_config: { effort: 'high', format: zodOutputFormat(ReviseAnswer) },
           messages: [{ role: 'user', content: message }],
-        });
+        },
+        // 出来上がった記載を書くので、待つ時間を長めにとる
+        { timeout: 300_000 },
+        );
         if (response.stop_reason === 'refusal') return { ok: false, reason: 'refused' };
         if (response.stop_reason !== 'end_turn') return { ok: false, reason: 'bad_answer' };
-        const parsed = DiscussAnswer.safeParse(response.parsed_output);
-        return parsed.success ? { ok: true, answer: parsed.data } : { ok: false, reason: 'bad_answer' };
-      } catch (error) {
-        if (error instanceof Anthropic.APIError) return { ok: false, reason: 'unavailable' };
-        return { ok: false, reason: 'bad_answer' };
-      }
-    },
-    // 草案（段4）。送るのは、保存した文から切り出した引用だけ（core の courseMaterial）。答えは保存もログもしない
-    async draft(message: string): Promise<DrafterResult> {
-      try {
-        const response = await client.beta.messages.parse({
-          model: options.model,
-          max_tokens: 16000,
-          betas: ['server-side-fallback-2026-07-01'],
-          fallbacks: 'default',
-          cache_control: { type: 'ephemeral' },
-          system: DRAFT_SYSTEM,
-          output_config: { effort: 'medium', format: zodOutputFormat(DraftAnswer) },
-          messages: [{ role: 'user', content: message }],
-        });
-        if (response.stop_reason === 'refusal') return { ok: false, reason: 'refused' };
-        if (response.stop_reason !== 'end_turn') return { ok: false, reason: 'bad_answer' };
-        const parsed = DraftAnswer.safeParse(response.parsed_output);
+        const parsed = ReviseAnswer.safeParse(response.parsed_output);
         return parsed.success ? { ok: true, answer: parsed.data } : { ok: false, reason: 'bad_answer' };
       } catch (error) {
         if (error instanceof Anthropic.APIError) return { ok: false, reason: 'unavailable' };
