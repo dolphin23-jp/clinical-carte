@@ -2,10 +2,10 @@
 // 答えは、決めた形（構造化した出力）で受け、確かめるのは core の applySelection。ここでは、保存もログもしない。
 import Anthropic from '@anthropic-ai/sdk';
 import { zodOutputFormat } from '@anthropic-ai/sdk/helpers/zod';
-import { LinkAnswer, OrganizeAnswer, SelectionAnswer } from '@clinical-carte/core';
+import { DraftAnswer, LinkAnswer, OrganizeAnswer, SelectionAnswer } from '@clinical-carte/core';
 
-import type { LinkerResult, Organizer, OrganizerResult } from './organizer.ts';
-import { LINK_SYSTEM, ORGANIZE_SYSTEM, SELECT_SYSTEM } from './prompt.ts';
+import type { DrafterResult, LinkerResult, Organizer, OrganizerResult } from './organizer.ts';
+import { DRAFT_SYSTEM, LINK_SYSTEM, ORGANIZE_SYSTEM, SELECT_SYSTEM } from './prompt.ts';
 import type { Selector, SelectorResult } from './selector.ts';
 
 /** 始めるモデル（CA-022）。設定（MODEL）で変えられる */
@@ -88,6 +88,28 @@ export function createAnthropicOrganizer(options: AnthropicOptions): Organizer {
         if (response.stop_reason === 'refusal') return { ok: false, reason: 'refused' };
         if (response.stop_reason !== 'end_turn') return { ok: false, reason: 'bad_answer' };
         const parsed = LinkAnswer.safeParse(response.parsed_output);
+        return parsed.success ? { ok: true, answer: parsed.data } : { ok: false, reason: 'bad_answer' };
+      } catch (error) {
+        if (error instanceof Anthropic.APIError) return { ok: false, reason: 'unavailable' };
+        return { ok: false, reason: 'bad_answer' };
+      }
+    },
+    // 草案（段4）。送るのは、保存した文から切り出した引用だけ（core の courseMaterial）。答えは保存もログもしない
+    async draft(message: string): Promise<DrafterResult> {
+      try {
+        const response = await client.beta.messages.parse({
+          model: options.model,
+          max_tokens: 16000,
+          betas: ['server-side-fallback-2026-07-01'],
+          fallbacks: 'default',
+          cache_control: { type: 'ephemeral' },
+          system: DRAFT_SYSTEM,
+          output_config: { effort: 'medium', format: zodOutputFormat(DraftAnswer) },
+          messages: [{ role: 'user', content: message }],
+        });
+        if (response.stop_reason === 'refusal') return { ok: false, reason: 'refused' };
+        if (response.stop_reason !== 'end_turn') return { ok: false, reason: 'bad_answer' };
+        const parsed = DraftAnswer.safeParse(response.parsed_output);
         return parsed.success ? { ok: true, answer: parsed.data } : { ok: false, reason: 'bad_answer' };
       } catch (error) {
         if (error instanceof Anthropic.APIError) return { ok: false, reason: 'unavailable' };

@@ -1,9 +1,10 @@
 // 整理を頼む先（AI）の形。本物は anthropic.ts、試験では、決まった答えを返す代役を渡す。
-import type { LinkAnswer, OrganizeAnswer } from '@clinical-carte/core';
+import type { DraftAnswer, LinkAnswer, OrganizeAnswer } from '@clinical-carte/core';
 
 import type { SelectorFailure } from './selector.ts';
 
 export type OrganizerResult = { readonly ok: true; readonly answer: OrganizeAnswer } | { readonly ok: false; readonly reason: SelectorFailure };
+export type DrafterResult = { readonly ok: true; readonly answer: DraftAnswer } | { readonly ok: false; readonly reason: SelectorFailure };
 export type LinkerResult = { readonly ok: true; readonly answer: LinkAnswer } | { readonly ok: false; readonly reason: SelectorFailure };
 
 export interface Organizer {
@@ -11,4 +12,6 @@ export interface Organizer {
   organize(text: string): Promise<OrganizerResult>;
   /** 問題の筋のつなぎ（段3a）：問題の名前と記載の行（JSON。core の linkRequest が作る）から、同じ問題を記号で指す。例外を投げない */
   link(message: string): Promise<LinkerResult>;
+  /** 草案（段4）：記号つきの引用（JSON。core の courseMaterial が作る）から、問題ごとの文と根拠の記号。例外を投げない */
+  draft(message: string): Promise<DrafterResult>;
 }

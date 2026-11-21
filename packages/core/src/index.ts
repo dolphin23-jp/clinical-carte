@@ -18,3 +18,5 @@ export * from './views/chart.ts';
 export * from './time/day.ts';
 export * from './problems/threads.ts';
 export * from './views/state.ts';
+export * from './record/edits.ts';
+export * from './draft/course.ts';

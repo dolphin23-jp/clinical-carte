@@ -1374,3 +1374,110 @@ select.input {
   font-weight: 600;
   overflow-wrap: anywhere;
 }
+
+/* ===== 事実を直す・種類の絞り込み（段3e） ===== */
+.kind-filter {
+  margin-bottom: 10px;
+}
+
+.source-facts {
+  font-size: 14px;
+}
+
+.source-facts > summary {
+  min-height: 36px;
+  padding: 6px 0;
+  color: var(--accent);
+  cursor: pointer;
+}
+
+.source-facts[open] {
+  display: grid;
+  gap: 6px;
+}
+
+.fact-excluded .fact-main {
+  color: var(--muted);
+  text-decoration: line-through;
+}
+
+.fact-controls {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.fact-at {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.fact-edits {
+  display: grid;
+  gap: 4px;
+}
+
+/* ===== 草案（段4） ===== */
+.draft {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+}
+
+.draft-banner {
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px dashed var(--accent);
+  border-radius: 8px;
+  color: var(--ink);
+  font-size: 13.5px;
+  font-weight: 600;
+}
+
+.draft-section {
+  display: grid;
+  gap: 4px;
+}
+
+.draft-sentences {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding-left: 1.4em;
+}
+
+.draft-sentence summary {
+  cursor: pointer;
+  overflow-wrap: anywhere;
+}
+
+.draft-cites {
+  margin-left: 4px;
+  color: var(--accent);
+  font-size: 12px;
+}
+
+.draft-quotes {
+  display: grid;
+  gap: 6px;
+  margin: 6px 0 0;
+  padding: 8px 10px;
+  list-style: none;
+  border-left: 3px solid var(--accent);
+  background: var(--bg);
+}
+
+.draft-quotes li {
+  display: grid;
+  gap: 2px;
+}
+
+.draft-quotes .part-label {
+  padding: 0;
+  background: none;
+  color: var(--muted);
+  font-size: 12px;
+}

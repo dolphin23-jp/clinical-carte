@@ -12,6 +12,8 @@ import {
   READ_VALUES_KINDS,
   readLabText,
   SOURCE_KIND_LABELS,
+  type SourceKind,
+  CARTE_ONLY_KINDS,
   UNREAD_LABELS,
   vitalPanels,
 } from '@clinical-carte/core';
@@ -27,12 +29,29 @@ import { LatestStrip } from './LatestStrip.tsx';
 import { ProblemThreads } from './ProblemThreads.tsx';
 import { errorMessage } from './messages.ts';
 import { EventView, MedicationView } from './Facts.tsx';
-import { createEncounter, deletePatient, deleteSource, type Encounter, getRecord, organizeSource, type PatientRecord, type Segment, setEncounterEnd, type Source } from './net/api.ts';
+import {
+  type ClinicalEvent,
+  createEncounter,
+  deletePatient,
+  deleteSource,
+  type Encounter,
+  type FactEdit,
+  getRecord,
+  type Medication,
+  type Observation,
+  organizeSource,
+  type PatientRecord,
+  type Segment,
+  setEncounterEnd,
+  type Source,
+} from './net/api.ts';
 import { organizeSummary, reportText } from './organizeText.ts';
+import { SourceFacts } from './SourceFacts.tsx';
 import { SourceText } from './SourceText.tsx';
 import { StateView } from './StateView.tsx';
+import { DraftView } from './DraftView.tsx';
 
-type Tab = 'state' | 'overview' | 'notes' | 'values' | 'medications' | 'problems' | 'events';
+type Tab = 'draft' | 'state' | 'overview' | 'notes' | 'values' | 'medications' | 'problems' | 'events';
 const TABS: readonly (readonly [Tab, string])[] = [
   ['state', 'いま'],
   ['overview', '経過表'],
@@ -41,6 +60,7 @@ const TABS: readonly (readonly [Tab, string])[] = [
   ['medications', '投薬'],
   ['problems', '問題'],
   ['events', 'できごと'],
+  ['draft', '草案'],
 ];
 
 const encounterLabel = (e: Encounter): string => {
@@ -61,6 +81,7 @@ export function PatientPage({ patientId, onBack, onLeft }: { patientId: string; 
   const [message, setMessage] = useState<string | null>(null);
   const [encounterId, setEncounterId] = useState<string | null>(null);
   const [tab, setTab] = useState<Tab>('state');
+  const [kindFilter, setKindFilter] = useState<SourceKind | 'all'>('all');
   const composerRef = useRef<HTMLElement>(null);
   const [panel, setPanel] = useState<'none' | 'encounter' | 'end' | 'delete'>('none');
 
@@ -97,10 +118,19 @@ export function PatientPage({ patientId, onBack, onLeft }: { patientId: string; 
   const current = record.encounters.find((e) => e.id === encounterId) ?? latest;
   const title = headline({ ...record.patient, encounter: latest }, record.today);
   const sources = record.sources.filter((s) => s.encounterId === current?.id).sort(newestFirst);
-  const observations = record.observations.filter((o) => o.encounterId === current?.id);
+  // 本人が外した事実（段3e）は、見方から除く。記載ごとの「事実を見る・直す」には、外したものも出す
+  const live = {
+    observations: record.observations.filter((o) => !o.excluded),
+    medications: record.medications.filter((m) => !m.excluded),
+    events: record.events.filter((e) => !e.excluded),
+  };
+  const observations = live.observations.filter((o) => o.encounterId === current?.id);
   const encounterSources = record.sources.filter((s) => s.encounterId === current?.id);
-  const medications = record.medications.filter((m) => m.encounterId === current?.id);
-  const events = record.events.filter((e) => e.encounterId === current?.id);
+  const medications = live.medications.filter((m) => m.encounterId === current?.id);
+  const events = live.events.filter((e) => e.encounterId === current?.id);
+  // 記録のタブの種類の絞り込み（段3e）：この受診にある種類だけをチップにする
+  const kindsHere = [...new Set(sources.map((s) => s.kind))];
+  const shownSources = kindFilter === 'all' || !kindsHere.includes(kindFilter) ? sources : sources.filter((s) => s.kind === kindFilter);
 
   const panels = vitalPanels(observations);
   const toComposer = () => {
@@ -248,20 +278,52 @@ export function PatientPage({ patientId, onBack, onLeft }: { patientId: string; 
             segments={record.segments}
             sources={record.sources}
             history={record.history}
-            observations={record.observations}
-            medications={record.medications}
-            events={record.events}
+            observations={live.observations}
+            medications={live.medications}
+            events={live.events}
             onChanged={load}
             onLeft={onLeft}
           />
         )}
         {tab === 'events' && <EventView events={events} sources={encounterSources} />}
+        {tab === 'draft' && current !== null && <DraftView key={current.id} encounterId={current.id} onLeft={onLeft} />}
+        {tab === 'notes' && kindsHere.length > 1 && (
+          <div className="chips kind-filter" data-testid="kind-filter" aria-label="記載の種類で絞る">
+            {(['all', ...kindsHere] as const).map((k) => (
+              <button
+                key={k}
+                type="button"
+                className={kindFilter === k ? 'chip small on' : 'chip small'}
+                aria-pressed={kindFilter === k}
+                onClick={() => {
+                  setKindFilter(k);
+                }}
+                data-testid={`kind-filter-${k}`}
+              >
+                {k === 'all' ? `すべて（${String(sources.length)}）` : `${SOURCE_KIND_LABELS[k]}（${String(sources.filter((s) => s.kind === k).length)}）`}
+              </button>
+            ))}
+          </div>
+        )}
         {tab !== 'notes' ? null : sources.length === 0 ? (
           <p className="note">この受診には、まだ、記録がありません。</p>
         ) : (
           <ul className="sources" data-testid="sources">
-            {sources.map((s) => (
-              <SourceCard key={s.id} source={s} segments={record.segments.filter((g) => g.sourceId === s.id)} encounter={current} onChanged={load} onLeft={onLeft} />
+            {shownSources.map((s) => (
+              <SourceCard
+                key={s.id}
+                source={s}
+                segments={record.segments.filter((g) => g.sourceId === s.id)}
+                facts={{
+                  medications: record.medications.filter((m) => m.sourceId === s.id),
+                  events: record.events.filter((e) => e.sourceId === s.id),
+                  observations: record.observations.filter((o) => o.sourceId === s.id),
+                }}
+                edits={record.factEdits}
+                encounter={current}
+                onChanged={load}
+                onLeft={onLeft}
+              />
             ))}
           </ul>
         )}
@@ -338,7 +400,23 @@ export function PatientPage({ patientId, onBack, onLeft }: { patientId: string; 
   );
 }
 
-function SourceCard({ source, segments, encounter, onChanged, onLeft }: { source: Source; segments: readonly Segment[]; encounter: Encounter | null; onChanged: () => void; onLeft: () => void }) {
+function SourceCard({
+  source,
+  segments,
+  facts,
+  edits,
+  encounter,
+  onChanged,
+  onLeft,
+}: {
+  source: Source;
+  segments: readonly Segment[];
+  facts: { medications: readonly Medication[]; events: readonly ClinicalEvent[]; observations: readonly Observation[] };
+  edits: readonly FactEdit[];
+  encounter: Encounter | null;
+  onChanged: () => void;
+  onLeft: () => void;
+}) {
   const [asking, setAsking] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [organizing, setOrganizing] = useState(false);
@@ -373,9 +451,11 @@ function SourceCard({ source, segments, encounter, onChanged, onLeft }: { source
         </span>
         <span className="source-kind">
           {SOURCE_KIND_LABELS[source.kind]}・{AUTHOR_ROLE_LABELS[source.authorRole]}
+          {CARTE_ONLY_KINDS.includes(source.kind) && <span className="tag">carte だけの記録</span>}
         </span>
       </div>
       <SourceText text={source.text} segments={segments} />
+      <SourceFacts medications={facts.medications} events={facts.events} observations={facts.observations} edits={edits} onChanged={onChanged} onLeft={onLeft} />
       {unread.length > 0 && (
         <div className="unread" data-testid="unread">
           <span className="unread-title">値として読めなかった部分（文には残っています）</span>

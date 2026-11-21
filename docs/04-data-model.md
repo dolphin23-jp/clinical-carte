@@ -183,6 +183,8 @@ AI が返すのは、次の3つだけ（構造化した出力）。
 | `problem_threads` | 問題の筋のつなぎ（決定論・AI の答えを確かめた後。段3a）・本人の操作（分ける・統合・表示の名前） |
 | `problems` の `thread_id`・`thread_origin` | 問題の筋のつなぎ・本人の操作（移す・分ける・統合） |
 | `history` | 本人が直したとき（段3a：問題の記載を移す・統合・表示の名前） |
+| `medications`・`events`・`observations` の `excluded`・`origin`・直した欄 | 本人が事実を直したとき（段3e） |
+| `fact_edits` | 本人が事実を直したとき（段3e：外す・戻す・投薬の動き・できごとの種類・日時） |
 | `devices` | 端末の登録・外すとき・その日はじめて使ったとき（1日に1回） |
 | `entrance_daily` | 合鍵を間違えたとき |
 | `usage_daily` | AI を呼んだとき |
@@ -191,7 +193,7 @@ AI が返すのは、次の3つだけ（構造化した出力）。
 
 - 打った原文・AI へ送った文・AI の答えそのものは、どの表にも書かない。ログにも出さない。
 - 表を足すときは、先にこの一覧を直す。
-- いまある表（段0〜段3a）は `devices`・`entrance_daily`・`patients`・`encounters`・`sources`・`observations`・`usage_daily`・`schema_migrations`・`segments`・`medications`・`events`・`problems`・`problem_threads`・`history`。`apps/worker/test/writes.test.ts` が、migrations が作る表と、ソースの SQL が書く表を、この一覧と突き合わせる。
+- いまある表（段0〜段3a）は `devices`・`entrance_daily`・`patients`・`encounters`・`sources`・`observations`・`usage_daily`・`schema_migrations`・`segments`・`medications`・`events`・`problems`・`problem_threads`・`history`・`fact_edits`。`apps/worker/test/writes.test.ts` が、migrations が作る表と、ソースの SQL が書く表を、この一覧と突き合わせる。
 
 ## 7. 段1 で作ったものと、案との違い
 
@@ -246,3 +248,17 @@ AI が返すのは、次の3つだけ（構造化した出力）。
 - **問題ごとの A・P**（`problemNotes`）：問題の記載が「#問題」の見出しの区切りにあれば、次の見出しまで（S・O・A・P が続くあいだ）の A・P・A/P の区切り。A・P・A/P の区切りの中にあれば、その区切り。字は保存しない（場所だけ。画面が保存した文から切り出す）。
 - **直す操作**：記載を別の筋へ移す・新しい筋に分ける（`PATCH /api/problems/:id`。いまの筋を添え、違えば 409）、筋を統合する・表示の名前を選ぶ（`PATCH /api/threads/:id`）。どれも `history` に残る。別の患者の筋へは移せない。
 - **まだないもの**：`problem_links`（問題と値・薬・できごとの結びつき。段3c）。問題以外の事実を直す操作。
+
+## 10. 段3e で作ったもの（事実を直す）
+
+作った表と列は、`apps/worker/migrations/0005_fact_edits.sql`。直しの形は、`packages/core/src/record/edits.ts`。
+
+| 表・列 | 中身 |
+|---|---|
+| `medications`・`events`・`observations` に足した列 | excluded（0：使う・1：本人が外した）。直した行は origin を self にする |
+| `fact_edits` | id・patient_id・at（日本の日時。分まで）・fact（medication・event・observation）・target（行の id）・field（excluded・action・kind・at）・before・after（選んだ値・日時・印だけ。**文は入らない**） |
+
+- **直せること**：外す・戻す。投薬の動き（開始・変更・中止・継続・記載なし）。できごとの種類。日時（日だけ・日時・不明）。打つ欄はない（打った文は選別を通す決まり。docs/01 の 2）。値の数・名前・用量・できごとの題は直さない（文に書かれたとおりのもの。違うなら外す）。
+- **整理し直したとき**：同じ文の、同じ場所・同じ字（投薬の名前・できごとの題・測定値の書かれた名前）の行に、直した値・外した印を引き継ぎ、origin を self のままにする。場所や字が変われば引き継がない（直した記録は残る）。
+- **見方**：外した事実は、経過表・検査・投薬・問題・いま・草案・回診リストの計算から除く。記載ごとの「事実を見る・直す」には出す（戻せる）。
+- **草案（段4）は、どの表にも書かない**（保存しない）。AI を呼んだ回数だけが、`usage_daily` に数えられる。

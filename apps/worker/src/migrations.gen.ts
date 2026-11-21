@@ -64,5 +64,15 @@ export const MIGRATIONS: readonly Migration[] = [
       "CREATE TABLE IF NOT EXISTS history ( id TEXT PRIMARY KEY, patient_id TEXT NOT NULL REFERENCES patients (id) ON DELETE CASCADE, at TEXT NOT NULL CHECK (length(at) = 16), action TEXT NOT NULL CHECK (action IN ('move', 'merge', 'name')), target TEXT NOT NULL, before TEXT, after TEXT )",
       "CREATE INDEX IF NOT EXISTS history_by_patient ON history (patient_id, at)"
     ]
+  },
+  {
+    "name": "0005_fact_edits",
+    "statements": [
+      "ALTER TABLE medications ADD COLUMN excluded INTEGER NOT NULL DEFAULT 0 CHECK (excluded IN (0, 1))",
+      "ALTER TABLE events ADD COLUMN excluded INTEGER NOT NULL DEFAULT 0 CHECK (excluded IN (0, 1))",
+      "ALTER TABLE observations ADD COLUMN excluded INTEGER NOT NULL DEFAULT 0 CHECK (excluded IN (0, 1))",
+      "CREATE TABLE IF NOT EXISTS fact_edits ( id TEXT PRIMARY KEY, patient_id TEXT NOT NULL REFERENCES patients (id) ON DELETE CASCADE, at TEXT NOT NULL CHECK (length(at) = 16), fact TEXT NOT NULL CHECK (fact IN ('medication', 'event', 'observation')), target TEXT NOT NULL, field TEXT NOT NULL CHECK (field IN ('excluded', 'action', 'kind', 'at')), before TEXT, after TEXT )",
+      "CREATE INDEX IF NOT EXISTS fact_edits_by_patient ON fact_edits (patient_id, at)"
+    ]
   }
 ];
