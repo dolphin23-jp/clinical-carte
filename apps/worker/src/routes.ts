@@ -11,6 +11,7 @@ import {
   DocumentRequest,
   EncounterPatch,
   ReviseRequest,
+  ListPatch,
   SegmentPatch,
   SourcePatch,
   ScaleLinkNew,
@@ -47,6 +48,7 @@ import { organizeSource } from './organize.ts';
 import type { Organizer } from './organizer.ts';
 import type { BookSearcher } from './references.ts';
 import { type EditOutcome, type LinkOutcome, linkPatient, moveMention, patchThread, setTypedName } from './problems.ts';
+import { generateList, patchList } from './problemlist.ts';
 import { ORGANIZE_PROMPTS, SELECT_PROMPT_VERSION } from './prompt.ts';
 import {
   createEncounter,
@@ -356,6 +358,38 @@ export async function recordApi(request: Request, path: string, deps: RecordDeps
     const r = await generateDocument(material, refs, deps.organizer, gate);
     if (!r.ok) return r.reason === 'ai_limit' ? reply(429, { error: 'ai_limit' }) : aiFailed(r.failure);
     return reply(200, { document: r.document, backing: r.backing, refs: r.refs, material: r.material, webFailed: r.webFailed });
+  }
+
+  // AI のプロブレムリスト（CA-057）：組む（AI の 1 回。記録が空なら呼ばない）・先生が直す（名前は選別 C-1 を通す）
+  const plist = /^\/api\/patients\/([^/]+)\/problem-list$/.exec(path);
+  if (plist && method === 'POST') {
+    const patientId = plist[1] ?? '';
+    if (!isUlid(patientId)) return bad();
+    if (deps.organizer === null) return reply(503, { error: 'no_ai' });
+    const r = await generateList(db, patientId, deps.organizer, gate, runtime);
+    if (!r.ok) {
+      if (r.reason === 'not_found') return missing();
+      if (r.reason === 'empty') return reply(422, { error: 'list_empty' });
+      if (r.reason === 'ai_limit') return reply(429, { error: 'ai_limit' });
+      return aiFailed(r.failure);
+    }
+    return reply(200, { items: r.items, rejected: r.rejected, shapes: r.shapes });
+  }
+  if (plist && method === 'PATCH') {
+    const patientId = plist[1] ?? '';
+    if (!isUlid(patientId)) return bad();
+    const body = await readBody(request, ListPatch);
+    if (body === null) return bad();
+    if ('name' in body) {
+      if (deps.selector === null) return reply(503, { error: 'no_ai' });
+      if (!(await gate.take())) return reply(429, { error: 'ai_limit' });
+    }
+    const r = await patchList(db, patientId, body, deps.selector, runtime);
+    if (r.ok) return reply(200, { ok: true });
+    if (r.error === 'not_found') return missing();
+    if (r.error === 'empty') return bad();
+    if (r.error === 'ai') return aiFailed(r.failure);
+    return reply(422, { error: 'selection_failed' });
   }
 
   // 数の印の照らし合わせの表（段I）：AI を使わない（残した記載を開いたときの印に使う）。数だけを返す

@@ -1,6 +1,6 @@
 // 「いまの状態」（段3b。CA-023・CA-026・CA-027）：患者の現在地を1画面に。作文しない：1行の要約は決定論のひな形、
 // ほかは整理した事実と、保存した文の区切りの字そのもの。「いま」は記録の上での最後の日時で、端末の時計ではない。判定しない。
-import { EVENT_KIND_NAMES, MEDICATION_ACTION_NAMES, PROBLEM_ACTIVITY_NAMES, PROBLEM_STATUS_NAMES, type PatientState, type RecentItem, recentGroups, SEGMENT_LABEL_NAMES } from '@clinical-carte/core';
+import { EVENT_KIND_NAMES, LIST_ACTIVITY_NAMES, LIST_CERTAINTY_NAMES, type ListItem, MEDICATION_ACTION_NAMES, PROBLEM_ACTIVITY_NAMES, PROBLEM_STATUS_NAMES, type PatientState, type RecentItem, recentGroups, SEGMENT_LABEL_NAMES } from '@clinical-carte/core';
 import { useState } from 'react';
 
 import { showDateTime } from './format.ts';
@@ -109,7 +109,20 @@ function recentCounts(items: readonly RecentItem[]): string {
     .join('・');
 }
 
-export function StateView({ state, sources, onProblems }: { state: PatientState; sources: readonly Source[]; onProblems: () => void }) {
+export function StateView({
+  state,
+  sources,
+  onProblems,
+  list = [],
+  listBusy = false,
+}: {
+  state: PatientState;
+  sources: readonly Source[];
+  onProblems: () => void;
+  /** AI のプロブレムリスト（CA-057。外したものを除いた項目）。あれば、いまの問題の主な見方にする */
+  list?: readonly ListItem[];
+  listBusy?: boolean;
+}) {
   const textOf = (sourceId: string, start: number, end: number): string => sources.find((s) => s.id === sourceId)?.text.slice(start, end).trim() ?? '';
   // いまの問題は、名前の1行だけ。押すと、最後の A・P と、その問題の記載に書かれた値・薬が開く（段I。「いま」を1〜2画面に）。開いたものは画面のメモリだけ
   const [open, setOpen] = useState<ReadonlySet<string>>(new Set());
@@ -133,6 +146,69 @@ export function StateView({ state, sources, onProblems }: { state: PatientState;
 
       <div className="state-cols">
       <div className="state-col">
+      {list.length > 0 && (
+        <section className="state-section" data-testid="state-plist">
+          <h3 className="sub-title">
+            プロブレムリスト <span className="tag ai-tag">AI の整理</span>
+            {listBusy && <span className="note">（組み直しています）</span>}
+          </h3>
+          <ul className="threads compact">
+            {list
+              .filter((item) => item.activity === 'active')
+              .map((item, i) => {
+                const on = open.has(`plist-${item.key}`);
+                const linked = [...state.current, ...state.closed.map((thread) => ({ thread, notes: [], values: [], medications: [] }))].filter((e) => item.threadIds.includes(e.thread.id));
+                return (
+                  <li key={item.key} className={on ? 'thread open' : 'thread'} data-testid="state-plist-item">
+                    <button
+                      type="button"
+                      className="thread-head thread-toggle"
+                      aria-expanded={on}
+                      onClick={() => {
+                        toggle(`plist-${item.key}`);
+                      }}
+                    >
+                      <span className="fold-mark" aria-hidden="true">
+                        {on ? '▾' : '▸'}
+                      </span>
+                      <strong className="thread-name">
+                        #{String(i + 1)} {item.name}
+                      </strong>
+                      <span className="tag">{LIST_CERTAINTY_NAMES[item.certainty]}</span>
+                      {item.since !== null && <span className="thread-when">{showDateTime(item.since)}〜</span>}
+                    </button>
+                    {on && (
+                      <>
+                        {item.basis !== '' && <p className="thread-sub">{item.basis}</p>}
+                        {linked.map((e) =>
+                          e.notes.length > 0 ? (
+                            <div key={e.thread.id} className="thread-note" data-testid="state-plist-note">
+                              <span className="part-label">{e.thread.name}</span>
+                              {e.notes.map((n) => (
+                                <p key={`${n.sourceId}:${String(n.start)}`} className="source-text">
+                                  {textOf(n.sourceId, n.start, n.end)}
+                                </p>
+                              ))}
+                            </div>
+                          ) : null,
+                        )}
+                      </>
+                    )}
+                  </li>
+                );
+              })}
+          </ul>
+          {list.some((item) => item.activity !== 'active') && (
+            <p className="thread-sub">
+              {list
+                .filter((item) => item.activity !== 'active')
+                .map((item) => `${item.name}（${LIST_ACTIVITY_NAMES[item.activity]}）`)
+                .join('、')}
+            </p>
+          )}
+        </section>
+      )}
+
       <section className="state-section" data-testid="state-problems">
         <h3 className="sub-title">いまの問題（{String(state.current.length)}）</h3>
         {state.current.length === 0 ? (

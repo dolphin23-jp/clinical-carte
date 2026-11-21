@@ -4,7 +4,7 @@ import { compareDateTime } from '@clinical-carte/core';
 
 import type { Observation } from './net/api.ts';
 
-const cell = (o: Observation): string => `${o.comparator ?? ''}${o.valueText}${o.unit === null ? '' : ` ${o.unit}`}`;
+const cell = (o: Observation): string => `${o.comparator ?? ''}${o.valueText}${o.unit === null ? '' : ` ${o.unit}`}${o.unseen === true ? '※' : ''}`;
 const dayOf = (at: string | null): string | null => (at === null ? null : at.slice(0, 10));
 const timeOf = (at: string | null): string => (at === null || at.length <= 10 ? '時刻なし' : at.slice(11, 16));
 

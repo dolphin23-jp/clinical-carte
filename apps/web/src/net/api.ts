@@ -20,6 +20,9 @@ import type {
   ApRef,
   Backing,
   CheckedDocument,
+  CourseCategory,
+  ListItem,
+  ListPatch,
   DocType,
   SavedDocument,
   SavedSection,
@@ -69,6 +72,7 @@ export type ApiError =
   | 'selection_failed'
   | 'conflict'
   | 'document_empty'
+  | 'list_empty'
   | 'shape'
   | 'bad_span'
   | 'too_long';
@@ -93,6 +97,7 @@ const KNOWN: readonly ApiError[] = [
   'selection_failed',
   'conflict',
   'document_empty',
+  'list_empty',
   'shape',
   'bad_span',
 ];
@@ -214,6 +219,8 @@ export interface Medication {
   readonly doseText: string | null;
   readonly action: MedicationAction | null;
   readonly at: string | null;
+  /** 日時がおおよそのときの印（CA-056） */
+  readonly atApprox?: string | null;
   readonly start: number;
   readonly end: number;
   /** 本人が外した（段3e。見方から除く） */
@@ -229,6 +236,7 @@ export interface ClinicalEvent {
   readonly kind: EventKind;
   readonly title: string;
   readonly at: string | null;
+  readonly atApprox?: string | null;
   readonly start: number;
   readonly end: number;
   /** 本人が外した（段3e。見方から除く） */
@@ -309,6 +317,33 @@ export interface Observation {
   readonly excluded: boolean;
   /** 本人が直した（段3e） */
   readonly edited: boolean;
+  /** 日時がおおよそのときの印（CA-056） */
+  readonly atApprox?: string | null;
+  /** AI が読んだ項目と値か（CA-056） */
+  readonly readBy?: 'rule' | 'ai';
+  /** AI が読んだ数が、書かれた場所の字に見つからない */
+  readonly unseen?: boolean;
+}
+
+/** 経過の出来事（CA-056） */
+export interface CourseItem {
+  readonly id: string;
+  readonly sourceId: string;
+  readonly encounterId: string;
+  readonly at: string | null;
+  readonly atApprox: string | null;
+  readonly category: CourseCategory;
+  readonly summary: string;
+  readonly start: number;
+  readonly end: number;
+}
+
+/** AI のプロブレムリスト（CA-057） */
+export interface ProblemListView {
+  readonly madeAt: string;
+  readonly promptVersion: string;
+  readonly basis: string;
+  readonly items: readonly ListItem[];
 }
 
 export interface PatientSummary {
@@ -353,6 +388,10 @@ export interface PatientRecord {
   readonly scaleLinks: readonly ScaleLinkView[];
   /** 残したカルテ記載（段I。CA-054） */
   readonly documents: readonly SavedDocument[];
+  /** 経過の出来事（CA-056） */
+  readonly course: readonly CourseItem[];
+  /** AI のプロブレムリスト（CA-057。まだなければ null） */
+  readonly problemList: ProblemListView | null;
   /** サーバーの、今日（日本の日） */
   readonly today: string;
 }
@@ -378,8 +417,8 @@ export async function createPatient(input: NewPatient): Promise<Result<Patient>>
 export async function getRecord(patientId: string): Promise<Result<PatientRecord>> {
   const result = await call('GET', `patients/${encodeURIComponent(patientId)}`);
   if (!result.ok) return result;
-  const { patient, encounters, sources, observations, segments, medications, events, problems, problemThreads, history, factEdits, userEdits, apNotes, scaleLinks, documents, today } = result.value;
-  const lists = [encounters, sources, observations, segments, medications, events, problems, problemThreads, history, factEdits, userEdits, apNotes, scaleLinks, documents];
+  const { patient, encounters, sources, observations, segments, medications, events, problems, problemThreads, history, factEdits, userEdits, apNotes, scaleLinks, documents, course, problemList, today } = result.value;
+  const lists = [encounters, sources, observations, segments, medications, events, problems, problemThreads, history, factEdits, userEdits, apNotes, scaleLinks, documents, course];
   if (!isRecord(patient) || lists.some((l) => !Array.isArray(l)) || typeof today !== 'string') return { ok: false, error: 'network' };
   return {
     ok: true,
@@ -399,6 +438,8 @@ export async function getRecord(patientId: string): Promise<Result<PatientRecord
       apNotes: apNotes as ApNote[],
       scaleLinks: scaleLinks as ScaleLinkView[],
       documents: documents as SavedDocument[],
+      course: course as CourseItem[],
+      problemList: isRecord(problemList) ? (problemList as unknown as ProblemListView) : null,
       today,
     },
   };
@@ -685,4 +726,19 @@ export async function getReferences(): Promise<Result<BookStatus>> {
   if (!result.ok) return result;
   const books = result.value['books'];
   return books === 'off' || books === 'ok' || books === 'unauthorized' || books === 'unavailable' ? { ok: true, value: books } : { ok: false, error: 'network' };
+}
+
+// --- AI のプロブレムリスト（CA-057）
+
+/** 記録全体から、AI がリストを組み直す（先生の直しは引き継ぐ） */
+export async function generateProblemList(patientId: string): Promise<Result<{ rejected: Record<string, number> }>> {
+  const result = await call('POST', `patients/${encodeURIComponent(patientId)}/problem-list`, {});
+  if (!result.ok) return result;
+  const rejected = result.value['rejected'];
+  return { ok: true, value: { rejected: isRecord(rejected) ? (rejected as Record<string, number>) : {} } };
+}
+
+/** 先生の直し（名前はサーバーで選別を通す） */
+export async function patchProblemList(patientId: string, patch: ListPatch): Promise<Result<null>> {
+  return done(await call('PATCH', `patients/${encodeURIComponent(patientId)}/problem-list`, patch));
 }

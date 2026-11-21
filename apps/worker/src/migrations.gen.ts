@@ -119,5 +119,21 @@ export const MIGRATIONS: readonly Migration[] = [
       "CREATE TABLE IF NOT EXISTS document_history ( id TEXT PRIMARY KEY, patient_id TEXT NOT NULL REFERENCES patients (id) ON DELETE CASCADE, at TEXT NOT NULL CHECK (length(at) = 16), document_id TEXT NOT NULL, action TEXT NOT NULL CHECK (action IN ('add', 'edit', 'delete')), origin TEXT CHECK (origin IS NULL OR origin IN ('self', 'ai', 'ai_edited')) )",
       "CREATE INDEX IF NOT EXISTS document_history_by_patient ON document_history (patient_id, at)"
     ]
+  },
+  {
+    "name": "0011_ai_sort",
+    "statements": [
+      "ALTER TABLE medications ADD COLUMN at_approx TEXT",
+      "ALTER TABLE events ADD COLUMN at_approx TEXT",
+      "ALTER TABLE observations ADD COLUMN at_approx TEXT",
+      "ALTER TABLE observations ADD COLUMN read_by TEXT NOT NULL DEFAULT 'rule' CHECK (read_by IN ('rule', 'ai'))",
+      "ALTER TABLE observations ADD COLUMN unseen INTEGER NOT NULL DEFAULT 0 CHECK (unseen IN (0, 1))",
+      "CREATE TABLE IF NOT EXISTS course_items ( id TEXT PRIMARY KEY, patient_id TEXT NOT NULL REFERENCES patients (id) ON DELETE CASCADE, encounter_id TEXT NOT NULL REFERENCES encounters (id) ON DELETE CASCADE, source_id TEXT NOT NULL REFERENCES sources (id) ON DELETE CASCADE, at TEXT CHECK (at IS NULL OR length(at) IN (10, 16)), at_approx TEXT, category TEXT NOT NULL CHECK (category IN ('onset', 'change', 'intake', 'visit', 'test', 'treatment', 'finding', 'other')), summary TEXT NOT NULL, span_start INTEGER NOT NULL, span_end INTEGER NOT NULL, origin TEXT NOT NULL DEFAULT 'ai' CHECK (origin IN ('ai', 'self')) )",
+      "CREATE INDEX IF NOT EXISTS course_items_by_patient ON course_items (patient_id, at)",
+      "CREATE INDEX IF NOT EXISTS course_items_by_source ON course_items (source_id)",
+      "CREATE TABLE IF NOT EXISTS problem_lists ( patient_id TEXT PRIMARY KEY REFERENCES patients (id) ON DELETE CASCADE, made_at TEXT NOT NULL CHECK (length(made_at) = 16), prompt_version TEXT NOT NULL, basis TEXT NOT NULL, items TEXT NOT NULL )",
+      "CREATE TABLE IF NOT EXISTS problem_list_edits ( id TEXT PRIMARY KEY, patient_id TEXT NOT NULL REFERENCES patients (id) ON DELETE CASCADE, at TEXT NOT NULL CHECK (length(at) = 16), item_key TEXT NOT NULL, field TEXT NOT NULL CHECK (field IN ('name', 'certainty', 'activity', 'hidden', 'move')), before TEXT, after TEXT )",
+      "CREATE INDEX IF NOT EXISTS problem_list_edits_by_patient ON problem_list_edits (patient_id, at)"
+    ]
   }
 ];

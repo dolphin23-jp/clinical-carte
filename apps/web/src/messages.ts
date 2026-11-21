@@ -37,6 +37,8 @@ export function errorMessage(error: ApiError, left?: number): string {
       return 'ほかの端末で、先に直されていました。読み込み直した内容を確かめて、もう一度直してください。';
     case 'document_empty':
       return 'この日までに、この記載の資料になる記録がありません。日か種類を選び直してください。';
+    case 'list_empty':
+      return 'まだ整理した記録がないので、プロブレムリストを組めません。記録を入れて整理してから、もう一度試してください。';
     case 'shape':
       return '記載か頼みに、電話番号・メールなどの形があるので、送りませんでした。消してから、もう一度送ってください。';
     case 'bad_span':

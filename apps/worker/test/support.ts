@@ -10,7 +10,7 @@ import type { Db, Statement } from '../src/db.ts';
 import { handle, type HandlerDeps } from '../src/handler.ts';
 import { MIGRATIONS as MIGRATION_LIST } from '../src/migrations.gen.ts';
 import { type Runtime, webRuntime } from '../src/runtime.ts';
-import type { DocumentResult, LinkerResult, Organizer, OrganizerResult, ResearchResult, ReviseResult } from '../src/organizer.ts';
+import type { DocumentResult, LinkerResult, Organizer, OrganizerResult, ProblemListResult, ResearchResult, ReviseResult } from '../src/organizer.ts';
 import type { OrganizePromptChoice } from '../src/prompt.ts';
 import type { Selector, SelectorResult } from '../src/selector.ts';
 
@@ -172,12 +172,15 @@ export interface FakeOrganizer extends Organizer {
   readonly researched: string[];
   readonly documented: string[];
   readonly revised: string[];
+  /** プロブレムリストに渡された資料（JSON） */
+  readonly listed: string[];
 }
 
 export interface FakeDocAnswers {
   readonly research?: (message: string) => ResearchResult;
   readonly document?: (message: string) => DocumentResult;
   readonly revise?: (message: string) => ReviseResult;
+  readonly problemList?: (message: string) => ProblemListResult;
 }
 
 /** AI の整理の代役：文を受け取り、決めた答えを返す（既定は、何も見つけない）。つなぎは、既定では何もつながない */
@@ -189,6 +192,7 @@ export function fakeOrganizer(
   const researched: string[] = [];
   const documented: string[] = [];
   const revised: string[] = [];
+  const listed: string[] = [];
   const seen: string[] = [];
   const prompts: OrganizePromptChoice[] = [];
   const linked: string[] = [];
@@ -199,6 +203,11 @@ export function fakeOrganizer(
     researched,
     documented,
     revised,
+    listed,
+    problemList: (message) => {
+      listed.push(message);
+      return Promise.resolve(docs.problemList?.(message) ?? { ok: true, answer: { items: [] } });
+    },
     research: (message) => {
       researched.push(message);
       return Promise.resolve(docs.research?.(message) ?? { ok: true, hits: [] });

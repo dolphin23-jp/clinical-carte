@@ -2,10 +2,10 @@
 // 答えは、決めた形（構造化した出力）で受け、確かめるのは core の applySelection。ここでは、保存もログもしない。
 import Anthropic from '@anthropic-ai/sdk';
 import { zodOutputFormat } from '@anthropic-ai/sdk/helpers/zod';
-import { DocumentAnswer, LinkAnswer, OrganizeAnswer, ReviseAnswer, SelectionAnswer } from '@clinical-carte/core';
+import { DocumentAnswer, LinkAnswer, OrganizeAnswerWire, ProblemListAnswer, ReviseAnswer, SelectionAnswer } from '@clinical-carte/core';
 
-import type { DocumentResult, LinkerResult, Organizer, OrganizerResult, ResearchResult, ReviseResult } from './organizer.ts';
-import { DOC_REVISE_SYSTEM, DOC_SYSTEM, LINK_SYSTEM, ORGANIZE_PROMPTS, type OrganizePromptChoice, RESEARCH_SYSTEM, SELECT_SYSTEM, WEB_DOMAINS } from './prompt.ts';
+import type { DocumentResult, LinkerResult, Organizer, OrganizerResult, ProblemListResult, ResearchResult, ReviseResult } from './organizer.ts';
+import { DOC_REVISE_SYSTEM, DOC_SYSTEM, LINK_SYSTEM, PLIST_SYSTEM, ORGANIZE_PROMPTS, type OrganizePromptChoice, RESEARCH_SYSTEM, SELECT_SYSTEM, WEB_DOMAINS } from './prompt.ts';
 import type { WebHit } from './references.ts';
 import type { Selector, SelectorResult } from './selector.ts';
 
@@ -61,12 +61,12 @@ export function createAnthropicOrganizer(options: AnthropicOptions): Organizer {
           fallbacks: 'default',
           cache_control: { type: 'ephemeral' },
           system: ORGANIZE_PROMPTS[prompt].system,
-          output_config: { effort: 'medium', format: zodOutputFormat(OrganizeAnswer) },
+          output_config: { effort: 'medium', format: zodOutputFormat(OrganizeAnswerWire) },
           messages: [{ role: 'user', content: text }],
         });
         if (response.stop_reason === 'refusal') return { ok: false, reason: 'refused' };
         if (response.stop_reason !== 'end_turn') return { ok: false, reason: 'bad_answer' };
-        const parsed = OrganizeAnswer.safeParse(response.parsed_output);
+        const parsed = OrganizeAnswerWire.safeParse(response.parsed_output);
         return parsed.success ? { ok: true, answer: parsed.data } : { ok: false, reason: 'bad_answer' };
       } catch (error) {
         if (error instanceof Anthropic.APIError) return { ok: false, reason: 'unavailable' };
@@ -173,6 +173,31 @@ export function createAnthropicOrganizer(options: AnthropicOptions): Organizer {
         if (response.stop_reason === 'refusal') return { ok: false, reason: 'refused' };
         if (response.stop_reason !== 'end_turn') return { ok: false, reason: 'bad_answer' };
         const parsed = ReviseAnswer.safeParse(response.parsed_output);
+        return parsed.success ? { ok: true, answer: parsed.data } : { ok: false, reason: 'bad_answer' };
+      } catch (error) {
+        if (error instanceof Anthropic.APIError) return { ok: false, reason: 'unavailable' };
+        return { ok: false, reason: 'bad_answer' };
+      }
+    },
+    // プロブレムリスト（CA-057）。送るのは、記録から作った資料だけ（core の listMaterial）。答えは、確かめてから保存する
+    async problemList(message: string): Promise<ProblemListResult> {
+      try {
+        const response = await client.beta.messages.parse(
+          {
+            model: options.model,
+            max_tokens: 16000,
+            betas: ['server-side-fallback-2026-07-01'],
+            fallbacks: 'default',
+            cache_control: { type: 'ephemeral' },
+            system: PLIST_SYSTEM,
+            output_config: { effort: 'high', format: zodOutputFormat(ProblemListAnswer) },
+            messages: [{ role: 'user', content: message }],
+          },
+          { timeout: 300_000 },
+        );
+        if (response.stop_reason === 'refusal') return { ok: false, reason: 'refused' };
+        if (response.stop_reason !== 'end_turn') return { ok: false, reason: 'bad_answer' };
+        const parsed = ProblemListAnswer.safeParse(response.parsed_output);
         return parsed.success ? { ok: true, answer: parsed.data } : { ok: false, reason: 'bad_answer' };
       } catch (error) {
         if (error instanceof Anthropic.APIError) return { ok: false, reason: 'unavailable' };

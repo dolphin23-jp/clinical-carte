@@ -3,16 +3,19 @@
 // 確かめること（通らないものは、事実にしない。黙って捨てず、種類と理由ごとの件数を report に残す）：
 //  - 引用が、保存した文にある（そのまま、または全角・半角・ダッシュをそろえて）。1〜200 字、改行をまたがない
 //  - 日時は、引用を決定論で読む（time/when.ts）。日時の引用がなければ、記載の日時
-//  - 測定値は、引用を決定論で読む（labs/read.ts）。AI が書いた数は使わない
+//  - 測定値は、まず引用を決定論で読む（labs/read.ts）。読めなければ、AI が読んだ項目と値を使い（CA-056）、引用の字に同じ数がないものに印（unseen）を付ける
+//  - 規則で読めない日時の言い方は、AI の手がかり（基準とずれ）から決定論で計算し、幅のあるものに「ごろ」の印（CA-056。time/hint.ts）
+//  - 経過の出来事（CA-056）：引用の場所と、AI の短い要約。要約の中の数は引用にあるものだけ（なければ、引用の字を要約にする）
 //  - 事実の文字に、識別情報の形（電話・メールなど）がない
 // 置き換えた文そのもの（保存した文）は、1字も変えない。
-import { findShapes } from '../guard/shapes.ts';
+import { findShapes, replaceShapes } from '../guard/shapes.ts';
 import { type LabRow, readLabText } from '../labs/read.ts';
 import { READ_VALUES_KINDS, type SourceKind } from '../record/schema.ts';
 import { foldSameLength } from '../text/fold.ts';
 import { daysBetween } from '../time/datetime.ts';
+import { resolveHint } from '../time/hint.ts';
 import { lineHeadWhen, parseWhen, shiftDay, type WhenContext } from '../time/when.ts';
-import type { EventKind, MedicationAction, OrganizeAnswer, ProblemActivity, ProblemStatus, SegmentLabel } from './answer.ts';
+import type { AiValue, CourseCategory, EventKind, MedicationAction, OrganizeAnswer, ProblemActivity, ProblemStatus, SegmentLabel, WhenHint } from './answer.ts';
 
 export const ORGANIZE_QUOTE_MAX = 200;
 /** 1つの文から作る、種類ごとの行の上限 */
@@ -48,13 +51,27 @@ export interface OrganizedMedication extends Span {
   readonly doseText: string | null;
   readonly action: MedicationAction | null;
   readonly at: string | null;
+  /** 日時がおおよそのときの印（「夕方ごろ」など。CA-056） */
+  readonly atApprox: string | null;
 }
 
 export interface OrganizedEvent extends Span {
   readonly kind: EventKind;
   readonly title: string;
   readonly at: string | null;
+  readonly atApprox: string | null;
 }
+
+/** 経過の出来事（CA-056）：引用の場所と、AI の短い要約 */
+export interface OrganizedCourse extends Span {
+  readonly category: CourseCategory;
+  readonly summary: string;
+  readonly at: string | null;
+  readonly atApprox: string | null;
+}
+
+/** 経過の出来事の要約の長さの上限 */
+export const COURSE_SUMMARY_MAX = 80;
 
 export interface OrganizedProblem extends Span {
   readonly name: string;
@@ -66,13 +83,18 @@ export interface OrganizedProblem extends Span {
 export interface OrganizedObservation {
   readonly row: LabRow;
   readonly at: string | null;
-  /** parser：文全体を決定論で読んだ（検査結果・バイタルの文）。ai：AI が指した場所を、決定論で読んだ */
+  /** parser：文全体を決定論で読んだ（検査結果・バイタルの文）。ai：AI が指した場所を読んだ */
   readonly origin: 'parser' | 'ai';
+  readonly atApprox: string | null;
+  /** rule：字を決定論で読んだ。ai：AI が読んだ項目と値（CA-056） */
+  readonly readBy: 'rule' | 'ai';
+  /** AI が読んだ値の数が、書かれた場所の字に見つからない（印を付けて出す） */
+  readonly unseen: boolean;
 }
 
-export const REPORT_CATEGORIES = ['kind', 'when', 'segment', 'medication', 'event', 'problem', 'measurement'] as const;
+export const REPORT_CATEGORIES = ['kind', 'when', 'segment', 'medication', 'event', 'problem', 'measurement', 'course'] as const;
 export type ReportCategory = (typeof REPORT_CATEGORIES)[number];
-export const REPORT_REASONS = ['not_found', 'bad_quote', 'shape', 'when_unread', 'unread', 'order', 'too_many'] as const;
+export const REPORT_REASONS = ['not_found', 'bad_quote', 'shape', 'when_unread', 'unread', 'order', 'too_many', 'summary_number'] as const;
 export type ReportReason = (typeof REPORT_REASONS)[number];
 export type OrganizeReport = Partial<Record<ReportCategory, Partial<Record<ReportReason, number>>>>;
 
@@ -84,6 +106,7 @@ export const REPORT_CATEGORY_NAMES: Readonly<Record<ReportCategory, string>> = {
   event: 'できごと',
   problem: '問題',
   measurement: '測定値',
+  course: '経過の出来事',
 };
 export const REPORT_REASON_NAMES: Readonly<Record<ReportReason, string>> = {
   not_found: '引用が文になかった',
@@ -93,6 +116,7 @@ export const REPORT_REASON_NAMES: Readonly<Record<ReportReason, string>> = {
   unread: '値として読めない部分があった',
   order: '区切りの順が合わなかった',
   too_many: '多すぎた',
+  summary_number: '要約の数が引用になかった（引用の字を出した）',
 };
 
 export interface Organized {
@@ -105,6 +129,7 @@ export interface Organized {
   readonly events: readonly OrganizedEvent[];
   readonly problems: readonly OrganizedProblem[];
   readonly observations: readonly OrganizedObservation[];
+  readonly course: readonly OrganizedCourse[];
   readonly report: OrganizeReport;
 }
 
@@ -200,14 +225,26 @@ export function applyOrganization(answer: OrganizeAnswer, ctx: OrganizeContext):
     return line;
   };
 
-  /** 事実の日時：引用があれば、それを読む（読めなければ null と数える）。なければ、区切りの時刻、それもなければ記載の日時 */
-  const factAt = (category: ReportCategory, when: string | null, pos: number | null = null): string | null => {
-    if (when === null) return pos === null ? at : atOfSpan(pos);
+  /**
+   * 事実の日時：引用があれば、それを読む。読めなければ（または引用がなく手がかりがあれば）、AI の手がかりから計算する（CA-056）。
+   * どちらもなければ、区切りの時刻、それもなければ記載の日時
+   */
+  const factWhen = (category: ReportCategory, when: string | null, pos: number | null, hint: WhenHint = null): { at: string | null; approx: string | null } => {
+    const fromHint = (): { at: string; approx: string | null } | null => resolveHint(hint, { noteAt: at, encounterStart: ctx.encounterStart });
+    if (when === null) {
+      const h = fromHint();
+      if (h !== null) return h;
+      return { at: pos === null ? at : atOfSpan(pos), approx: null };
+    }
     const span = place(category, when);
-    if (span === null) return null;
+    if (span === null) return { at: null, approx: null };
     const parsed = parseWhen(text.slice(span.start, span.end), withDay(whenCtx, span.start));
-    if (parsed === null) count(report, category, 'when_unread');
-    return parsed;
+    const h = fromHint();
+    // 引用を規則で読めた日だけのとき、手がかりが同じ日の時刻・時間帯を足せば、それを使う（「3日前の夕方」）。日が食い違えば、規則で読んだ日のまま
+    if (parsed !== null) return h !== null && parsed.length === 10 && h.at.slice(0, 10) === parsed ? h : { at: parsed, approx: null };
+    if (h !== null) return h;
+    count(report, category, 'when_unread');
+    return { at: null, approx: null };
   };
 
   const capped = <T>(category: ReportCategory, items: readonly T[]): readonly T[] => {
@@ -303,7 +340,8 @@ export function applyOrganization(answer: OrganizeAnswer, ctx: OrganizeContext):
       doseText = text.slice(dose.start, dose.end);
     }
     medicationCursor = name.start;
-    medications.push({ ...name, name: text.slice(name.start, name.end), doseText, action: m.action, at: factAt('medication', m.when, name.start) });
+    const w = factWhen('medication', m.when, name.start, m.whenHint ?? null);
+    medications.push({ ...name, name: text.slice(name.start, name.end), doseText, action: m.action, at: w.at, atApprox: w.approx });
   }
 
   const events: OrganizedEvent[] = [];
@@ -312,7 +350,8 @@ export function applyOrganization(answer: OrganizeAnswer, ctx: OrganizeContext):
     const span = placeFact('event', e.title, [e.when], eventCursor);
     if (span === null) continue;
     eventCursor = span.start;
-    events.push({ ...span, kind: e.kind, title: text.slice(span.start, span.end), at: factAt('event', e.when, span.start) });
+    const w = factWhen('event', e.when, span.start, e.whenHint ?? null);
+    events.push({ ...span, kind: e.kind, title: text.slice(span.start, span.end), at: w.at, atApprox: w.approx });
   }
 
   // 問題の名前が、問題の一覧と「#問題」の見出しの両方にあるときは、見出しの行の場所にする（その問題の範囲は、見出しから続く S・O・A・P。段3c）
@@ -349,42 +388,75 @@ export function applyOrganization(answer: OrganizeAnswer, ctx: OrganizeContext):
       }
     }
     const inUrine = (row: LabRow): boolean => urine.some((u) => row.start >= u.start && row.end <= u.end);
-    for (const row of readLabText(text).rows) if (!inUrine(row)) observations.push({ row, at: atOfSpan(row.start), origin: 'parser' });
+    for (const row of readLabText(text).rows) if (!inUrine(row)) observations.push({ row, at: atOfSpan(row.start), origin: 'parser', atApprox: null, readBy: 'rule', unseen: false });
     for (const u of urine) {
-      for (const row of readLabText(text.slice(u.start, u.end), { specimen: 'urine' }).rows) observations.push({ row: { ...row, start: row.start + u.start, end: row.end + u.start }, at: atOfSpan(u.start), origin: 'parser' });
+      for (const row of readLabText(text.slice(u.start, u.end), { specimen: 'urine' }).rows) observations.push({ row: { ...row, start: row.start + u.start, end: row.end + u.start }, at: atOfSpan(u.start), origin: 'parser', atApprox: null, readBy: 'rule', unseen: false });
     }
     observations.sort((a, b) => a.row.start - b.row.start);
   } else {
     const used: Span[] = [];
     for (const m of capped('measurement', answer.measurements)) {
-      // 同じ引用が、文に何度も出るとき（時刻の違う同じ測定）は、まだ使っていない場所を、順に使う
+      // 同じ引用が、文に何度も出るとき（時刻の違う同じ測定）は、まだ使っていない場所を、順に使う。
+      // AI が読んだ値（推移の「12.4→6.8」を日時ごとに分けたものなど）は、同じ場所を使い直してよい
       let span: Span | null = null;
       if (quoteShapeOk(m.quote)) {
         let from = 0;
+        let firstFound: Span | null = null;
         for (;;) {
           const found = locate(text, folded, m.quote, from);
           if (found === null) break;
+          firstFound ??= found;
           if (!used.some((u) => u.start === found.start)) {
             span = found;
             break;
           }
           from = found.start + 1;
         }
+        if (span === null && (m.values?.length ?? 0) > 0) span = firstFound;
         if (span === null) count(report, 'measurement', 'not_found');
       } else count(report, 'measurement', 'bad_quote');
       if (span === null) continue;
+      if (findShapes(text.slice(span.start, span.end)).length > 0) {
+        count(report, 'measurement', 'shape');
+        continue;
+      }
       used.push(span);
-      const read = readLabText(text.slice(span.start, span.end), { specimen: m.specimen });
-      // 数えるのは、何も読めなかった引用と、項目の名前は読めたのに値を読めなかった引用だけ。
-      // 「SpO2 96%（室内気）」の「室内気」のような、項目でない語が残っただけの引用は数えない（数が、ほぼすべての記載に付いて、意味をなくすため）
-      if (read.rows.length === 0 || read.unread.some((u) => u.reason !== 'unknown' && u.reason !== 'flag')) count(report, 'measurement', 'unread');
-      if (read.rows.length === 0) continue;
-      const rowAt = factAt('measurement', m.when, span.start);
-      for (const row of read.rows) observations.push({ row: { ...row, start: row.start + span.start, end: row.end + span.start }, at: rowAt, origin: 'ai' });
+      const quoteText = text.slice(span.start, span.end);
+      const read = readLabText(quoteText, { specimen: m.specimen });
+      const ruleOk = read.rows.length > 0 && !read.unread.some((u) => u.reason !== 'unknown' && u.reason !== 'flag');
+      const w = factWhen('measurement', m.when, span.start, m.whenHint ?? null);
+      if (ruleOk) {
+        for (const row of read.rows) observations.push({ row: { ...row, start: row.start + span.start, end: row.end + span.start }, at: w.at, origin: 'ai', atApprox: w.approx, readBy: 'rule', unseen: false });
+        continue;
+      }
+      // 字を規則で読めない引用（「熱は38.5℃まで上昇」）：AI が読んだ項目と値を使う（CA-056）。読めた行は残し、足りない分を AI の値で補う
+      const aiRows = (m.values ?? []).flatMap((v) => aiValueRows(v, m.specimen)).filter((r) => !read.rows.some((x) => (x.name ?? x.nameRaw) === (r.name ?? r.nameRaw)));
+      for (const row of read.rows) observations.push({ row: { ...row, start: row.start + span.start, end: row.end + span.start }, at: w.at, origin: 'ai', atApprox: w.approx, readBy: 'rule', unseen: false });
+      for (const row of aiRows) observations.push({ row: { ...row, start: span.start, end: span.end }, at: w.at, origin: 'ai', atApprox: w.approx, readBy: 'ai', unseen: !numbersSeen(row.valueText, quoteText) });
+      if (read.rows.length === 0 && aiRows.length === 0) count(report, 'measurement', 'unread');
     }
   }
 
-  return { kind, at, segments, medications, events, problems, observations, report };
+  // 経過の出来事（CA-056）
+  const course: OrganizedCourse[] = [];
+  const seenCourse = new Set<string>();
+  for (const c of capped('course', answer.course ?? [])) {
+    const span = place('course', c.quote);
+    if (span === null) continue;
+    const quoteText = text.slice(span.start, span.end);
+    let summary = replaceShapes(c.summary.replace(/\s+/gu, ' ').trim()).text;
+    if (summary === '' || summary.length > COURSE_SUMMARY_MAX || !numbersSeen(summary, quoteText)) {
+      if (summary !== '' && !numbersSeen(summary, quoteText)) count(report, 'course', 'summary_number');
+      summary = quoteText.slice(0, COURSE_SUMMARY_MAX);
+    }
+    const key = `${String(span.start)}:${summary}`;
+    if (seenCourse.has(key)) continue;
+    seenCourse.add(key);
+    const w = factWhen('course', c.when, span.start, c.whenHint);
+    course.push({ ...span, category: c.category, summary, at: w.at, atApprox: w.approx });
+  }
+
+  return { kind, at, segments, medications, events, problems, observations, course, report };
 }
 
 /** 確かめられなかった件数の合計 */
@@ -392,4 +464,28 @@ export function reportTotal(report: OrganizeReport): number {
   let n = 0;
   for (const reasons of Object.values(report)) for (const v of Object.values(reasons)) n += v;
   return n;
+}
+
+/** 数をそろえる（全角は半角に。先頭・末尾の 0 の違いは同じ数） */
+const numbersOf = (text: string): string[] =>
+  [...text.replace(/[０-９]/gu, (c) => String.fromCharCode(c.charCodeAt(0) - 0xfee0)).replace(/．/gu, '.').matchAll(/\d+(?:\.\d+)?/gu)].map((m) => String(Number(m[0])));
+
+/** 文の中の数が、すべて引用の字にあるか */
+export function numbersSeen(text: string, quote: string): boolean {
+  const inQuote = new Set(numbersOf(quote));
+  return numbersOf(text).every((n) => inQuote.has(n));
+}
+
+/**
+ * AI が読んだ項目と値を、測定値の行にする（CA-056）。名前と値を「名前 値 単位」の文にして、決定論の読み取りに通す（項目の名前は、ほかの値と同じ表で正規化する）。
+ * 表にない名前は「名前: 値」で読む（名前は null）。読めなければ行にしない
+ */
+function aiValueRows(v: AiValue, specimen: 'urine' | null): LabRow[] {
+  const name = v.name.trim().slice(0, 40);
+  const value = v.value.trim().slice(0, 40);
+  if (name === '' || value === '' || findShapes(`${name} ${value}`).length > 0) return [];
+  const text = `${name} ${v.comparator ?? ''}${value}${v.unit === null || v.unit.trim() === '' ? '' : ` ${v.unit.trim().slice(0, 20)}`}`;
+  const first = readLabText(text, { specimen });
+  if (first.rows.length > 0) return [...first.rows];
+  return [...readLabText(`${name}: ${v.comparator ?? ''}${value}`, { specimen }).rows];
 }

@@ -200,6 +200,9 @@ AI が返すのは、次の3つだけ（構造化した出力）。
 | `ap_history` | 本人が A/P を残す・直す・種類を選び直す・消すとき（段5。**文は入らない**） |
 | `documents` | 本人がカルテ記載を「保存する」・直す・消すとき（段I。CA-054。文は選別を通した後の字） |
 | `document_history` | 本人がカルテ記載を残す・直す・消すとき（段I。**文は入らない**） |
+| `course_items` | 整理（段J。CA-056）のとき（その文の行を入れ替える）・文を消すとき・患者を消すとき。AI の短い要約と、引用の場所 |
+| `problem_lists` | AI がプロブレムリストを組んだとき・本人が直したとき（CA-057。患者ごとに1つ） |
+| `problem_list_edits` | 本人がプロブレムリストを直したとき（CA-057。名前の前後は選別を通した後の字） |
 | `devices` | 端末の登録・外すとき・その日はじめて使ったとき（1日に1回） |
 | `entrance_daily` | 合鍵を間違えたとき |
 | `usage_daily` | AI を呼んだとき |
@@ -208,7 +211,7 @@ AI が返すのは、次の3つだけ（構造化した出力）。
 
 - 打った原文・AI へ送った文・AI の答えそのものは、どの表にも書かない。ログにも出さない。
 - 表を足すときは、先にこの一覧を直す。
-- いまある表（段0〜段5）は `devices`・`entrance_daily`・`patients`・`encounters`・`sources`・`observations`・`usage_daily`・`schema_migrations`・`segments`・`medications`・`events`・`problems`・`problem_threads`・`history`・`fact_edits`・`user_edits`・`ap_notes`・`ap_history`・`scale_links`・`documents`・`document_history`。`apps/worker/test/writes.test.ts` が、migrations が作る表と、ソースの SQL が書く表を、この一覧と突き合わせる。
+- いまある表（段0〜段5）は `devices`・`entrance_daily`・`patients`・`encounters`・`sources`・`observations`・`usage_daily`・`schema_migrations`・`segments`・`medications`・`events`・`problems`・`problem_threads`・`history`・`fact_edits`・`user_edits`・`ap_notes`・`ap_history`・`scale_links`・`documents`・`document_history`・`course_items`・`problem_lists`・`problem_list_edits`。`apps/worker/test/writes.test.ts` が、migrations が作る表と、ソースの SQL が書く表を、この一覧と突き合わせる。
 
 ## 7. 段1 で作ったものと、案との違い
 
@@ -344,4 +347,19 @@ AI が返すのは、次の3つだけ（構造化した出力）。
 - 見出しは、種類ごとに決めたもの（`DOC_SECTIONS`）だけ。同じ見出しは1回。中身のない見出しは、選別に通さず空のまま残す（書かれていないことを補わない）。全部が空なら残さない。
 - 患者を消すと、記載と履歴も消える（`PATIENT_TABLES`）。
 - 出した記載・相談のやりとり・数の照らし合わせの表（数だけ）は保存しない。
+
+## 16. AI による振り分けと、AI のプロブレムリスト（段J。CA-056・CA-057）
+
+作った表と列は、`apps/worker/migrations/0011_ai_sort.sql`。
+
+| 表 | 足した列・作った列 |
+|---|---|
+| `medications`・`events`・`observations` | at_approx（日時がおおよそのときの印。「夕方ごろ」「11/15〜11/17ごろ」「ごろ」。正確なら NULL） |
+| `observations` | read_by（rule：字を決定論で読んだ・ai：AI が読んだ項目と値）・unseen（AI の数が、書かれた場所の字に見つからない：1） |
+| `course_items` | id・patient_id・encounter_id・source_id・at・at_approx・category（onset・change・intake・visit・test・treatment・finding・other）・summary（**AI の短い要約**。80 字まで。数は引用にあるものだけ）・span_start・span_end（引用の場所）・origin（ai） |
+| `problem_lists` | patient_id（患者ごとに1つ）・made_at・prompt_version・basis（記録の印）・items（項目の JSON：key・name〔AI が整えた名前。先生が直したら、選別を通した後の字〕・certainty・activity・threadIds・course〔経過の出来事の文の id と場所〕・basis〔根拠の短い文〕・since・self〔先生が直した欄〕・hidden） |
+| `problem_list_edits` | id・patient_id・at・item_key・field（name・certainty・activity・hidden・move）・before・after |
+
+- `course_items` は、文から作る行（`FACT_TABLES`）：整理し直すと入れ替わり、文を消すと消える。
+- AI の答えそのもの（読んだ値の元の答え・要約の元の答え・プロブレムリストの元の答え）は、確かめた後の行と項目だけを残し、答えそのものは保存もログもしない。
 
