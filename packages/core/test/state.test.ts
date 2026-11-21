@@ -1,0 +1,147 @@
+import { describe, expect, test } from 'vitest';
+
+import { patientState, type StateInput, type ThreadMention } from '../src/index.ts';
+
+const E = 'enc1';
+let n = 0;
+const mention = (p: Partial<ThreadMention>): ThreadMention => {
+  n += 1;
+  return { id: `m${String(n).padStart(3, '0')}`, sourceId: 's1', threadId: 'T1', name: '#1 市中肺炎', status: 'problem', activity: null, at: '2026-11-20T09:00', start: 0, end: 7, ...p };
+};
+
+const base = (patch: Partial<StateInput> = {}): StateInput => ({
+  patient: { age: 72, ageOn: '2026-11-17', sex: 'male' },
+  encounter: { id: E, kind: 'inpatient', start: '2026-11-17T22:10', end: null },
+  today: '2026-11-21',
+  sources: [
+    { id: 's0', encounterId: E, at: '2026-11-17T23:00', enteredAt: '2026-11-18T08:00' },
+    { id: 's1', encounterId: E, at: '2026-11-20T09:00', enteredAt: '2026-11-20T10:12' },
+  ],
+  segments: [],
+  threads: [{ id: 'T1', displayName: null, mergedInto: null }, { id: 'T2', displayName: null, mergedInto: null }, { id: 'T3', displayName: null, mergedInto: null }],
+  mentions: [],
+  medications: [],
+  events: [],
+  observations: [],
+  ...patch,
+});
+
+describe('patientState：1行の要約と、いつの時点か', () => {
+  test('年齢・性別・受診・病日（記録の上での最後の日時で）・いまの問題の名前だけで作る', () => {
+    const s = patientState(
+      base({
+        mentions: [
+          mention({ threadId: 'T1', name: '#1 発熱', at: '2026-11-17T23:00', sourceId: 's0' }),
+          mention({ threadId: 'T1', name: '#1 市中肺炎', at: '2026-11-20T09:00' }),
+          mention({ threadId: 'T2', name: '#2 低K血症', at: '2026-11-20T09:00', activity: 'resolved' }),
+          mention({ threadId: 'T3', name: '肺塞栓', status: 'ruled_out', at: '2026-11-18' }),
+        ],
+      }),
+    );
+    expect(s.oneLiner).toBe('72歳 男性。入院 2026-11-17〜（記録の上では 4病日まで）。いまの問題：#1 市中肺炎。');
+    expect(s.asOf).toBe('2026-11-20T09:00');
+    expect(s.lastEntered).toBe('2026-11-20T10:12');
+    expect(s.closed.map((t) => t.name)).toEqual(['#2 低K血症']);
+    expect(s.ruledOut.map((t) => t.name)).toEqual(['肺塞栓']);
+  });
+
+  test('問題がなければ「いまの問題の記載なし」。外来は病日を書かない', () => {
+    const s = patientState(base({ encounter: { id: E, kind: 'outpatient', start: '2026-11-20', end: null } }));
+    expect(s.oneLiner).toBe('72歳 男性。外来 2026-11-20。いまの問題の記載なし。');
+  });
+
+  test('記録がなければ asOf も24時間もない', () => {
+    const s = patientState(base({ sources: [] }));
+    expect(s.asOf).toBeNull();
+    expect(s.recent).toBeNull();
+  });
+});
+
+describe('いまの問題の、最後の A・P', () => {
+  test('いちばん新しい記載の A と P を、まとめて返す', () => {
+    const s = patientState(
+      base({
+        mentions: [mention({ sourceId: 's0', at: '2026-11-17T23:00', start: 0, end: 5 }), mention({ sourceId: 's1', start: 0, end: 7 })],
+        segments: [
+          { sourceId: 's0', label: 'problem_heading', start: 0, end: 10 },
+          { sourceId: 's0', label: 'assessment', start: 10, end: 20 },
+          { sourceId: 's1', label: 'problem_heading', start: 0, end: 10 },
+          { sourceId: 's1', label: 'assessment', start: 10, end: 20 },
+          { sourceId: 's1', label: 'plan', start: 20, end: 30 },
+        ],
+      }),
+    );
+    expect(s.current[0]?.notes.map((x) => [x.sourceId, x.label])).toEqual([
+      ['s1', 'assessment'],
+      ['s1', 'plan'],
+    ]);
+  });
+});
+
+describe('最後の記録までの24時間', () => {
+  test('新しく挙がった問題・解決と書かれた問題・投薬の動き・できごと・検査値（バイタルは除く）。新しい順', () => {
+    const s = patientState(
+      base({
+        mentions: [
+          mention({ threadId: 'T1', sourceId: 's0', at: '2026-11-17T23:00' }),
+          mention({ threadId: 'T2', name: '#2 せん妄', at: '2026-11-19T20:00' }),
+          mention({ threadId: 'T3', name: '#3 低K血症', sourceId: 's0', at: '2026-11-17T23:00' }),
+          mention({ threadId: 'T3', name: '#3 低K血症', at: '2026-11-20T09:00', activity: 'resolved' }),
+        ],
+        medications: [
+          { id: 'd1', sourceId: 's1', name: 'セフトリアキソン', doseText: '2g', action: 'start', at: '2026-11-17T23:00' },
+          { id: 'd2', sourceId: 's1', name: 'セフトリアキソン', doseText: null, action: 'stop', at: '2026-11-20' },
+          { id: 'd3', sourceId: 's1', name: 'アモキシシリン', doseText: null, action: null, at: '2026-11-20T08:00' },
+        ],
+        events: [{ id: 'e1', sourceId: 's1', kind: 'test', title: '胸部X線を撮影', at: '2026-11-19T10:00' }],
+        observations: [
+          { id: 'o1', sourceId: 's1', at: '2026-11-20T06:00', name: 'CRP', nameRaw: 'CRP', kind: 'lab', valueText: '2.1', unit: null },
+          { id: 'o2', sourceId: 's1', at: '2026-11-20T06:00', name: '体温', nameRaw: 'BT', kind: 'vital', valueText: '36.9', unit: null },
+          { id: 'o3', sourceId: 's1', at: '2026-11-18T06:00', name: 'CRP', nameRaw: 'CRP', kind: 'lab', valueText: '12.4', unit: null },
+        ],
+      }),
+    );
+    expect(s.recent?.from).toBe('2026-11-19T09:00');
+    expect(s.recent?.to).toBe('2026-11-20T09:00');
+    expect(s.recent?.items.map((i) => i.type)).toEqual(['problem_activity', 'lab', 'medication', 'problem_new', 'event']);
+    const med = s.recent?.items.find((i) => i.type === 'medication');
+    expect(med).toMatchObject({ name: 'セフトリアキソン', action: 'stop' });
+  });
+});
+
+describe('投薬と背景', () => {
+  test('薬ごとの最後の記載。中止と書かれたものは別。続いているかは補わない', () => {
+    const s = patientState(
+      base({
+        medications: [
+          { id: 'd1', sourceId: 's1', name: 'セフトリアキソン', doseText: '2g', action: 'start', at: '2026-11-17T23:00' },
+          { id: 'd2', sourceId: 's1', name: 'セフトリアキソン', doseText: null, action: 'stop', at: '2026-11-20' },
+          { id: 'd3', sourceId: 's1', name: 'アモキシシリン', doseText: '500mg', action: 'start', at: '2026-11-20T08:00' },
+        ],
+      }),
+    );
+    expect(s.medications).toEqual([{ name: 'アモキシシリン', action: 'start', doseText: '500mg', at: '2026-11-20T08:00', entries: 1 }]);
+    expect(s.stoppedMedications.map((m) => [m.name, m.entries])).toEqual([['セフトリアキソン', 2]]);
+  });
+
+  test('背景は、区切りごとに、いちばん新しい記載のもの（受診をまたぐ）。ほかの記載の数も', () => {
+    const s = patientState(
+      base({
+        sources: [
+          { id: 'old', encounterId: 'enc0', at: '2026-10-01', enteredAt: '2026-10-01T10:00' },
+          { id: 's1', encounterId: E, at: '2026-11-20T09:00', enteredAt: '2026-11-20T10:12' },
+        ],
+        segments: [
+          { sourceId: 'old', label: 'past_history', start: 0, end: 10 },
+          { sourceId: 's1', label: 'past_history', start: 5, end: 25 },
+          { sourceId: 'old', label: 'allergy', start: 10, end: 20 },
+          { sourceId: 's1', label: 'subjective', start: 25, end: 40 },
+        ],
+      }),
+    );
+    expect(s.background.map((b) => [b.name, b.sourceId, b.start, b.others])).toEqual([
+      ['既往歴', 's1', 5, 1],
+      ['アレルギー', 'old', 10, 0],
+    ]);
+  });
+});
