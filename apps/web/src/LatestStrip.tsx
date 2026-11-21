@@ -10,7 +10,7 @@ export function LatestStrip({ panels }: { panels: readonly VitalPanel[] }) {
     <div className="latest" data-testid="latest">
       {items.map(({ p, last }) =>
         last === null ? null : (
-          <div key={p.id} className="stat" data-testid="latest-item">
+          <div key={p.key} className="stat" data-testid="latest-item">
             <span className="stat-label">
               <span className={`stat-key swatch-${p.id}`} aria-hidden="true" />
               {p.name}

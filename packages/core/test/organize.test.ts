@@ -80,6 +80,36 @@ describe('投薬・できごと・問題', () => {
     expect(r.report).toEqual({});
   });
 
+  test('同じ字が何度も出る名前は、手がかり（用量・日時）の同じ行、なければ前の項目より後ろの場所に置く', () => {
+    const text = ['A) #1 AKI（NSAIDs・ARBの関与あり）', 'P) 乳酸リンゲル 500 mL', 'ARB・NSAIDsは中止', '11:05 セフトリアキソン 2 g', '11:45 セフトリアキソン投与40分後に悪寒'].join('\n');
+    const line = (start: number): number => text.slice(0, start).split('\n').length;
+    const r = applyOrganization(
+      answer({
+        medications: [
+          { name: '乳酸リンゲル', dose: '500 mL', action: 'start', when: null },
+          { name: 'ARB', dose: null, action: 'stop', when: null },
+          { name: 'NSAIDs', dose: null, action: 'stop', when: null },
+          { name: 'セフトリアキソン', dose: null, action: null, when: '11:45' },
+          { name: 'セフトリアキソン', dose: '2 g', action: 'start', when: null },
+        ],
+        events: [{ kind: 'other', title: 'セフトリアキソン', when: '11:45' }],
+      }),
+      { ...ctx, text },
+    );
+    expect(r.medications.map((m) => [m.name, line(m.start)])).toEqual([
+      ['乳酸リンゲル', 2],
+      ['ARB', 3],
+      ['NSAIDs', 3],
+      ['セフトリアキソン', 5],
+      ['セフトリアキソン', 4],
+    ]);
+    expect(r.events.map((e) => line(e.start))).toEqual([5]);
+    for (const m of r.medications) expect(text.slice(m.start, m.end)).toBe(m.name);
+    // 手がかりも順もないときは、これまでどおり最初の場所（推し量らない）
+    const alone = applyOrganization(answer({ medications: [{ name: 'ARB', dose: null, action: 'stop', when: null }] }), { ...ctx, text });
+    expect(alone.medications.map((m) => line(m.start))).toEqual([1]);
+  });
+
   test('文にない名前・用量・日時の引用は、事実にしない（AI が作った字を、記録に入れない）', () => {
     const r = applyOrganization(
       answer({
@@ -157,6 +187,23 @@ describe('測定値：数は、AI に写させない', () => {
     const r = applyOrganization(answer({ measurements: [{ quote: 'を目標に補正', when: null }] }), ctx);
     expect(r.observations).toEqual([]);
     expect(r.report).toEqual({ measurement: { unread: 1 } });
+  });
+
+  test('「値として読めない部分」に数えるのは、値を読めなかった引用だけ（項目でない語の残りは数えない）', () => {
+    const text = 'SpO2 96%（室内気） BT 38.4℃ HR はやい CRT 3秒';
+    const r = applyOrganization(
+      answer({
+        measurements: [
+          { quote: 'SpO2 96%（室内気）', when: null },
+          { quote: 'BT 38.4℃', when: null },
+          { quote: 'HR はやい', when: null },
+          { quote: 'CRT 3秒', when: null },
+        ],
+      }),
+      { ...ctx, text },
+    );
+    expect(r.observations.map((o) => o.row.name)).toEqual(['SpO2', '体温']);
+    expect(r.report).toEqual({ measurement: { unread: 2 } });
   });
 
   test('検査結果・バイタルの文：文全体を決定論で読む（AI の指した場所は使わない）', () => {

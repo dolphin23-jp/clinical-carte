@@ -9,7 +9,7 @@
 // **黙って捨てない**：読めなかった部分は、理由つきで unread に返す。文のすべての文字は、行の範囲・読めなかった部分の範囲・区切りのどれかに入る（試験が確かめる）。
 import { foldSameLength, lowerAscii } from '../text/fold.ts';
 import { LAB_NAMES } from './catalog.gen.ts';
-import { EXTRA_LAB_NAMES } from './extra-names.ts';
+import { EXTRA_ALIASES, EXTRA_LAB_NAMES, EXTRA_UNITS } from './extra-names.ts';
 
 export type Comparator = '<' | '>' | '<=' | '>=';
 
@@ -57,6 +57,10 @@ const PAIRS: readonly { names: readonly string[]; parts: readonly [string, strin
 
 const nameKey = (text: string): string => text.normalize('NFKC').trim().replace(/\s+/g, ' ').toLowerCase();
 const unitKey = (text: string): string => text.normalize('NFKC').replace(/\s+/g, '').toLowerCase();
+// 文の側は、長さを変えないそろえ（foldSameLength）で比べる。NFKC は長さを変える字がある（「℃」→「°C」）ので、
+// 表の側は、NFKC の形と、文と同じそろえの形の、両方で持つ（「BT 39.2℃」の ℃ を、単位として読むため）
+const nameKeysOf = (text: string): string[] => [...new Set([nameKey(text), lowerAscii(foldSameLength(text)).trim().replace(/\s+/g, ' ')])];
+const unitKeysOf = (text: string): string[] => [...new Set([unitKey(text), lowerAscii(foldSameLength(text)).replace(/\s+/g, '')])];
 
 interface Candidate {
   readonly key: string;
@@ -87,10 +91,16 @@ function buildVocabulary(): Vocabulary {
   const candidates: Candidate[] = [];
   const units = new Set<string>();
   for (const entry of [...LAB_NAMES, ...EXTRA_LAB_NAMES]) {
-    for (const n of [entry.name, ...entry.aliases]) candidates.push({ key: nameKey(n), name: entry.name, kind: entry.kind, pair: null });
-    for (const u of entry.units) units.add(unitKey(u));
+    for (const n of [entry.name, ...entry.aliases]) for (const key of nameKeysOf(n)) candidates.push({ key, name: entry.name, kind: entry.kind, pair: null });
+    for (const u of entry.units) for (const key of unitKeysOf(u)) units.add(key);
   }
-  for (const p of PAIRS) for (const n of p.names) candidates.push({ key: nameKey(n), name: p.parts[0], kind: 'vital', pair: p.parts });
+  for (const extra of EXTRA_ALIASES) {
+    const entry = LAB_NAMES.find((e) => e.name === extra.name);
+    if (entry === undefined) continue;
+    for (const n of extra.aliases) for (const key of nameKeysOf(n)) candidates.push({ key, name: entry.name, kind: entry.kind, pair: null });
+  }
+  for (const u of EXTRA_UNITS) for (const key of unitKeysOf(u)) units.add(key);
+  for (const p of PAIRS) for (const n of p.names) for (const key of nameKeysOf(n)) candidates.push({ key, name: p.parts[0], kind: 'vital', pair: p.parts });
   candidates.sort((a, b) => b.key.length - a.key.length);
   const sortedUnits = [...units].sort((a, b) => b.length - a.length);
   return { byFirst: groupByFirst(candidates, (c) => c.key), unitsByFirst: groupByFirst(sortedUnits, (u) => u) };
@@ -98,8 +108,10 @@ function buildVocabulary(): Vocabulary {
 
 const VOCABULARY = buildVocabulary();
 
-// 区切り：空白・改行・カンマ・読点・セミコロン・句点
-const SEPARATORS = new Set([' ', '\n', ',', '、', ';', '。']);
+// 区切り：空白・改行・カンマ・読点・セミコロン・句点・丸括弧（全角の括弧は、そろえると半角になる）。
+// 括弧を区切りにするのは、「BP 84/40（MAP 55）」「ALP 597（IFCC法）」の値を、括弧のために捨てないため。
+// 括弧の中の項目（「WBC 12,300（Neut 85%）」の Neut）も、ほかの項目と同じに読む
+const SEPARATORS = new Set([' ', '\n', ',', '、', ';', '。', '(', ')']);
 // 名前と値のあいだに置いてよい文字
 const GLUE = new Set([' ', ':', '=', '\n']);
 
@@ -114,6 +126,15 @@ const COMPARATOR = /<=|>=|[<>≤≥≦≧]/uy;
 const QUALITATIVE = /\((?:-|\+|±|\+-|\+\/-|[1-4]\+)\)|[1-4]\+|±|\+\/-|\+{1,4}|-(?![\d.])|陰性|陽性|negative|positive/uy;
 
 const COMPARATORS: Readonly<Record<string, Comparator>> = { '<': '<', '>': '>', '<=': '<=', '>=': '>=', '≤': '<=', '≦': '<=', '≥': '>=', '≧': '>=' };
+
+/** 値の前に置かれる、決まった書き方（項目の正規の名前ごと）。そろえた文（半角・小文字）で探す */
+const VALUE_PREFIX: ReadonlyMap<string, RegExp> = new Map([
+  ['GCS', /e ?[1-4] ?v ?(?:[1-5]|t) ?m ?[1-6] ?[=:(]? ?/uy],
+  ['JCS', /(?:iii|ii|i|Ⅲ|Ⅱ|Ⅰ) ?- ?/uy],
+]);
+
+/** 量の単位を「/」でつないだ語（μg/kg/min・mL/hr・U/min）。表にない単位でも、項目の名前にしない */
+const UNIT_LIKE = /^(?:[mμnk]?g|[mμd]?l|[mμ]?mol|m?eq|i?u|mu)(?:\/[a-zμ]+)+$/u;
 
 /** 書かれた値の長さの上限（これより長い数は、検査値として読まない） */
 const VALUE_TEXT_MAX = 20;
@@ -194,6 +215,20 @@ function readValue(lower: string, p: number): ValueRead {
   return { ok: true, read: { value: Number(nm[0].replace(/,/gu, '')), comparator, valueStart: at, valueEnd, unitStart: null, end: valueEnd } };
 }
 
+/**
+ * 「名前: 値」「名前=値」の印の位置（なければ -1）。数字にはさまれた「:」「=」は、印にしない：
+ * 時刻（「11:35」）・比（「1:2」）・式（「GCS E3V4M6=13」）を、名前と値と読まないため
+ */
+function nameValueMark(word: string): number {
+  for (let i = 0; i < word.length; i++) {
+    const c = word[i];
+    if (c !== ':' && c !== '=') continue;
+    if (/\d/u.test(word[i - 1] ?? '') && /\d/u.test(word[i + 1] ?? '')) continue;
+    return i;
+  }
+  return -1;
+}
+
 export function readLabText(text: string): LabRead {
   const lower = lowerAscii(foldSameLength(text));
   const rows: LabRow[] = [];
@@ -212,7 +247,8 @@ export function readLabText(text: string): LabRead {
 
   let pos = 0;
   while (pos < lower.length) {
-    if (isSeparator(lower[pos])) {
+    // 区切りと、語の頭の「:」「=」（「健診（6月）：Cr 0.86」のように、括弧のあとに続くつなぎの字）は飛ばす
+    if (isSeparator(lower[pos]) || ((lower[pos] === ':' || lower[pos] === '=') && isSeparator(lower[pos - 1]))) {
       pos += 1;
       continue;
     }
@@ -221,7 +257,7 @@ export function readLabText(text: string): LabRead {
       // カタログにない名前：「名前: 値」「名前=値」と書いたときだけ読む
       const end = wordEnd(lower, pos);
       const word = lower.slice(pos, end);
-      const mark = word.search(/[:=]/u);
+      const mark = nameValueMark(word);
       let nameEnd = mark > 0 ? pos + mark : -1;
       let valueFrom = nameEnd >= 0 ? nameEnd + 1 : -1;
       if (nameEnd < 0 && mark < 0) {
@@ -234,7 +270,9 @@ export function readLabText(text: string): LabRead {
         }
       }
       const rawName = nameEnd >= 0 ? text.slice(pos, nameEnd) : '';
-      if (nameEnd < 0 || rawName.length > RAW_NAME_MAX || !/[^\d\s\-+./()<>]/u.test(rawName)) {
+      // 単位だけの語（「0.05 μg/kg/min ＝ 3.2 mL/hr」の μg/kg/min）は、項目の名前にしない
+      const unitOnly = nameEnd >= 0 && (matchUnit(lower.slice(0, nameEnd), pos) === nameEnd - pos || UNIT_LIKE.test(lower.slice(pos, nameEnd).trim()));
+      if (nameEnd < 0 || unitOnly || rawName.length > RAW_NAME_MAX || !/[^\d\s\-+./()<>]/u.test(rawName)) {
         addUnknown(pos, end);
         pos = end;
         continue;
@@ -295,7 +333,16 @@ export function readLabText(text: string): LabRead {
       pos = q;
       continue;
     }
-    const v = readValue(lower, p);
+    // 値の前に、決まった書き方がある項目（「GCS E3V4M6＝13」の E3V4M6＝、「JCS Ⅱ-10」の Ⅱ-）は、それを飛ばして、書かれた数を読む。
+    // 合計が書かれていなければ、読まない（E・V・M から足し算しない）
+    let from = p;
+    const prefix = VALUE_PREFIX.get(m.candidate.name);
+    if (prefix !== undefined) {
+      prefix.lastIndex = p;
+      const pm = prefix.exec(lower);
+      if (pm !== null) from = p + pm[0].length;
+    }
+    const v = readValue(lower, from);
     if (!v.ok) {
       const stop = Math.max(v.end, nameEnd);
       unread.push({ reason: v.reason, start: pos, end: stop });

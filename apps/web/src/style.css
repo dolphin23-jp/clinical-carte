@@ -806,6 +806,8 @@ select.input {
 .swatch-rr { background: var(--series-rr); }
 .swatch-spo2 { background: var(--series-spo2); }
 .swatch-none { background: transparent; border: 1.5px solid var(--chart-mark); }
+/* 値があるときだけの段（MAP・酸素流量・JCS・GCS・尿量）は、色で見分けず、段の名前で見分ける（同じ落ち着いた色） */
+.swatch-map, .swatch-o2, .swatch-jcs, .swatch-gcs, .swatch-uo { background: var(--chart-mark); }
 
 /* --- 見方のタブ --- */
 .tabbar {
@@ -913,6 +915,7 @@ select.input {
 .line.series-rr { stroke: var(--series-rr); }
 .line.series-spo2 { stroke: var(--series-spo2); }
 .line.series-lab { stroke: var(--series-lab); }
+.line.series-map, .line.series-o2, .line.series-jcs, .line.series-gcs, .line.series-uo { stroke: var(--chart-mark); }
 
 .dot {
   stroke: var(--surface);
@@ -925,6 +928,7 @@ select.input {
 .dot.series-rr { fill: var(--series-rr); }
 .dot.series-spo2 { fill: var(--series-spo2); }
 .dot.series-lab { fill: var(--series-lab); }
+.dot.series-map, .dot.series-o2, .dot.series-jcs, .dot.series-gcs, .dot.series-uo { fill: var(--chart-mark); }
 
 .dot.hollow {
   fill: var(--surface);
@@ -937,6 +941,7 @@ select.input {
 .dot.hollow.series-rr { stroke: var(--series-rr); }
 .dot.hollow.series-spo2 { stroke: var(--series-spo2); }
 .dot.hollow.series-lab { stroke: var(--series-lab); }
+.dot.hollow.series-map, .dot.hollow.series-o2, .dot.hollow.series-jcs, .dot.hollow.series-gcs, .dot.hollow.series-uo { stroke: var(--chart-mark); }
 
 .range {
   stroke: var(--series-bp);

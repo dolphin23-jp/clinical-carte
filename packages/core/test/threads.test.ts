@@ -10,6 +10,7 @@ import {
   problemNotes,
   ProblemMove,
   resolveLinks,
+  sharedPlanSegments,
   type ThreadMention,
   type ThreadRow,
   ThreadPatch,
@@ -223,6 +224,35 @@ describe('problemNotes', () => {
   test('A・P の中に書かれた問題は、その区切り。S・O の中なら、出さない', () => {
     const segments = [seg('subjective', 0, 10), seg('assessment_plan', 10, 30)];
     expect(problemNotes([m({ start: 12, end: 14 }), m({ start: 2, end: 4 })], segments).map((x) => x.label)).toEqual(['assessment_plan']);
+  });
+});
+
+describe('記載全体の P（sharedPlanSegments）', () => {
+  const seg = (label: string, start: number, end: number, sourceId = 's1') => ({ sourceId, label: label as never, start, end });
+  // 「A) → #1 の段落 → #2 の段落 → #3 の段落 → P) → 申し送り」の形
+  const segments = [seg('assessment', 0, 5), seg('problem_heading', 5, 30), seg('problem_heading', 30, 50), seg('problem_heading', 50, 70), seg('plan', 70, 100), seg('handover', 100, 120)];
+
+  test('見出しが2つ以上あり、A・P が最後の見出しのあとにだけあれば、その P は記載全体のもの', () => {
+    expect(sharedPlanSegments(segments).map((g) => [g.label, g.start])).toEqual([['plan', 70]]);
+  });
+
+  test('最後の問題の範囲と A・P は、記載全体の P を含まない（最後の問題のものにしない）', () => {
+    const last = m({ start: 51, end: 55 });
+    expect(problemBlocks([last], segments)).toEqual([{ sourceId: 's1', start: 50, end: 70 }]);
+    expect(problemNotes([last], segments).map((x) => [x.label, x.start])).toEqual([['problem_heading', 50]]);
+    const first = m({ start: 6, end: 9 });
+    expect(problemNotes([first], segments).map((x) => [x.label, x.start])).toEqual([['problem_heading', 5]]);
+  });
+
+  test('問題ごとに A・P が書かれた記載（前の見出しにも A・P が続く）は、これまでどおり、その問題の P', () => {
+    const own = [seg('problem_heading', 0, 10), seg('plan', 10, 20), seg('problem_heading', 20, 30), seg('plan', 30, 40)];
+    expect(sharedPlanSegments(own)).toEqual([]);
+    expect(problemNotes([m({ start: 21, end: 24 })], own).map((x) => [x.label, x.start])).toEqual([['plan', 30]]);
+  });
+
+  test('見出しが1つの記載・ほかの記載の区切りは、記載全体の P にしない', () => {
+    expect(sharedPlanSegments([seg('problem_heading', 0, 10), seg('plan', 10, 20)])).toEqual([]);
+    expect(sharedPlanSegments([...segments.map((g) => ({ ...g, sourceId: 's2' })), seg('plan', 0, 10, 's3')]).map((g) => g.sourceId)).toEqual(['s2']);
   });
 });
 

@@ -175,7 +175,7 @@ export function Timeline({ panels, medications, events, encounterStart, encounte
           const cls = `series-${p.id}`;
           const path = p.points.map((pt, i) => `${i === 0 ? 'M' : 'L'}${String(x(pt.t))},${String(yOf(pt.value))}`).join(' ');
           return (
-            <g key={p.id} data-testid={`panel-${p.id}`}>
+            <g key={p.key} data-testid={`panel-${p.key}`}>
               <text x={0} y={top - 11} className="panel-title">
                 {p.name}
                 <tspan className="panel-unit">{` ${p.unit}`}</tspan>

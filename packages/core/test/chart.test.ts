@@ -58,6 +58,29 @@ describe('温度板', () => {
     expect(panels[0]?.points.map((p) => p.value).sort()).toEqual([36.8, 37]);
   });
 
+  test('MAP・酸素流量・JCS・GCS・尿量の段は、値があるときだけ。尿量は、書かれた単位ごとに分ける（換算しない）', () => {
+    const panels = vitalPanels([
+      obs({ name: 'MAP', kind: 'vital', value: 67, valueText: '67', unit: null }),
+      obs({ name: 'JCS', kind: 'vital', value: 3, valueText: '3', unit: null }),
+      obs({ name: '酸素流量', kind: 'vital', value: 2, valueText: '2', unit: 'L/min' }),
+      obs({ name: '尿量', kind: 'vital', value: 25, valueText: '25', unit: 'mL' }),
+      obs({ name: '尿量', kind: 'vital', value: 0.43, valueText: '0.43', unit: 'mL/kg/hr' }),
+    ]);
+    expect(panels.map((p) => [p.key, p.points.length])).toEqual([
+      ['bt', 0],
+      ['hr', 0],
+      ['bp', 0],
+      ['map', 1],
+      ['rr', 0],
+      ['spo2', 0],
+      ['o2', 1],
+      ['jcs', 1],
+      ['uo:ml', 1],
+      ['uo:ml/kg/hr', 1],
+    ]);
+    expect(panels.filter((p) => p.id === 'uo').map((p) => p.unit)).toEqual(['mL', 'mL/kg/hr']);
+  });
+
   test('血圧は、同じ文・同じ日時の収縮期と拡張期を組にする', () => {
     const panels = vitalPanels([
       obs({ name: '収縮期血圧', kind: 'vital', value: 120, valueText: '120', sourceId: 'a' }),

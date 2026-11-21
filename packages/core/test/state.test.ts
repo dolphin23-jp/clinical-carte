@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'vitest';
 
-import { patientState, type StateInput, type ThreadMention } from '../src/index.ts';
+import { oneLinerOf, patientState, recentGroups, type RecentItem, type StateInput, type ThreadMention } from '../src/index.ts';
 
 const E = 'enc1';
 let n = 0;
@@ -171,5 +171,63 @@ describe('いまの問題に、問題の記載に書かれた値と薬（段3c�
     const c = s.current[0];
     expect(c?.values.map((v) => [v.name, v.valueText])).toEqual([['CRP', '2.1']]);
     expect(c?.medications.map((m) => [m.name, m.action])).toEqual([['セフトリアキソン', 'continue']]);
+  });
+});
+
+describe('記載全体の P（問題に分けて書かれていない P）', () => {
+  test('最後の問題の A・P にせず、いまに別に出す（いちばん新しい記載のもの）', () => {
+    const s = patientState(
+      base({
+        mentions: [mention({ threadId: 'T1', name: '#1 ショック', start: 6, end: 12 }), mention({ threadId: 'T2', name: '#2 急性腎障害', start: 31, end: 38 })],
+        segments: [
+          { sourceId: 's1', label: 'assessment', start: 0, end: 5 },
+          { sourceId: 's1', label: 'problem_heading', start: 5, end: 30 },
+          { sourceId: 's1', label: 'problem_heading', start: 30, end: 50 },
+          { sourceId: 's1', label: 'plan', start: 50, end: 80 },
+        ],
+      }),
+    );
+    expect(s.sharedPlan?.sourceId).toBe('s1');
+    expect(s.sharedPlan?.parts.map((p) => [p.label, p.start])).toEqual([['plan', 50]]);
+    expect(s.current.find((c) => c.thread.name === '#2 急性腎障害')?.notes.map((x) => x.label)).toEqual(['problem_heading']);
+  });
+
+  test('問題ごとに P が書かれていれば、記載全体の P はない', () => {
+    const s = patientState(
+      base({
+        mentions: [mention({ start: 0, end: 5 })],
+        segments: [
+          { sourceId: 's1', label: 'problem_heading', start: 0, end: 10 },
+          { sourceId: 's1', label: 'plan', start: 10, end: 20 },
+        ],
+      }),
+    );
+    expect(s.sharedPlan).toBeNull();
+  });
+});
+
+describe('1日の濃い記録でも読めるように', () => {
+  test('1行の要約の問題は5つまで。残りは「ほか N」', () => {
+    const line = oneLinerOf({ patient: { age: 62, ageOn: '2026-11-21', sex: 'male' }, encounter: { kind: 'er', start: '2026-11-21T10:35', end: null }, today: '2026-11-21', asOf: null, problems: ['#1', '#2', '#3', '#4', '#5', '#6', '#7'] });
+    expect(line).toBe('62歳 男性。救急 2026-11-21。いまの問題：#1、#2、#3、#4、#5 ほか 2。');
+  });
+
+  test('24時間の一覧を種類ごとに分け、検査値は項目ごとの最新と件数にする（中身は変えない）', () => {
+    const items: RecentItem[] = [
+      { type: 'lab', at: '2026-11-21T17:00', name: 'Cr', valueText: '7.68', unit: null },
+      { type: 'event', at: '2026-11-21T13:05', kind: 'procedure', title: 'CV 挿入' },
+      { type: 'medication', at: '2026-11-21T11:10', name: 'NE', action: 'start', doseText: null },
+      { type: 'lab', at: '2026-11-21T10:50', name: 'Cr', valueText: '7.12', unit: null },
+      { type: 'lab', at: '2026-11-21T10:48', name: 'pH', valueText: '7.31', unit: null },
+      { type: 'problem_new', at: '2026-11-21T10:50', name: '#1 ショック', threadId: 'T1' },
+    ];
+    const g = recentGroups(items);
+    expect(g.problems.map((i) => i.type)).toEqual(['problem_new']);
+    expect(g.medications).toHaveLength(1);
+    expect(g.events).toHaveLength(1);
+    expect(g.labs.map((l) => [l.name, l.latest.valueText, l.count])).toEqual([
+      ['Cr', '7.68', 2],
+      ['pH', '7.31', 1],
+    ]);
   });
 });

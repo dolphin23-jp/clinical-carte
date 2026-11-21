@@ -11,10 +11,11 @@ import {
   SOURCE_KINDS,
   type SourceKind,
   TEXT_LIMIT,
+  whenCandidates,
 } from '@clinical-carte/core';
 import { type SyntheticEvent, useRef, useState } from 'react';
 
-import { joinDateTime, nowLocal, replacedSummary } from './format.ts';
+import { joinDateTime, nowLocal, replacedSummary, showDateTime } from './format.ts';
 import { errorMessage } from './messages.ts';
 import { addSource, type Observation, organizeSource, type Source } from './net/api.ts';
 import { organizeSummary } from './organizeText.ts';
@@ -42,8 +43,10 @@ export function Composer({
 }) {
   const [kind, setKind] = useState<SourceKind>('progress_note');
   const [authorRole, setAuthorRole] = useState<AuthorRole>('self');
+  // 時刻は、はじめは空（日だけ）。画面を開いた時刻を既定にすると、あとで写した記載が、みな同じ時刻になる（写す時刻は、記載の時刻ではない）。
+  // 保存のたびにも、時刻を空に戻す（前の記載の時刻を、黙って次の記載に使わない）
   const [day, setDay] = useState(() => nowLocal().day);
-  const [time, setTime] = useState(() => nowLocal().time);
+  const [time, setTime] = useState('');
   const [unknownTime, setUnknownTime] = useState(false);
   const [text, setText] = useState('');
   const [busy, setBusy] = useState(false);
@@ -57,6 +60,9 @@ export function Composer({
   const tooLong = text.length > TEXT_LIMIT;
   const ready = text.trim() !== '' && !tooLong && (unknownTime || day !== '');
   const templates = TEMPLATES[kind] ?? [];
+  /** 文に書かれた日時（選ぶ手がかり。自動では使わない） */
+  const candidates = text.trim() === '' ? [] : whenCandidates(text, { refDay: day === '' ? nowLocal().day : day, encounterStart: null });
+  const chosen = unknownTime ? null : joinDateTime(day, time);
 
   /** 文の欄の、カーソルの位置に差し込む */
   const insert = (snippet: string) => {
@@ -108,6 +114,8 @@ export function Composer({
       }
       setDone(parts.join(''));
       setText('');
+      setTime('');
+      setUnknownTime(false);
       onSaved(source, observations);
       // 続けて整理する（段2）。整理に失敗しても、文は保存されている
       setOrganizing('整理しています…（30 秒ほどかかることがあります）');
@@ -210,6 +218,28 @@ export function Composer({
             日時不明
           </button>
         </div>
+        {candidates.length > 0 && (
+          <div className="chips" aria-label="文に書かれた日時" data-testid="when-candidates">
+            <span className="note">文に書かれた日時：</span>
+            {candidates.map((c, i) => (
+              <button
+                key={c}
+                type="button"
+                className={chosen === c ? 'chip small on' : 'chip small outline'}
+                aria-pressed={chosen === c}
+                onClick={() => {
+                  setUnknownTime(false);
+                  setDay(c.slice(0, 10));
+                  setTime(c.length > 10 ? c.slice(11, 16) : '');
+                }}
+                disabled={busy}
+                data-testid={`when-candidate-${String(i)}`}
+              >
+                {showDateTime(c)}
+              </button>
+            ))}
+          </div>
+        )}
         <div className="field-row">
           <label className="field">
             <span className="sr-only">日</span>
@@ -220,6 +250,11 @@ export function Composer({
             <input className="input" type="time" value={time} onChange={(e) => { setTime(e.target.value); }} disabled={busy || unknownTime} data-testid="at-time" />
           </label>
         </div>
+        {!unknownTime && time === '' && (
+          <p className="note" data-testid="when-day-only">
+            時刻なし（日だけ）で入れます。時刻の書かれていない値・できごとも、日だけになります。時刻が分かれば、選ぶか打ってください。
+          </p>
+        )}
       </fieldset>
 
       {(kind === 'vital' || kind === 'lab') && <QuickValues kind={kind} disabled={busy} onCompose={insert} />}

@@ -5,7 +5,8 @@
 //  - 年月日：2026-11-20、2026/11/20、2026年11月20日、R8.11.20 は読まない（元号は読まない）
 //  - 月日：11/20、11月20日 … 年は、基準の日にいちばん近い年（前の年・同じ年・次の年のうち）
 //  - 時刻：8:30、08:30、8時30分、8時 … 日がなければ、基準の日の時刻
-//  - 相対：今日・本日・昨日・一昨日・おととい・明日・昨夜・今朝・N日前・N日後 … 基準の日から
+//  - 相対：今日・本日・昨日・一昨日・おととい・明日・昨夜・今朝・前日・翌日・翌朝・N日前・N日後 … 基準の日から
+//    （「N時間後」は読まない。「6時間後」の「6時」を時刻と取り違えない）
 //  - 病日：入院N日目・第N病日・N病日目 … 受診の開始の日から（第1病日＝開始の日）
 import { daysBetween } from './datetime.ts';
 import { isDay } from './day.ts';
@@ -37,7 +38,8 @@ function normalize(text: string): string {
     .trim();
 }
 
-const TIME = /(?<![\d:])(\d{1,2})(?::(\d{2})|時(?:(\d{1,2})分)?)(?![\d:])/u;
+// 「6時間後」の「6時」は時刻ではない（「時」のすぐ後ろに「間」が続くものは読まない）
+const TIME = /(?<![\d:])(\d{1,2})(?::(\d{2})|時(?!間)(?:(\d{1,2})分)?)(?![\d:])/u;
 
 function readTime(text: string): string | null {
   const m = TIME.exec(text);
@@ -73,9 +75,9 @@ function readDay(text: string, ctx: WhenContext): string | null | typeof NO_DAY 
   if (m !== null) return ctx.refDay === null ? null : addDays(ctx.refDay, (m[2] === '前' ? -1 : 1) * Number(m[1]));
   const relative: readonly [RegExp, number][] = [
     [/一昨日|おととい/u, -2],
-    [/昨日|昨夜|昨晩|きのう/u, -1],
+    [/昨日|昨夜|昨晩|きのう|前日/u, -1],
     [/今日|本日|今朝|今夕|今夜|きょう/u, 0],
-    [/明日|あす|あした/u, 1],
+    [/明日|あす|あした|翌日|翌朝/u, 1],
   ];
   for (const [re, n] of relative) if (re.test(text)) return ctx.refDay === null ? null : addDays(ctx.refDay, n);
   return NO_DAY;
@@ -93,4 +95,23 @@ export function parseWhen(quote: string, ctx: WhenContext): string | null {
   const time = readTime(text.replace(/(?<!\d)\d{4}[-/年]\d{1,2}[-/月]\d{1,2}日?/u, '').replace(/\d{1,2}(?:\/|月)\d{1,2}日?/u, ''));
   if (day === NO_DAY) return time === null || ctx.refDay === null ? null : `${ctx.refDay}T${time}`;
   return time === null ? day : `${day}T${time}`;
+}
+
+/** 文の中の日時の候補を探す形：年月日（と時刻）・月日（と時刻）・時刻。「3/3 mm」のような、単位の続く「数/数」は月日にしない */
+const CANDIDATE =
+  /(?<!\d)\d{4}[-/年]\d{1,2}[-/月]\d{1,2}日?(?: ?\d{1,2}:\d{2}(?![\d:]))?|(?<![\d/])\d{1,2}(?:\/\d{1,2}(?![\d/]| ?[A-Za-zμ%])|月\d{1,2}日)(?: ?\d{1,2}:\d{2}(?![\d:]))?|(?<![\d:])\d{1,2}:\d{2}(?![\d:])/gu;
+
+/**
+ * 文に書かれた日時の候補（書かれた順・重なりなし・max 件まで）。入れる欄で、記載の日時を選ぶ手がかりにするだけで、
+ * 自動では使わない（どれがこの記載の日時かは、本人が選ぶ）。読み方は parseWhen と同じ。
+ */
+export function whenCandidates(text: string, ctx: WhenContext, max = 3): string[] {
+  const out: string[] = [];
+  for (const m of normalize(text).matchAll(CANDIDATE)) {
+    const at = parseWhen(m[0], ctx);
+    if (at === null || out.includes(at)) continue;
+    out.push(at);
+    if (out.length >= max) break;
+  }
+  return out;
 }

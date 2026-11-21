@@ -226,6 +226,18 @@ describe('受診', () => {
     expect(await page.getByTestId('target').textContent()).toContain('外来 2026-12-15');
   });
 
+  test('救急で受けた受診を、同じ受診のまま入院にする（開始の日はそのまま。見出しと受診のチップが入院になる）', async () => {
+    const page = await open();
+    await newPatient(page, '62', '男', '救急', '2026-11-21');
+    expect(await page.getByTestId('headline').textContent()).toContain('救急 2026-11-21');
+    await page.getByTestId('set-kind').click();
+    expect(await page.getByTestId('kind-inpatient').getAttribute('aria-checked')).toBe('true');
+    await page.getByTestId('save-kind').click();
+    await expect.poll(() => page.getByTestId('headline').textContent()).toBe('62歳 男 ｜ 入院 2026-11-21〜');
+    expect(await page.getByTestId('encounters').locator('button').allTextContents()).toEqual(['入院 2026-11-21〜']);
+    expect(await page.getByTestId('set-kind').textContent()).toBe('種類を変える');
+  });
+
   test('終わりを、始まりより前にはできない', async () => {
     const page = await open();
     await newPatient(page);

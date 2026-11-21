@@ -15,6 +15,7 @@ import {
   noteDay,
   noteDays,
   type NotePart,
+  observationTexts,
   PLAN_KIND_NAMES,
   PLAN_KINDS,
   type PlanKind,
@@ -449,7 +450,9 @@ export function NoteView({ record, encounter, onChanged, onLeft }: { record: Pat
       </h3>
       {nd.vitals.length > 0 && (
         <p className="note-vitals" data-testid="note-vitals">
-          {nd.vitals.map((v) => `${v.nameRaw} ${v.valueText}${v.unit === null ? '' : ` ${v.unit}`}`).join('　')}
+          {observationTexts(nd.vitals)
+            .map((t) => t.text)
+            .join('　')}
         </p>
       )}
       {message !== null && (
@@ -484,7 +487,9 @@ export function NoteView({ record, encounter, onChanged, onLeft }: { record: Pat
                     {textOf(record, g)}
                   </p>
                 ))}
-                {p.values.length > 0 && <p className="note-values">{p.values.map((v) => `${v.nameRaw} ${v.valueText}${v.unit === null ? '' : ` ${v.unit}`}（${showDateTime(v.at)}）`).join('　')}</p>}
+                {p.values.length > 0 && <p className="note-values">{observationTexts(p.values)
+                      .map((t) => `${t.text}（${showDateTime(t.items[0]?.at ?? null)}）`)
+                      .join('　')}</p>}
               </div>
             )}
             {p.lastAp.length > 0 && (
@@ -525,6 +530,16 @@ export function NoteView({ record, encounter, onChanged, onLeft }: { record: Pat
           </section>
         );
       })}
+      {nd.shared.length > 0 && (
+        <details className="note-part" open data-testid="note-shared-plan">
+          <summary>記載全体の方針（問題に分けて書かれていない P。{String(nd.shared.length)}）</summary>
+          {nd.shared.map((g, i) => (
+            <p key={i} className="source-text">
+              {textOf(record, g)}
+            </p>
+          ))}
+        </details>
+      )}
       {nd.unassigned.length > 0 && (
         <details className="note-part">
           <summary>どの問題にも入らない S・O（{String(nd.unassigned.length)}）</summary>
