@@ -62,7 +62,7 @@ export function SourceFacts({
       fact: 'observation' as const,
       id: o.id,
       label: o.name === null ? '値（項目名を読めなかった）' : `値：${o.name}`,
-      text: `${o.nameRaw} ${o.valueText}${o.unit === null ? '' : ` ${o.unit}`}`,
+      text: `${o.nameRaw} ${o.comparator ?? ''}${o.valueText}${o.unit === null ? '' : ` ${o.unit}`}`,
       at: o.at,
       excluded: o.excluded,
       edited: o.edited,

@@ -21,7 +21,7 @@ import { errorMessage } from './messages.ts';
 import { addSource, type Observation, organizeSource, type Source } from './net/api.ts';
 import { organizeSummary } from './organizeText.ts';
 import { QuickValues } from './QuickValues.tsx';
-import { COMMON_KINDS, insertAt, KIND_CHIP_LABELS, TEMPLATES } from './templates.ts';
+import { COMMON_KINDS, insertAt, KIND_CHIP_LABELS, type Template, TEMPLATES } from './templates.ts';
 
 /** 端末の日付から、n 日前の日（YYYY-MM-DD） */
 function dayBefore(n: number): string {
@@ -34,11 +34,14 @@ function dayBefore(n: number): string {
 export function Composer({
   encounterId,
   target,
+  problemHeadings = [],
   onSaved,
   onLeft,
 }: {
   encounterId: string;
   target: string;
+  /** いまの問題の見出し（保存した記載に書かれた名前。並びは問題のタブと同じ）。経過のひな形にする（決定論。AI を使わない） */
+  problemHeadings?: readonly string[];
   onSaved: (source?: Source, observations?: readonly Observation[]) => void;
   onLeft: () => void;
 }) {
@@ -64,7 +67,9 @@ export function Composer({
   const turnKey = unknownTime ? null : nextDayKey(text);
   const turnAnswered = turnKey === null || nextAnswer?.key === turnKey;
   const ready = text.trim() !== '' && !tooLong && (unknownTime || day !== '') && turnAnswered;
-  const templates = TEMPLATES[kind] ?? [];
+  // 経過の記載では、いまの問題の見出しを並べたひな形を先に出す（前日の問題の骨組み。中身は本人が書く）
+  const headings: Template[] = kind === 'progress_note' && problemHeadings.length > 0 ? [{ label: `いまの問題の見出し（${String(problemHeadings.length)}）`, text: problemHeadings.map((h) => `${h}\n`).join('\n') }] : [];
+  const templates = [...headings, ...(TEMPLATES[kind] ?? [])];
   /** 文に書かれた日時（選ぶ手がかり。自動では使わない） */
   const candidates = text.trim() === '' ? [] : whenCandidates(text, { refDay: day === '' ? nowLocal().day : day, encounterStart: null });
   const chosen = unknownTime ? null : joinDateTime(day, time);
@@ -145,10 +150,10 @@ export function Composer({
   };
 
   return (
-    <form className="form" onSubmit={submit} data-testid="composer">
+    <form className="form composer" onSubmit={submit} data-testid="composer">
       <fieldset className="field">
         <legend className="field-label">種類</legend>
-        <div className="chips" role="radiogroup" aria-label="種類">
+        <div className="chips row" role="radiogroup" aria-label="種類">
           {COMMON_KINDS.map((k) => (
             <button
               key={k}
@@ -165,11 +170,9 @@ export function Composer({
               {KIND_CHIP_LABELS[k] ?? SOURCE_KIND_LABELS[k]}
             </button>
           ))}
-        </div>
-        <label className="inline-select">
-          <span className="note">ほかの種類</span>
           <select
             className="input compact"
+            aria-label="ほかの種類"
             value={kind}
             onChange={(e) => {
               setKind(e.target.value as SourceKind);
@@ -183,12 +186,12 @@ export function Composer({
               </option>
             ))}
           </select>
-        </label>
+        </div>
       </fieldset>
 
       <fieldset className="field">
         <legend className="field-label">書いた人</legend>
-        <div className="chips" role="radiogroup" aria-label="書いた人">
+        <div className="chips row" role="radiogroup" aria-label="書いた人">
           {AUTHOR_ROLES.map((r) => (
             <button
               key={r}
@@ -210,7 +213,7 @@ export function Composer({
 
       <fieldset className="field">
         <legend className="field-label">記載・測定の日時</legend>
-        <div className="chips">
+        <div className="chips row">
           <button type="button" className="chip small" onClick={() => { setWhen('now'); }} disabled={busy} data-testid="when-now">
             今
           </button>
@@ -235,7 +238,7 @@ export function Composer({
           </button>
         </div>
         {candidates.length > 0 && (
-          <div className="chips" aria-label="文に書かれた日時" data-testid="when-candidates">
+          <div className="chips row" aria-label="文に書かれた日時" data-testid="when-candidates">
             <span className="note">文に書かれた日時：</span>
             {candidates.map((c, i) => (
               <button
@@ -273,7 +276,7 @@ export function Composer({
                   .slice(0, 3)
                   .map((c) => c.slice(11, 16))
                   .join('・')} など）を AI が読み取り、記載と、その見出しの下の値・できごとの時刻にします（この日の時刻だけ）。`
-              : '時刻なし（日だけ）で入れます。時刻の書かれていない値・できごとも、日だけになります。時刻が分かれば、選ぶか打ってください。'}
+              : '時刻なし（日だけ）で入れます。分かれば、選ぶか打ってください。'}
           </p>
         )}
       </fieldset>
@@ -301,7 +304,7 @@ export function Composer({
             setText(e.target.value);
           }}
           disabled={busy}
-          rows={8}
+          rows={7}
           autoCapitalize="none"
           autoCorrect="off"
           spellCheck={false}
@@ -309,13 +312,8 @@ export function Composer({
           data-testid="text"
         />
       </label>
-      {readsValues ? (
-        <p className="note">名前と値を並べて書きます。値は、AI を使わずに読みます。読めなかった部分も、文には残ります。</p>
-      ) : (
-        <p className="note">保存したあと、AI が整理します（見出しの区切り・投薬・できごと・問題・測定値）。整理は、文に書かれたことだけで、文そのものは変えません。</p>
-      )}
       <p className={tooLong ? 'note over' : 'note'}>
-        {String(text.length)} / {String(TEXT_LIMIT)} 字
+        {readsValues ? '値は AI を使わずに読みます（読めない部分も文に残ります）' : '保存後に AI が整理します（文は変えません）'}・{String(text.length)} / {String(TEXT_LIMIT)} 字
       </p>
       {message !== null && (
         <p className="alert" role="alert" data-testid="composer-error">

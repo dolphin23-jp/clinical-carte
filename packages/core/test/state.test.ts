@@ -214,11 +214,11 @@ describe('1日の濃い記録でも読めるように', () => {
 
   test('24時間の一覧を種類ごとに分け、検査値は項目ごとの最新と件数にする（中身は変えない）', () => {
     const items: RecentItem[] = [
-      { type: 'lab', at: '2026-11-21T17:00', name: 'Cr', valueText: '7.68', unit: null },
+      { type: 'lab', at: '2026-11-21T17:00', name: 'Cr', comparator: null, valueText: '7.68', unit: null },
       { type: 'event', at: '2026-11-21T13:05', kind: 'procedure', title: 'CV 挿入' },
       { type: 'medication', at: '2026-11-21T11:10', name: 'NE', action: 'start', doseText: null },
-      { type: 'lab', at: '2026-11-21T10:50', name: 'Cr', valueText: '7.12', unit: null },
-      { type: 'lab', at: '2026-11-21T10:48', name: 'pH', valueText: '7.31', unit: null },
+      { type: 'lab', at: '2026-11-21T10:50', name: 'Cr', comparator: null, valueText: '7.12', unit: null },
+      { type: 'lab', at: '2026-11-21T10:48', name: 'pH', comparator: null, valueText: '7.31', unit: null },
       { type: 'problem_new', at: '2026-11-21T10:50', name: '#1 ショック', threadId: 'T1' },
     ];
     const g = recentGroups(items);

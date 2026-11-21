@@ -152,6 +152,57 @@ describe('読まないもの（黙って捨てず、理由つきで返す）', (
   });
 });
 
+describe('よく書かれる書き方（2026-11-21 に足した）', () => {
+  const rowsOf = (text: string) => readLabText(text).rows.map((r) => [r.name, r.valueText, r.unit]);
+  test('名前の連記：名前と値が同じ数のときだけ、順に読む（単位は読まない）', () => {
+    expect(rowsOf('Na/K/Cl 138/4.1/102')).toEqual([
+      ['Na', '138', null],
+      ['K', '4.1', null],
+      ['Cl', '102', null],
+    ]);
+    expect(rowsOf('AST/ALT 32/28 BUN/Cre 18.2/0.92')).toEqual([
+      ['AST', '32', null],
+      ['ALT', '28', null],
+      ['BUN', '18.2', null],
+      ['Cr', '0.92', null],
+    ]);
+    // 数が合わない・名前でない語がまじる：連記として読まない（読めない部分は、理由つきで出る）
+    expect(rowsOf('Na/K 138')).toEqual([]);
+    expect(readLabText('Na/K 138').unread.length).toBeGreaterThan(0);
+    // 血圧（組の名前）は、これまでどおり
+    expect(rowsOf('BP 120/80')).toEqual([
+      ['収縮期血圧', '120', null],
+      ['拡張期血圧', '80', null],
+    ]);
+  });
+  test('値の後ろの印（H・L・↑・↓）：値は読み、印は flag として出す（判定に使わない）', () => {
+    const r = readLabText('WBC 12300 H CRP 12.4↑ Hb 9.8 L');
+    expect(r.rows.map((x) => [x.name, x.valueText])).toEqual([
+      ['WBC', '12300'],
+      ['CRP', '12.4'],
+      ['Hb', '9.8'],
+    ]);
+    expect(r.unread.map((u) => u.reason)).toEqual(['flag', 'flag', 'flag']);
+  });
+  test('単位と名前の足し分', () => {
+    expect(rowsOf('HR 72bpm RR 20回/分 体温 37.2度 KT 37.0')).toEqual([
+      ['心拍数', '72', 'bpm'],
+      ['呼吸数', '20', '回/分'],
+      ['体温', '37.2', '度'],
+      ['体温', '37.0', null],
+    ]);
+    expect(rowsOf('Plt 21.3×10^4/μL WBC 89×10^2')).toEqual([
+      ['Plt', '21.3', '×10^4/μL'],
+      ['WBC', '89', '×10^2'],
+    ]);
+    expect(readLabText('随時血糖 268 空腹時血糖 110 FBS 98').rows.map((x) => [x.name, x.nameRaw])).toEqual([
+      ['Glu', '随時血糖'],
+      ['Glu', '空腹時血糖'],
+      ['Glu', 'FBS'],
+    ]);
+  });
+});
+
 describe('性質', () => {
   const unit = fc.constantFrom('N', 'a', 'K', 'W', 'B', 'C', 'P', '1', '2', '8', '.', ' ', '\n', ',', '/', '<', '+', '-', '(', ')', ':', '=', '熱', '尿', '蛋', '白', '%');
 

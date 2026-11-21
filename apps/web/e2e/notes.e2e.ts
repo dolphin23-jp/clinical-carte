@@ -142,6 +142,18 @@ describe('記載', () => {
     expect(await fits(page)).toBe(true);
   });
 
+  test('経過の入れる欄に、いまの問題の見出しのひな形が出る（書かれた名前のまま。中身は先生が書く）', async () => {
+    const page = await openNotes(NOTE2);
+    await page.getByTestId('fab-compose').click();
+    await page.getByTestId('kind-chip-progress_note').click();
+    const template = page.getByTestId('template-0');
+    expect(await template.textContent()).toContain('いまの問題の見出し（1）'); // 解決と書かれた #2 は入らない
+    await page.getByTestId('text').fill('');
+    await template.click();
+    expect(await page.getByTestId('text').inputValue()).toBe('#1 市中肺炎\n');
+    expect(await fits(page)).toBe(true);
+  });
+
   test('AI の案の問題は、はじめは「いまの問題」だけを選ぶ。解決と書かれた問題は、選べば入る', async () => {
     const page = await openNotes(NOTE2);
     const chips = page.getByTestId('ap-proposal-problem');

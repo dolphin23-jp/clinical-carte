@@ -18,6 +18,7 @@ import {
   type SourceKind,
   CARTE_ONLY_KINDS,
   UNREAD_LABELS,
+  threadViews,
   vitalPanels,
 } from '@clinical-carte/core';
 import { type SyntheticEvent, useCallback, useEffect, useRef, useState } from 'react';
@@ -147,6 +148,10 @@ export function PatientPage({ patientId, onBack, onLeft }: { patientId: string; 
   const shownSources = kindFilter === 'all' || !kindsHere.includes(kindFilter) ? sources : sources.filter((s) => s.kind === kindFilter);
 
   const panels = vitalPanels(observations);
+  // いまの問題の見出し（経過のひな形。書かれた名前のまま。番号のない名前には「#」だけを付ける）
+  const problemHeadings = threadViews(record.problemThreads, record.problems)
+    .threads.filter((t) => t.group === 'current')
+    .map((t) => (/^[#＃]/u.test(t.name) ? t.name : `#${t.name}`));
   // 同じ日の二重（時刻のない方針の行と、時刻つきの実施の行）は、経過表・いまでは、時刻つきのほうだけを出す（消さない。投薬・できごとのタブで見られる）
   const foldedMeds = foldedMedicationIds(medications);
   const foldedEvents = foldedEventIds(events);
@@ -385,6 +390,7 @@ export function PatientPage({ patientId, onBack, onLeft }: { patientId: string; 
             key={current.id}
             encounterId={current.id}
             target={`${title.split(' ｜ ')[0] ?? title} ｜ ${encounterLabel(current)}`}
+            problemHeadings={problemHeadings}
             onSaved={(source) => {
               // 保存したら、記録のタブで、入れた文を見せる
               if (source !== undefined) setTab('notes');

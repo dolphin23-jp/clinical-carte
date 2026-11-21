@@ -22,6 +22,8 @@ export interface NoteObservation {
   readonly name: string | null;
   readonly nameRaw: string;
   readonly kind: 'lab' | 'vital' | null;
+  /** 不等号（「>100」の >）。書かれていなければ null（valueText には入らないので、表示で必ず添える） */
+  readonly comparator?: string | null;
   readonly valueText: string;
   readonly unit: string | null;
   readonly start: number;
@@ -79,7 +81,8 @@ export function observationTexts(list: readonly NoteObservation[]): ObservationT
       }
     }
     used.add(o);
-    out.push({ text: `${o.nameRaw} ${o.valueText}${unitOf(o)}`, name: o.name ?? o.nameRaw, items: [o] });
+    // 不等号を落とさない（「WBC >100 /HPF」を「WBC 100」として AI に渡していた。2026-11-21）
+    out.push({ text: `${o.nameRaw} ${o.comparator ?? ''}${o.valueText}${unitOf(o)}`, name: o.name ?? o.nameRaw, items: [o] });
   }
   return out;
 }

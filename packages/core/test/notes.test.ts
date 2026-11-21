@@ -140,6 +140,13 @@ describe('AI の資料（recordSources）', () => {
   });
 });
 
+describe('値の表示の不等号', () => {
+  test('不等号は、書かれた値に添える（落とさない）', () => {
+    const o = { id: 'x', sourceId: 's', encounterId: 'e', at: null, name: '尿沈渣WBC', nameRaw: 'WBC', kind: 'lab' as const, comparator: '>', valueText: '100', unit: '/HPF', start: 0, end: 5 };
+    expect(observationTexts([o]).map((t) => t.text)).toEqual(['WBC >100 /HPF']);
+  });
+});
+
 describe('AI の資料の共通の引用（CA-048）', () => {
   const problems: MaterialProblem[] = [{ ref: 'T1', threadId: 'TA', name: '#1 市中肺炎' }];
   test('その日の、どの問題にも入らない S・O と、その日までの検査値（項目ごとのいちばん新しい値）を、どの問題にも使える引用にする', () => {

@@ -30,7 +30,7 @@ export interface LabRow {
   readonly end: number;
 }
 
-export const UNREAD_REASONS = ['unknown', 'no_value', 'bad_pair', 'trailing', 'bad_comparator'] as const;
+export const UNREAD_REASONS = ['unknown', 'no_value', 'bad_pair', 'trailing', 'bad_comparator', 'flag'] as const;
 export type UnreadReason = (typeof UNREAD_REASONS)[number];
 
 export const UNREAD_LABELS: Readonly<Record<UnreadReason, string>> = {
@@ -39,6 +39,7 @@ export const UNREAD_LABELS: Readonly<Record<UnreadReason, string>> = {
   bad_pair: '血圧は「78/40」のように、収縮期/拡張期の順に「/」で区切ります',
   trailing: '値の後ろに、読めない文字があります',
   bad_comparator: '不等号の後ろに、数がありません',
+  flag: '値の後ろの印（H・L・↑・↓）です。値は読みました（印は記録に入れず、判定にも使いません）',
 };
 
 export interface LabUnread {
@@ -170,6 +171,10 @@ const VALUE_PREFIX: ReadonlyMap<string, RegExp> = new Map([
 /** 量の単位を「/」でつないだ語（μg/kg/min・mL/hr・U/min）。表にない単位でも、項目の名前にしない */
 const UNIT_LIKE = /^(?:[mμnk]?g|[mμd]?l|[mμ]?mol|m?eq|i?u|mu)(?:\/[a-zμ]+)+$/u;
 
+/** 値のすぐ後ろ（または空白をはさんで）に書かれる印。値は読み、印は「読めなかった部分」の flag として出す（黙って捨てない。判定に使わない） */
+const FLAGS = new Set(['h', 'l', 'hh', 'll', '↑', '↓', '↑↑', '↓↓']);
+const FLAG_CHARS = new Set(['↑', '↓']);
+
 /** 書かれた値の長さの上限（これより長い数は、検査値として読まない） */
 const VALUE_TEXT_MAX = 20;
 /** カタログにない名前（「名前: 値」）の長さの上限 */
@@ -244,8 +249,9 @@ function readValue(lower: string, p: number, vocab: Vocabulary): ValueRead {
   while (lower[r] === ' ') r += 1;
   const unitLength = matchUnit(lower, r);
   if (unitLength > 0) return { ok: true, read: { value: Number(nm[0].replace(/,/gu, '')), comparator, valueStart: at, valueEnd, unitStart: r, end: r + unitLength } };
-  // 数のすぐ後ろに、単位でも次の名前でもない文字が付いている（「1e3」「12abc」「2日目」）：一部だけ読んで残りを捨てない
-  if (!isSeparator(lower[valueEnd]) && matchName(lower, valueEnd, vocab) === null) return { ok: false, reason: 'trailing', end: wordEnd(lower, valueEnd) };
+  // 数のすぐ後ろに、単位でも次の名前でもない文字が付いている（「1e3」「12abc」「2日目」）：一部だけ読んで残りを捨てない。
+  // ただし、すぐ後ろの印（「12300↑」）は、値を読み、印は別に出す
+  if (!isSeparator(lower[valueEnd]) && !FLAG_CHARS.has(lower[valueEnd] ?? '') && matchName(lower, valueEnd, vocab) === null) return { ok: false, reason: 'trailing', end: wordEnd(lower, valueEnd) };
   return { ok: true, read: { value: Number(nm[0].replace(/,/gu, '')), comparator, valueStart: at, valueEnd, unitStart: null, end: valueEnd } };
 }
 
@@ -261,6 +267,41 @@ function nameValueMark(word: string): number {
     return i;
   }
   return -1;
+}
+
+/** 連記の値の数：「138/4.1/102」 */
+const JOINED_NUMBER = /\d+(?:\.\d+)?/uy;
+
+/** 名前の連記を読む。名前（2つ以上。血圧のような組の名前は除く）と値が同じ数で、値のあとが区切りか文の終わりのときだけ */
+function readJoined(lower: string, text: string, pos: number, first: { candidate: Candidate; length: number }, vocab: Vocabulary): { rows: LabRow[]; end: number } | null {
+  const names: { candidate: Candidate; start: number; end: number }[] = [{ candidate: first.candidate, start: pos, end: pos + first.length }];
+  let q = pos + first.length;
+  while (lower[q] === '/') {
+    const next = matchName(lower, q + 1, vocab);
+    if (next === null || next.candidate.pair !== null) return null;
+    names.push({ candidate: next.candidate, start: q + 1, end: q + 1 + next.length });
+    q = q + 1 + next.length;
+  }
+  if (names.length < 2) return null;
+  let p = q;
+  while (GLUE.has(lower[p] ?? '')) p += 1;
+  const values: { start: number; end: number }[] = [];
+  for (;;) {
+    JOINED_NUMBER.lastIndex = p;
+    const nm = JOINED_NUMBER.exec(lower);
+    if (nm === null) return null;
+    values.push({ start: p, end: p + nm[0].length });
+    p += nm[0].length;
+    if (lower[p] !== '/') break;
+    p += 1;
+  }
+  if (values.length !== names.length || !isSeparator(lower[p])) return null;
+  const rows = names.map((n, i): LabRow => {
+    const v = values[i] as { start: number; end: number };
+    const valueText = text.slice(v.start, v.end);
+    return { name: n.candidate.name, nameRaw: text.slice(n.start, n.end), kind: n.candidate.kind, value: Number(valueText.normalize('NFKC')), comparator: null, valueText, unit: null, start: pos, end: p };
+  });
+  return { rows, end: p };
 }
 
 export interface LabReadOptions {
@@ -296,6 +337,13 @@ export function readLabText(text: string, options: LabReadOptions = {}): LabRead
     if (m === null) {
       // カタログにない名前：「名前: 値」「名前=値」と書いたときだけ読む
       const end = wordEnd(lower, pos);
+      // 値のすぐ後ろの印（「WBC 12300 H」「CRP 12.4↑」）：値は読んである。印は flag として出す
+      const lastRow = rows.at(-1);
+      if (FLAGS.has(lower.slice(pos, end)) && lastRow !== undefined && lower.slice(lastRow.end, pos).trim() === '') {
+        unread.push({ reason: 'flag', start: pos, end });
+        pos = end;
+        continue;
+      }
       const word = lower.slice(pos, end);
       const mark = nameValueMark(word);
       let nameEnd = mark > 0 ? pos + mark : -1;
@@ -372,6 +420,16 @@ export function readLabText(text: string, options: LabReadOptions = {}): LabRead
       rows.push({ name: m.candidate.pair[1], nameRaw, kind: 'vital', value: Number(second), comparator: null, valueText: second, unit, start: pos, end: q });
       pos = q;
       continue;
+    }
+    // 名前の連記（「Na/K/Cl 138/4.1/102」「AST/ALT 32/28」）：名前と値が同じ数だけ「/」でつながれているときだけ、順に読む。
+    // 単位は読まない（どの項目の単位か決まらないため）。数が合わなければ、ふつうに読む（読めない部分は理由つきで出る）
+    if (lower[nameEnd] === '/') {
+      const joined = readJoined(lower, text, pos, m, vocab);
+      if (joined !== null) {
+        rows.push(...joined.rows);
+        pos = joined.end;
+        continue;
+      }
     }
     // 値の前に、決まった書き方がある項目（「GCS E3V4M6＝13」の E3V4M6＝、「JCS Ⅱ-10」の Ⅱ-）は、それを飛ばして、書かれた数を読む。
     // 合計が書かれていなければ、読まない（E・V・M から足し算しない）

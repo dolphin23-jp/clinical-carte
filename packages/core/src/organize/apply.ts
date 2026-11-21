@@ -377,7 +377,7 @@ export function applyOrganization(answer: OrganizeAnswer, ctx: OrganizeContext):
       const read = readLabText(text.slice(span.start, span.end), { specimen: m.specimen });
       // 数えるのは、何も読めなかった引用と、項目の名前は読めたのに値を読めなかった引用だけ。
       // 「SpO2 96%（室内気）」の「室内気」のような、項目でない語が残っただけの引用は数えない（数が、ほぼすべての記載に付いて、意味をなくすため）
-      if (read.rows.length === 0 || read.unread.some((u) => u.reason !== 'unknown')) count(report, 'measurement', 'unread');
+      if (read.rows.length === 0 || read.unread.some((u) => u.reason !== 'unknown' && u.reason !== 'flag')) count(report, 'measurement', 'unread');
       if (read.rows.length === 0) continue;
       const rowAt = factAt('measurement', m.when, span.start);
       for (const row of read.rows) observations.push({ row: { ...row, start: row.start + span.start, end: row.end + span.start }, at: rowAt, origin: 'ai' });
