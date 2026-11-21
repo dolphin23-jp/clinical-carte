@@ -22,6 +22,8 @@ export const SEGMENT_LABELS = [
   'objective',
   'assessment',
   'plan',
+  'assessment_plan',
+  'problem_heading',
   'course',
   'handover',
   'other',
@@ -43,6 +45,8 @@ export const SEGMENT_LABEL_NAMES: Readonly<Record<SegmentLabel, string>> = {
   objective: 'O',
   assessment: 'A（評価）',
   plan: 'P（方針）',
+  assessment_plan: 'A/P',
+  problem_heading: '#問題',
   course: '経過',
   handover: '申し送り',
   other: 'その他',
@@ -76,6 +80,14 @@ export const PROBLEM_STATUS_NAMES: Readonly<Record<ProblemStatus, string>> = {
   ruled_out: '否定的と書かれている',
 };
 
+/** 問題の、書かれた活動の状態（CA-025）。確からしさとは別の軸。書かれていなければ null（「状態の記載なし」） */
+export const PROBLEM_ACTIVITIES = ['resolved', 'inactive'] as const;
+export type ProblemActivity = (typeof PROBLEM_ACTIVITIES)[number];
+export const PROBLEM_ACTIVITY_NAMES: Readonly<Record<ProblemActivity, string>> = {
+  resolved: '解決と書かれている',
+  inactive: '非活動・既往と書かれている',
+};
+
 /** AI の答えの形（構造化した出力の型）。長さ・場所などの検査は apply.ts がする */
 export const OrganizeAnswer = z.object({
   /** 記載の種類（文から分かれば）。種類が「未分類」の文だけに使う */
@@ -96,7 +108,7 @@ export const OrganizeAnswer = z.object({
     }),
   ),
   events: z.array(z.object({ kind: z.enum(EVENT_KINDS), title: z.string(), when: z.string().nullable() })),
-  problems: z.array(z.object({ name: z.string(), status: z.enum(PROBLEM_STATUSES) })),
+  problems: z.array(z.object({ name: z.string(), status: z.enum(PROBLEM_STATUSES), activity: z.enum(PROBLEM_ACTIVITIES).nullable() })),
   /** 測定値が書かれた場所（引用。「Na 128」「BT 38.5」など。数は、ここから決定論で読む） */
   measurements: z.array(z.object({ quote: z.string(), when: z.string().nullable() })),
 });

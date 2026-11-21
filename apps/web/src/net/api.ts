@@ -11,7 +11,9 @@ import type {
   NewPatient,
   NewSource,
   OrganizeReport,
+  HistoryAction,
   PatientPatch,
+  ProblemActivity,
   ProblemStatus,
   SegmentLabel,
   Sex,
@@ -42,7 +44,8 @@ export type ApiError =
   | 'ai_refused'
   | 'ai_unavailable'
   | 'ai_bad_answer'
-  | 'selection_failed';
+  | 'selection_failed'
+  | 'conflict';
 
 export type Result<T> = { readonly ok: true; readonly value: T } | { readonly ok: false; readonly error: ApiError; readonly left?: number };
 
@@ -61,6 +64,7 @@ const KNOWN: readonly ApiError[] = [
   'ai_unavailable',
   'ai_bad_answer',
   'selection_failed',
+  'conflict',
 ];
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -193,7 +197,27 @@ export interface Problem {
   readonly encounterId: string;
   readonly name: string;
   readonly status: ProblemStatus;
+  readonly activity: ProblemActivity | null;
   readonly at: string | null;
+  readonly start: number;
+  readonly end: number;
+  readonly threadId: string | null;
+  readonly threadOrigin: 'rule' | 'ai' | 'self' | null;
+}
+
+export interface ProblemThread {
+  readonly id: string;
+  readonly displayName: string | null;
+  readonly mergedInto: string | null;
+}
+
+export interface HistoryEntry {
+  readonly id: string;
+  readonly at: string;
+  readonly action: HistoryAction;
+  readonly target: string;
+  readonly before: string | null;
+  readonly after: string | null;
 }
 
 export interface Observation {
@@ -225,6 +249,8 @@ export interface PatientRecord {
   readonly medications: readonly Medication[];
   readonly events: readonly ClinicalEvent[];
   readonly problems: readonly Problem[];
+  readonly problemThreads: readonly ProblemThread[];
+  readonly history: readonly HistoryEntry[];
   /** サーバーの、今日（日本の日） */
   readonly today: string;
 }
@@ -250,8 +276,8 @@ export async function createPatient(input: NewPatient): Promise<Result<Patient>>
 export async function getRecord(patientId: string): Promise<Result<PatientRecord>> {
   const result = await call('GET', `patients/${encodeURIComponent(patientId)}`);
   if (!result.ok) return result;
-  const { patient, encounters, sources, observations, segments, medications, events, problems, today } = result.value;
-  const lists = [encounters, sources, observations, segments, medications, events, problems];
+  const { patient, encounters, sources, observations, segments, medications, events, problems, problemThreads, history, today } = result.value;
+  const lists = [encounters, sources, observations, segments, medications, events, problems, problemThreads, history];
   if (!isRecord(patient) || lists.some((l) => !Array.isArray(l)) || typeof today !== 'string') return { ok: false, error: 'network' };
   return {
     ok: true,
@@ -264,6 +290,8 @@ export async function getRecord(patientId: string): Promise<Result<PatientRecord
       medications: medications as Medication[],
       events: events as ClinicalEvent[],
       problems: problems as Problem[],
+      problemThreads: problemThreads as ProblemThread[],
+      history: history as HistoryEntry[],
       today,
     },
   };
@@ -334,4 +362,30 @@ export async function getSelfCheck(): Promise<Result<SelfCheckInfo>> {
 
 export async function runSelfCheck(id: string, seed: number): Promise<Result<SelfCheckResult>> {
   return field<SelfCheckResult>(await call('POST', 'selfcheck', { id, seed }), 'result');
+}
+
+// --- 問題の筋（段3a）
+
+/** つないでいない問題の記載を、もう一度つなぐ（AI を使う） */
+export async function linkProblems(patientId: string): Promise<Result<null>> {
+  const result = await call('POST', `patients/${encodeURIComponent(patientId)}/problems/link`, {});
+  return result.ok ? { ok: true, value: null } : result;
+}
+
+/** 記載を、別の筋へ移す（new：新しい筋に分ける）。expected は、いまの筋（違えば conflict） */
+export async function moveProblem(problemId: string, thread: string, expected: string | null): Promise<Result<null>> {
+  const result = await call('PATCH', `problems/${encodeURIComponent(problemId)}`, { thread, expected });
+  return result.ok ? { ok: true, value: null } : result;
+}
+
+/** 筋を、別の筋へ統合する */
+export async function mergeThread(threadId: string, into: string): Promise<Result<null>> {
+  const result = await call('PATCH', `threads/${encodeURIComponent(threadId)}`, { mergeInto: into });
+  return result.ok ? { ok: true, value: null } : result;
+}
+
+/** 筋の表示の名前を、書かれた名前から選ぶ（null：いちばん新しい記載の名前） */
+export async function nameThread(threadId: string, displayName: string | null): Promise<Result<null>> {
+  const result = await call('PATCH', `threads/${encodeURIComponent(threadId)}`, { displayName });
+  return result.ok ? { ok: true, value: null } : result;
 }

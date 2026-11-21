@@ -10,7 +10,9 @@ import {
   NewPatient,
   NewSource,
   PatientPatch,
+  ProblemMove,
   TEXT_LIMIT,
+  ThreadPatch,
   ulid,
   ULID_RANDOM_BYTES,
 } from '@clinical-carte/core';
@@ -20,6 +22,7 @@ import type { Db } from './db.ts';
 import { intake } from './intake.ts';
 import { organizeSource } from './organize.ts';
 import type { Organizer } from './organizer.ts';
+import { type EditOutcome, type LinkOutcome, linkPatient, moveMention, patchThread } from './problems.ts';
 import { SELECT_PROMPT_VERSION } from './prompt.ts';
 import {
   createEncounter,
@@ -81,6 +84,12 @@ async function readBody<T extends z.ZodType>(request: Request, schema: T): Promi
   const result = schema.safeParse(parsed);
   return result.success ? result.data : null;
 }
+
+const edited = (outcome: EditOutcome): Reply =>
+  outcome.ok ? reply(200, { ok: true }) : outcome.error === 'not_found' ? missing() : outcome.error === 'conflict' ? reply(409, { error: 'conflict' }) : bad();
+
+/** つなぎの結果のうち、画面に出すもの（数だけ） */
+const linkSummary = (o: LinkOutcome) => ({ usedAi: o.usedAi, pendingLeft: o.pendingLeft, failure: o.failure, report: o.report });
 
 const newId = (runtime: Runtime): string => ulid(runtime.now(), runtime.randomBytes(ULID_RANDOM_BYTES));
 
@@ -197,7 +206,45 @@ export async function recordApi(request: Request, path: string, deps: RecordDeps
       if (result.reason === 'not_found') return missing();
       return result.failure === 'refused' ? reply(422, { error: 'ai_refused' }) : reply(502, { error: result.failure === 'unavailable' ? 'ai_unavailable' : 'ai_bad_answer' });
     }
-    return reply(200, { source: result.source });
+    // 続けて、問題の筋につなぐ（段3a）。AI に聞くのは、1日の上限の内のときだけ（超えていれば、つながないまま残す）
+    const aiOk = deps.dailyAiLimit === 0 || (await callsOn(db, today)) < deps.dailyAiLimit;
+    const link = await linkPatient(db, result.source.patientId, aiOk ? deps.organizer : null, runtime);
+    if (link.usedAi) await countCall(db, today);
+    return reply(200, { source: result.source, link: linkSummary(link) });
+  }
+
+  // 問題の筋のつなぎ直し（段3a）：つないでいない記載を、もう一度つなぐ（AI を使う）
+  const linkProblems = /^\/api\/patients\/([^/]+)\/problems\/link$/.exec(path);
+  if (linkProblems && method === 'POST') {
+    const patientId = linkProblems[1] ?? '';
+    if (!isUlid(patientId)) return bad();
+    if ((await getPatient(db, patientId)) === null) return missing();
+    if (deps.organizer === null) return reply(503, { error: 'no_ai' });
+    if (deps.dailyAiLimit > 0 && (await callsOn(db, today)) >= deps.dailyAiLimit) return reply(429, { error: 'ai_limit' });
+    const link = await linkPatient(db, patientId, deps.organizer, runtime);
+    if (link.usedAi) await countCall(db, today);
+    if (link.failure !== null) return link.failure === 'refused' ? reply(422, { error: 'ai_refused' }) : reply(502, { error: link.failure === 'unavailable' ? 'ai_unavailable' : 'ai_bad_answer' });
+    return reply(200, { link: linkSummary(link) });
+  }
+
+  // 本人の直す操作（段3a）：記載を別の筋へ移す・分ける
+  const oneProblem = /^\/api\/problems\/([^/]+)$/.exec(path);
+  if (oneProblem && method === 'PATCH') {
+    const id = oneProblem[1] ?? '';
+    if (!isUlid(id)) return bad();
+    const body = await readBody(request, ProblemMove);
+    if (body === null) return bad();
+    return edited(await moveMention(db, id, body, runtime));
+  }
+
+  // 筋を直す：統合する・表示の名前を選ぶ
+  const oneThread = /^\/api\/threads\/([^/]+)$/.exec(path);
+  if (oneThread && method === 'PATCH') {
+    const id = oneThread[1] ?? '';
+    if (!isUlid(id)) return bad();
+    const body = await readBody(request, ThreadPatch);
+    if (body === null) return bad();
+    return edited(await patchThread(db, id, body, runtime));
   }
 
   const oneSource = /^\/api\/sources\/([^/]+)$/.exec(path);

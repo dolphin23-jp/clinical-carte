@@ -21,7 +21,7 @@ const ANSWER: OrganizeAnswer = {
     { name: 'バンコマイシン', dose: null, action: 'start', when: null },
   ],
   events: [{ kind: 'test', title: '胸部X線を撮影', when: '11/19' }],
-  problems: [{ name: '#1 市中肺炎', status: 'problem' }],
+  problems: [{ name: '#1 市中肺炎', status: 'problem', activity: null }],
   measurements: [
     { quote: 'BT 37.2', when: null },
     { quote: 'BT 38.4', when: '昨日' },
@@ -90,7 +90,7 @@ describe('整理する', () => {
     let answer: OrganizeAnswer = ANSWER;
     const s = await setup(() => ({ ok: true, answer }));
     await s.w.call('POST', `/api/sources/${s.sourceId}/organize`, { cookie: s.cookie, body: {} });
-    answer = { ...EMPTY_ORGANIZE, problems: [{ name: '市中肺炎', status: 'diagnosis' }] };
+    answer = { ...EMPTY_ORGANIZE, problems: [{ name: '市中肺炎', status: 'diagnosis', activity: null }] };
     await s.w.call('POST', `/api/sources/${s.sourceId}/organize`, { cookie: s.cookie, body: {} });
     const record = await recordOf(s);
     expect(record.problems.map((p) => [p.name, p.status])).toEqual([['市中肺炎', 'diagnosis']]);

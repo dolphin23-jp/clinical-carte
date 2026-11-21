@@ -2,10 +2,10 @@
 // 答えは、決めた形（構造化した出力）で受け、確かめるのは core の applySelection。ここでは、保存もログもしない。
 import Anthropic from '@anthropic-ai/sdk';
 import { zodOutputFormat } from '@anthropic-ai/sdk/helpers/zod';
-import { OrganizeAnswer, SelectionAnswer } from '@clinical-carte/core';
+import { LinkAnswer, OrganizeAnswer, SelectionAnswer } from '@clinical-carte/core';
 
-import type { Organizer, OrganizerResult } from './organizer.ts';
-import { ORGANIZE_SYSTEM, SELECT_SYSTEM } from './prompt.ts';
+import type { LinkerResult, Organizer, OrganizerResult } from './organizer.ts';
+import { LINK_SYSTEM, ORGANIZE_SYSTEM, SELECT_SYSTEM } from './prompt.ts';
 import type { Selector, SelectorResult } from './selector.ts';
 
 /** 始めるモデル（CA-022）。設定（MODEL）で変えられる */
@@ -66,6 +66,28 @@ export function createAnthropicOrganizer(options: AnthropicOptions): Organizer {
         if (response.stop_reason === 'refusal') return { ok: false, reason: 'refused' };
         if (response.stop_reason !== 'end_turn') return { ok: false, reason: 'bad_answer' };
         const parsed = OrganizeAnswer.safeParse(response.parsed_output);
+        return parsed.success ? { ok: true, answer: parsed.data } : { ok: false, reason: 'bad_answer' };
+      } catch (error) {
+        if (error instanceof Anthropic.APIError) return { ok: false, reason: 'unavailable' };
+        return { ok: false, reason: 'bad_answer' };
+      }
+    },
+    // 問題の筋のつなぎ（段3a）。送るのは、保存した問題の名前と、保存した文の行だけ（core の linkRequest）
+    async link(message: string): Promise<LinkerResult> {
+      try {
+        const response = await client.beta.messages.parse({
+          model: options.model,
+          max_tokens: 8000,
+          betas: ['server-side-fallback-2026-07-01'],
+          fallbacks: 'default',
+          cache_control: { type: 'ephemeral' },
+          system: LINK_SYSTEM,
+          output_config: { effort: 'medium', format: zodOutputFormat(LinkAnswer) },
+          messages: [{ role: 'user', content: message }],
+        });
+        if (response.stop_reason === 'refusal') return { ok: false, reason: 'refused' };
+        if (response.stop_reason !== 'end_turn') return { ok: false, reason: 'bad_answer' };
+        const parsed = LinkAnswer.safeParse(response.parsed_output);
         return parsed.success ? { ok: true, answer: parsed.data } : { ok: false, reason: 'bad_answer' };
       } catch (error) {
         if (error instanceof Anthropic.APIError) return { ok: false, reason: 'unavailable' };
