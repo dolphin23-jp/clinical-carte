@@ -44,8 +44,10 @@ import {
   type Segment,
   setEncounterEnd,
   type Source,
+  type UserEdit,
 } from './net/api.ts';
 import { organizeSummary, reportText } from './organizeText.ts';
+import { SourceEdit } from './SourceEdit.tsx';
 import { SourceFacts } from './SourceFacts.tsx';
 import { SourceText } from './SourceText.tsx';
 import { StateView } from './StateView.tsx';
@@ -278,6 +280,7 @@ export function PatientPage({ patientId, onBack, onLeft }: { patientId: string; 
             segments={record.segments}
             sources={record.sources}
             history={record.history}
+            userEdits={record.userEdits}
             observations={live.observations}
             medications={live.medications}
             events={live.events}
@@ -320,6 +323,7 @@ export function PatientPage({ patientId, onBack, onLeft }: { patientId: string; 
                   observations: record.observations.filter((o) => o.sourceId === s.id),
                 }}
                 edits={record.factEdits}
+                userEdits={record.userEdits}
                 encounter={current}
                 onChanged={load}
                 onLeft={onLeft}
@@ -405,6 +409,7 @@ function SourceCard({
   segments,
   facts,
   edits,
+  userEdits,
   encounter,
   onChanged,
   onLeft,
@@ -413,6 +418,7 @@ function SourceCard({
   segments: readonly Segment[];
   facts: { medications: readonly Medication[]; events: readonly ClinicalEvent[]; observations: readonly Observation[] };
   edits: readonly FactEdit[];
+  userEdits: readonly UserEdit[];
   encounter: Encounter | null;
   onChanged: () => void;
   onLeft: () => void;
@@ -455,7 +461,8 @@ function SourceCard({
         </span>
       </div>
       <SourceText text={source.text} segments={segments} />
-      <SourceFacts medications={facts.medications} events={facts.events} observations={facts.observations} edits={edits} onChanged={onChanged} onLeft={onLeft} />
+      <SourceFacts medications={facts.medications} events={facts.events} observations={facts.observations} edits={edits} userEdits={userEdits} onChanged={onChanged} onLeft={onLeft} />
+      <SourceEdit source={source} segments={segments} edits={userEdits} onChanged={onChanged} onLeft={onLeft} />
       {unread.length > 0 && (
         <div className="unread" data-testid="unread">
           <span className="unread-title">値として読めなかった部分（文には残っています）</span>

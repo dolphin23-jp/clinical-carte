@@ -37,6 +37,8 @@ export function errorMessage(error: ApiError, left?: number): string {
       return 'ほかの端末で、先に直されていました。読み込み直した内容を確かめて、もう一度直してください。';
     case 'draft_empty':
       return '草案にできる記載がありません（問題ごとの A・P の区切りが、まだありません）。記録の「整理し直す」で、区切りが付きます。';
+    case 'bad_span':
+      return '選んだ範囲を足せませんでした。1行の中で選び、値は「Na 128」のように名前と値をひと続きに選んでください。';
     case 'selection_failed':
       return '識別情報の場所を確かめられませんでした。文は保存していません。もう一度送るか、氏名・番号などを消してから送ってください。';
   }

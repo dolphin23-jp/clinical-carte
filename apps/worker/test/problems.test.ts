@@ -183,7 +183,8 @@ describe('本人の直す操作と履歴', () => {
     const merge = await s.w.call('PATCH', `/api/threads/${pneu?.threadId ?? ''}`, { cookie: s.cookie, body: { mergeInto: fever?.threadId } });
     expect(merge.status).toBe(200);
     r = await s.rec();
-    expect(r.problems.find((p) => p.name === '#1 市中肺炎')?.threadId).toBe(fever?.threadId);
+    // 記載は動かさず、統合先を持つだけ（統合を解けるように。CA-029）
+    expect(r.problems.find((p) => p.name === '#1 市中肺炎')?.threadId).toBe(pneu?.threadId);
     expect(r.problemThreads.find((t) => t.id === pneu?.threadId)?.mergedInto).toBe(fever?.threadId);
     expect((await s.w.call('PATCH', `/api/threads/${pneu?.threadId ?? ''}`, { cookie: s.cookie, body: { displayName: null } })).status).toBe(400);
     expect((await s.w.call('PATCH', `/api/threads/${fever?.threadId ?? ''}`, { cookie: s.cookie, body: { mergeInto: pneu?.threadId } })).status).toBe(400);

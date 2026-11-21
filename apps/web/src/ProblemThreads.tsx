@@ -2,7 +2,14 @@
 // 並べるだけ（判定しない）：確からしさと、解決・非活動は、いちばん新しい記載に書かれたとおり。問題ごとの A・P は、保存した文の、その区切りの字そのもの。
 // 直す（つなぎ直す・分ける・統合・表示の名前）は本人の操作で、履歴が残る。名前は打たず、書かれた名前から選ぶ。
 import {
+  ACTIVITY_OVERRIDE_NAMES,
+  ACTIVITY_OVERRIDES,
+  type ActivityOverride,
   compareDateTime,
+  PROBLEM_STATUSES,
+  type ProblemStatus,
+  type ThreadPatch,
+  TYPED_NAME_MAX,
   EVENT_KIND_NAMES,
   labTrends,
   MEDICATION_ACTION_NAMES,
@@ -25,7 +32,7 @@ import { useState } from 'react';
 import { TrendGrid } from './charts/TrendGrid.tsx';
 import { showDateTime } from './format.ts';
 import { errorMessage } from './messages.ts';
-import { type ClinicalEvent, type HistoryEntry, linkProblems, mergeThread, moveProblem, nameThread, type Medication, type Observation, type Problem, type ProblemThread, type Result, type Segment, type Source } from './net/api.ts';
+import { type ClinicalEvent, type HistoryEntry, linkProblems, mergeThread, moveProblem, nameThread, type Medication, type Observation, patchThread, type Problem, type ProblemThread, type UserEdit, type Result, type Segment, type Source } from './net/api.ts';
 
 const GROUPS: readonly ThreadGroup[] = ['current', 'closed', 'ruled_out'];
 const ORIGIN_NAMES = { rule: '名前が同じ', ai: 'AI がつないだ', self: '本人が直した' } as const;
@@ -37,6 +44,7 @@ interface Props {
   readonly segments: readonly Segment[];
   readonly sources: readonly Source[];
   readonly history: readonly HistoryEntry[];
+  readonly userEdits: readonly UserEdit[];
   /** 患者のすべての測定値・投薬・できごと（問題の記載に書かれたものを結ぶ。段3c） */
   readonly observations: readonly Observation[];
   readonly medications: readonly Medication[];
@@ -45,7 +53,7 @@ interface Props {
   readonly onLeft: () => void;
 }
 
-export function ProblemThreads({ patientId, problems, threads, segments, sources, history, observations, medications, events, onChanged, onLeft }: Props) {
+export function ProblemThreads({ patientId, problems, threads, segments, sources, history, userEdits, observations, medications, events, onChanged, onLeft }: Props) {
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const views = threadViews(threads, problems);
@@ -131,6 +139,9 @@ export function ProblemThreads({ patientId, problems, threads, segments, sources
                   onMove={(problem, to) => {
                     run(() => moveProblem(problem.id, to, problem.threadId));
                   }}
+                  onPatch={(patch) => {
+                    run(() => patchThread(t.id, patch));
+                  }}
                 />
               ))}
             </ul>
@@ -138,13 +149,41 @@ export function ProblemThreads({ patientId, problems, threads, segments, sources
         );
       })}
 
+      {views.excluded.length > 0 && (
+        <details className="thread-more" data-testid="thread-excluded">
+          <summary>外した問題（{String(views.excluded.length)}）</summary>
+          <ul className="fact-list">
+            {views.excluded.map((t) => (
+              <li key={t.id} className="fact-row">
+                <span className="fact-main">{t.name}</span>
+                <span className="fact-controls">
+                  <button
+                    type="button"
+                    className="button small"
+                    disabled={busy}
+                    onClick={() => {
+                      run(() => patchThread(t.id, { excluded: false }));
+                    }}
+                    data-testid="thread-restore"
+                  >
+                    戻す
+                  </button>
+                </span>
+              </li>
+            ))}
+          </ul>
+        </details>
+      )}
+
       {views.threads.length > 0 && (
         <p className="note">
-          確からしさと「解決・非活動」は、いちばん新しい記載に書かれたとおりです（判定ではありません）。同じ問題のつなぎは、名前が同じものと AI が付けたもので、「直す」で変えられます。
+          確からしさと「解決・非活動」は、先生が決めたもの（「先生」の印）がなければ、いちばん新しい記載に書かれたとおりです（判定ではありません）。同じ問題のつなぎ・名前・並び・状態は、「直す」で変えられます。
         </p>
       )}
 
-      {history.length > 0 && <HistoryList history={history} problems={problems} views={views.threads} />}
+      {(history.length > 0 || userEdits.some((e) => e.targetType === 'thread')) && (
+        <HistoryList history={history} userEdits={userEdits.filter((e) => e.targetType === 'thread')} problems={problems} views={[...views.threads, ...views.excluded]} />
+      )}
     </div>
   );
 }
@@ -159,6 +198,7 @@ function ThreadCard({
   onName,
   onMerge,
   onMove,
+  onPatch,
 }: {
   view: ThreadView;
   segments: readonly Segment[];
@@ -169,8 +209,10 @@ function ThreadCard({
   onName: (name: string | null) => void;
   onMerge: (into: string) => void;
   onMove: (problem: Problem, to: string) => void;
+  onPatch: (patch: ThreadPatch) => void;
 }) {
   const [mergeTo, setMergeTo] = useState('');
+  const [typed, setTyped] = useState('');
   // 記載ごとにまとめる（1つの記載の A と P は一緒に出す）。いちばん新しい記載を開いて、ほかは畳む
   const groups: ProblemNote[][] = [];
   for (const n of problemNotes(view.mentions, segments)) {
@@ -187,8 +229,16 @@ function ThreadCard({
         <strong className="thread-name" data-testid="thread-name">
           {view.name}
         </strong>
-        <span className="tag">{PROBLEM_STATUS_NAMES[view.status]}</span>
-        {view.activity !== null && <span className="tag">{PROBLEM_ACTIVITY_NAMES[view.activity]}</span>}
+        <span className="tag">
+          {PROBLEM_STATUS_NAMES[view.status]}
+          {view.statusBySelf && '（先生）'}
+        </span>
+        {view.activitySelf !== null ? (
+          <span className="tag">{ACTIVITY_OVERRIDE_NAMES[view.activitySelf]}（先生）</span>
+        ) : (
+          view.activity !== null && <span className="tag">{PROBLEM_ACTIVITY_NAMES[view.activity]}</span>
+        )}
+        {view.typedName && <span className="tag">名前を先生が直した</span>}
       </div>
       <p className="thread-sub">
         記載 {String(view.mentions.length)} 件・{showDateTime(view.first)}
@@ -219,6 +269,98 @@ function ThreadCard({
       <details className="thread-edit" data-testid="thread-edit">
         <summary>直す</summary>
         <div className="form">
+          <div className="field-row thread-order">
+            <button type="button" className="button small" disabled={busy} onClick={() => { onPatch({ move: 'up' }); }} data-testid="thread-up">
+              ↑ 上へ
+            </button>
+            <button type="button" className="button small" disabled={busy} onClick={() => { onPatch({ move: 'down' }); }} data-testid="thread-down">
+              ↓ 下へ
+            </button>
+            <button type="button" className="button small" disabled={busy} onClick={() => { onPatch({ excluded: true }); }} data-testid="thread-exclude">
+              問題ではない（外す）
+            </button>
+          </div>
+          <label className="field">
+            <span className="field-label">確からしさ</span>
+            <select
+              className="input"
+              value={view.statusBySelf ? view.status : ''}
+              disabled={busy}
+              onChange={(e) => {
+                onPatch({ status: e.target.value === '' ? null : (e.target.value as ProblemStatus) });
+              }}
+              data-testid="thread-status"
+            >
+              <option value="">書かれたとおり（{PROBLEM_STATUS_NAMES[view.mentions.at(-1)?.status ?? 'problem']}）</option>
+              {PROBLEM_STATUSES.map((st) => (
+                <option key={st} value={st}>
+                  {PROBLEM_STATUS_NAMES[st]}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="field">
+            <span className="field-label">状態</span>
+            <select
+              className="input"
+              value={view.activitySelf ?? ''}
+              disabled={busy}
+              onChange={(e) => {
+                onPatch({ activity: e.target.value === '' ? null : (e.target.value as ActivityOverride) });
+              }}
+              data-testid="thread-activity"
+            >
+              <option value="">書かれたとおり{view.activity === null ? '' : `（${PROBLEM_ACTIVITY_NAMES[view.activity]}）`}</option>
+              {ACTIVITY_OVERRIDES.map((a) => (
+                <option key={a} value={a}>
+                  {ACTIVITY_OVERRIDE_NAMES[a]}
+                </option>
+              ))}
+            </select>
+          </label>
+          <div className="field">
+            <span className="field-label">名前を打って直す（氏名などが紛れないよう、AI の選別を通してから保存します。AI の1回）</span>
+            <div className="field-row">
+              <input
+                className="input"
+                value={typed}
+                maxLength={TYPED_NAME_MAX}
+                placeholder={view.name}
+                disabled={busy}
+                onChange={(e) => {
+                  setTyped(e.target.value);
+                }}
+                data-testid="thread-typed-name"
+              />
+              <button
+                type="button"
+                className="button small"
+                disabled={busy || typed.trim() === ''}
+                onClick={() => {
+                  onPatch({ typedName: typed.trim() });
+                  setTyped('');
+                }}
+                data-testid="thread-typed-save"
+              >
+                保存
+              </button>
+            </div>
+            {view.typedName && (
+              <button type="button" className="button small" disabled={busy} onClick={() => { onPatch({ typedName: null }); }} data-testid="thread-typed-clear">
+                打った名前をやめる（書かれた名前に戻す）
+              </button>
+            )}
+          </div>
+          {view.mergedFrom.length > 0 && (
+            <div className="field">
+              <span className="field-label">この問題に統合したもの</span>
+              {view.mergedFrom.map((f) => (
+                <button key={f.id} type="button" className="button small" disabled={busy} onClick={() => { onPatch({ unmerge: f.id }); }} data-testid="thread-unmerge">
+                  「{f.names.join('・') || '記載なし'}」の統合を解く
+                </button>
+              ))}
+            </div>
+          )}
           {view.names.length > 1 && (
             <label className="field">
               <span className="field-label">表示の名前（書かれた名前から選ぶ）</span>
@@ -242,7 +384,7 @@ function ThreadCard({
           )}
           {others.length > 0 && (
             <div className="field">
-              <span className="field-label">ほかの問題に統合する（この問題の記載が、すべて移ります）</span>
+              <span className="field-label">ほかの問題に統合する（この問題の記載を、統合先にまとめて見せます。名前は統合先のものが残ります。統合先の「直す」から解けます）</span>
               <div className="field-row">
                 <select
                   className="input"
@@ -443,7 +585,7 @@ function MentionRow({
   );
 }
 
-function HistoryList({ history, problems, views }: { history: readonly HistoryEntry[]; problems: readonly Problem[]; views: readonly ThreadView[] }) {
+function HistoryList({ history, userEdits, problems, views }: { history: readonly HistoryEntry[]; userEdits: readonly UserEdit[]; problems: readonly Problem[]; views: readonly ThreadView[] }) {
   const problemName = (id: string | null): string => problems.find((p) => p.id === id)?.name ?? '（いまはない記載）';
   const threadName = (id: string | null): string => (id === null ? '' : (views.find((v) => v.id === id)?.name ?? '（統合した・記載のない問題）'));
   const line = (h: HistoryEntry): string => {
@@ -451,14 +593,25 @@ function HistoryList({ history, problems, views }: { history: readonly HistoryEn
     if (h.action === 'merge') return `ある問題を「${threadName(h.after)}」に統合した`;
     return `「${threadName(h.target)}」の表示の名前を、${h.after === null ? 'いちばん新しい記載の名前' : `「${h.after}」`}にした`;
   };
+  const userLine = (e: UserEdit): string => {
+    const name = `「${threadName(e.target)}」`;
+    if (e.field === 'status') return `${name}の確からしさを、${e.after === null ? '書かれたとおり' : PROBLEM_STATUS_NAMES[e.after as ProblemStatus]}にした`;
+    if (e.field === 'activity') return `${name}の状態を、${e.after === null ? '書かれたとおり' : ACTIVITY_OVERRIDE_NAMES[e.after as ActivityOverride]}にした`;
+    if (e.field === 'excluded') return `${name}を${e.after === '1' ? '外した' : '戻した'}`;
+    if (e.field === 'ord') return `${name}の並びを変えた`;
+    if (e.field === 'unmerge') return `${name}の統合を解いた`;
+    if (e.field === 'typed_name') return e.after === null ? `${name}の打った名前をやめた` : `名前を「${e.after}」に打って直した`;
+    return `${name}を直した`;
+  };
+  const rows = [...history.map((h) => ({ id: h.id, at: h.at, text: line(h) })), ...userEdits.map((e) => ({ id: e.id, at: e.at, text: userLine(e) }))].sort((a, b) => b.at.localeCompare(a.at) || b.id.localeCompare(a.id));
   return (
     <details className="thread-history" data-testid="thread-history">
-      <summary>直した記録（{String(history.length)}）</summary>
+      <summary>直した記録（{String(rows.length)}）</summary>
       <ul className="fact-list">
-        {history.map((h) => (
+        {rows.map((h) => (
           <li key={h.id} className="fact-row">
             <span className="fact-when">{showDateTime(h.at)}</span>
-            <span className="fact-main">{line(h)}</span>
+            <span className="fact-main">{h.text}</span>
           </li>
         ))}
       </ul>

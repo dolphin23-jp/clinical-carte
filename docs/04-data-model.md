@@ -185,6 +185,8 @@ AI が返すのは、次の3つだけ（構造化した出力）。
 | `history` | 本人が直したとき（段3a：問題の記載を移す・統合・表示の名前） |
 | `medications`・`events`・`observations` の `excluded`・`origin`・直した欄 | 本人が事実を直したとき（段3e） |
 | `fact_edits` | 本人が事実を直したとき（段3e：外す・戻す・投薬の動き・できごとの種類・日時） |
+| `problem_threads` の本人の決めの列・`segments` の origin | 本人が調節したとき（CA-029） |
+| `user_edits` | 本人が調節したとき（CA-029：問題の確からしさ・状態・並び・外す・統合を解く・打った名前、記載の種類・日時・書いた人、区切りの見出し、値の項目名、なぞって足した、文を打ち直した） |
 | `devices` | 端末の登録・外すとき・その日はじめて使ったとき（1日に1回） |
 | `entrance_daily` | 合鍵を間違えたとき |
 | `usage_daily` | AI を呼んだとき |
@@ -193,7 +195,7 @@ AI が返すのは、次の3つだけ（構造化した出力）。
 
 - 打った原文・AI へ送った文・AI の答えそのものは、どの表にも書かない。ログにも出さない。
 - 表を足すときは、先にこの一覧を直す。
-- いまある表（段0〜段3a）は `devices`・`entrance_daily`・`patients`・`encounters`・`sources`・`observations`・`usage_daily`・`schema_migrations`・`segments`・`medications`・`events`・`problems`・`problem_threads`・`history`・`fact_edits`。`apps/worker/test/writes.test.ts` が、migrations が作る表と、ソースの SQL が書く表を、この一覧と突き合わせる。
+- いまある表（段0〜段3a）は `devices`・`entrance_daily`・`patients`・`encounters`・`sources`・`observations`・`usage_daily`・`schema_migrations`・`segments`・`medications`・`events`・`problems`・`problem_threads`・`history`・`fact_edits`・`user_edits`。`apps/worker/test/writes.test.ts` が、migrations が作る表と、ソースの SQL が書く表を、この一覧と突き合わせる。
 
 ## 7. 段1 で作ったものと、案との違い
 
@@ -262,3 +264,19 @@ AI が返すのは、次の3つだけ（構造化した出力）。
 - **整理し直したとき**：同じ文の、同じ場所・同じ字（投薬の名前・できごとの題・測定値の書かれた名前）の行に、直した値・外した印を引き継ぎ、origin を self のままにする。場所や字が変われば引き継がない（直した記録は残る）。
 - **見方**：外した事実は、経過表・検査・投薬・問題・いま・草案・回診リストの計算から除く。記載ごとの「事実を見る・直す」には出す（戻せる）。
 - **草案（段4）は、どの表にも書かない**（保存しない）。AI を呼んだ回数だけが、`usage_daily` に数えられる。
+
+## 11. 本人の調節で作ったもの（CA-029）
+
+作った列と表は、`apps/worker/migrations/0006_user_edits.sql`。形と確かめは、`packages/core/src/record/edits.ts`・`problems/threads.ts`。
+
+| 表・列 | 中身 |
+|---|---|
+| `problem_threads` に足した列 | status_override（本人が決めた確からしさ）・activity_override（active：いまの問題・resolved・inactive）・ord（並び）・excluded（外した）・typed_name（打って直した名前。**選別を通した後の字**） |
+| `segments` に足した列 | origin（ai・self。本人が足した・見出しを直した区切りは self） |
+| `user_edits` | id・patient_id・at・target_type・target・field・before・after。選んだ値・日時・名前だけ。**文を打ち直したときは、前後の文を残さない**（before・after は NULL：紛れた識別情報を消すための直しがありうる） |
+
+- **本人の行が先**：本人が足した・直した行（origin = self）は、整理し直しでも消さない。AI の答えのうち、本人の行と同じ場所・同じ字の行は足さない（段3e の「引き継ぎ」を、この形に置き換えた）。区切りは、本人の区切りと同じ場所から始まる AI の区切りを足さず、終わりは全部を並べて決め直す。
+- **統合**：記載を動かさず、統合先（merged_into）を持つだけにした。見方は統合先にまとめ、統合先から解ける。段3a の作りで統合したもの（記載を動かしたもの）は、解いても記載は戻らない。
+- **なぞって足す**：字は保存した文のその場所のもの（選別を通し直さない）。前後の空白を詰め、1行の中・200 字まで・識別情報の形がないこと。値は、なぞった字を決定論で読めるときだけ（数を AI に写させない決まりと同じ）。足した問題は、名前が同じ筋があればそこへ、なければ新しい筋。
+- **打って直す（C-1）**：問題の名前と文の打ち直しは、文を入れるときと同じ選別（`intake`）を通し、置き換えた後の字だけを保存する（AI の1回。選別が失敗したら保存しない）。文を打ち直すと、AI の行は消して整理し直し、本人の行は、前の文の字を新しい文で探して場所を移す（見つからなければ消し、数を画面に出す）。
+- **値の項目名**：検査名の表（取り込んだ名前と carte の足し分）からだけ選べる。表にない名前は断る。

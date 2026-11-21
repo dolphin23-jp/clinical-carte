@@ -12,20 +12,24 @@ import {
   type ThreadMention,
   type ThreadPatch,
   type ThreadRow,
+  reorder,
+  threadViews,
   ulid,
+  type UserEditField,
+  type UserEditTarget,
   ULID_RANDOM_BYTES,
 } from '@clinical-carte/core';
 
 import type { Db, Statement } from './db.ts';
 import type { Organizer } from './organizer.ts';
-import { type Problem, PROBLEM_COLUMNS, problemOf, type ProblemThread, threadOf } from './records.ts';
+import { type Problem, PROBLEM_COLUMNS, problemOf, type ProblemThread, THREAD_COLUMNS, threadOf } from './records.ts';
 import type { Runtime } from './runtime.ts';
 import type { SelectorFailure } from './selector.ts';
 
 const present = <T>(value: T | null): value is T => value !== null;
 
 async function threadsOf(db: Db, patientId: string): Promise<ProblemThread[]> {
-  const rows = await db.prepare('SELECT id, display_name, merged_into FROM problem_threads WHERE patient_id = ? ORDER BY id').bind(patientId).all();
+  const rows = await db.prepare(`SELECT ${THREAD_COLUMNS} FROM problem_threads WHERE patient_id = ? ORDER BY id`).bind(patientId).all();
   return rows.results.map(threadOf).filter(present);
 }
 
@@ -122,7 +126,7 @@ function history(db: Db, runtime: Runtime, patientId: string, action: 'move' | '
 }
 
 async function threadRow(db: Db, id: string): Promise<(ProblemThread & { patientId: string }) | null> {
-  const row = await db.prepare('SELECT id, patient_id, display_name, merged_into FROM problem_threads WHERE id = ?').bind(id).first();
+  const row = await db.prepare(`SELECT patient_id, ${THREAD_COLUMNS} FROM problem_threads WHERE id = ?`).bind(id).first();
   const thread = row === null ? null : threadOf(row);
   const patientId = row?.['patient_id'];
   return thread === null || typeof patientId !== 'string' ? null : { ...thread, patientId };
@@ -152,34 +156,104 @@ export async function moveMention(db: Db, problemId: string, body: ProblemMove, 
   return { ok: true };
 }
 
-/** 筋を直す：別の筋へ統合する、または、表示の名前を、その筋に書かれた名前から選ぶ */
+/** 本人の調節の記録（CA-029。history に入らない分） */
+export function userEdit(db: Db, runtime: Runtime, patientId: string, targetType: UserEditTarget, target: string, field: UserEditField, before: string | null, after: string | null): Statement {
+  return db
+    .prepare('INSERT INTO user_edits (id, patient_id, at, target_type, target, field, before, after) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
+    .bind(ulid(runtime.now(), runtime.randomBytes(ULID_RANDOM_BYTES)), patientId, japanDateTime(runtime.now()), targetType, target, field, before, after);
+}
+
+/**
+ * 筋を直す：統合する・統合を解く・表示の名前を書かれた名前から選ぶ・確からしさ・状態・並び・外す（CA-029）。
+ * 打って直す名前（typedName）は、ここでは受けない（選別を通す setTypedName だけ）。
+ */
 export async function patchThread(db: Db, threadId: string, body: ThreadPatch, runtime: Runtime): Promise<EditOutcome> {
   const thread = await threadRow(db, threadId);
   if (thread === null) return { ok: false, error: 'not_found' };
   if (thread.mergedInto !== null) return { ok: false, error: 'bad_request' };
+  const patientId = thread.patientId;
+
+  if ('typedName' in body) return { ok: false, error: 'bad_request' };
 
   if ('mergeInto' in body) {
     const into = await threadRow(db, body.mergeInto);
-    if (into === null || into.patientId !== thread.patientId) return { ok: false, error: 'not_found' };
+    if (into === null || into.patientId !== patientId) return { ok: false, error: 'not_found' };
     // 統合先は、統合していない、別の筋（輪を作らない）
-    const all = new Map((await threadsOf(db, thread.patientId)).map((t) => [t.id, t]));
+    const all = new Map((await threadsOf(db, patientId)).map((t) => [t.id, t]));
     if (into.id === thread.id || liveThreadId(all, into.id) !== into.id) return { ok: false, error: 'bad_request' };
+    // 記載は動かさず、統合先を持つだけ（統合を解けるように）。見方は統合先にまとめる
+    await db.batch([db.prepare('UPDATE problem_threads SET merged_into = ? WHERE id = ?').bind(into.id, thread.id), history(db, runtime, patientId, 'merge', thread.id, null, into.id)]);
+    return { ok: true };
+  }
+
+  if ('unmerge' in body) {
+    const child = await threadRow(db, body.unmerge);
+    if (child === null || child.patientId !== patientId) return { ok: false, error: 'not_found' };
+    if (child.mergedInto !== thread.id) return { ok: false, error: 'bad_request' };
+    await db.batch([db.prepare('UPDATE problem_threads SET merged_into = NULL WHERE id = ?').bind(child.id), userEdit(db, runtime, patientId, 'thread', child.id, 'unmerge', thread.id, null)]);
+    return { ok: true };
+  }
+
+  if ('displayName' in body) {
+    // 表示の名前：その筋（と、統合した筋）に書かれた名前のどれか。打った名前は setTypedName（選別を通す）
+    if (body.displayName !== null) {
+      const written = await db
+        .prepare('SELECT 1 AS hit FROM problems WHERE name = ? AND thread_id IN (SELECT id FROM problem_threads WHERE id = ? OR merged_into = ?) LIMIT 1')
+        .bind(body.displayName, thread.id, thread.id)
+        .first();
+      if (written === null) return { ok: false, error: 'bad_request' };
+    }
     await db.batch([
-      db.prepare("UPDATE problems SET thread_id = ?, thread_origin = 'self' WHERE thread_id = ? AND patient_id = ?").bind(into.id, thread.id, thread.patientId),
-      db.prepare('UPDATE problem_threads SET merged_into = ? WHERE id = ?').bind(into.id, thread.id),
-      history(db, runtime, thread.patientId, 'merge', thread.id, null, into.id),
+      db.prepare('UPDATE problem_threads SET display_name = ? WHERE id = ?').bind(body.displayName, thread.id),
+      history(db, runtime, patientId, 'name', thread.id, thread.displayName, body.displayName),
     ]);
     return { ok: true };
   }
 
-  // 表示の名前：その筋に書かれた名前のどれか（打った名前は使わない：打った文は選別を通す決まりのため。docs/01 の 2）
-  if (body.displayName !== null) {
-    const written = await db.prepare('SELECT 1 AS hit FROM problems WHERE thread_id = ? AND name = ? LIMIT 1').bind(thread.id, body.displayName).first();
-    if (written === null) return { ok: false, error: 'bad_request' };
+  if ('status' in body) {
+    await db.batch([
+      db.prepare('UPDATE problem_threads SET status_override = ? WHERE id = ?').bind(body.status, thread.id),
+      userEdit(db, runtime, patientId, 'thread', thread.id, 'status', thread.statusOverride, body.status),
+    ]);
+    return { ok: true };
   }
+
+  if ('activity' in body) {
+    await db.batch([
+      db.prepare('UPDATE problem_threads SET activity_override = ? WHERE id = ?').bind(body.activity, thread.id),
+      userEdit(db, runtime, patientId, 'thread', thread.id, 'activity', thread.activityOverride, body.activity),
+    ]);
+    return { ok: true };
+  }
+
+  if ('excluded' in body) {
+    await db.batch([
+      db.prepare('UPDATE problem_threads SET excluded = ? WHERE id = ?').bind(body.excluded ? 1 : 0, thread.id),
+      userEdit(db, runtime, patientId, 'thread', thread.id, 'excluded', thread.excluded ? '1' : '0', body.excluded ? '1' : '0'),
+    ]);
+    return { ok: true };
+  }
+
+  // 並び：いまの並び（本人の番号・最初の記載の順）で1つ上・下へ。外した筋は並びに入らない
+  const [threads, problems] = await Promise.all([threadsOf(db, patientId), problemsOf(db, patientId)]);
+  const order = reorder(threadViews(threads, problems.map(mentionOf)).threads, thread.id, body.move);
+  if (order === null) return { ok: false, error: 'bad_request' };
+  const before = order.findIndex((o) => o.id === thread.id);
   await db.batch([
-    db.prepare('UPDATE problem_threads SET display_name = ? WHERE id = ?').bind(body.displayName, thread.id),
-    history(db, runtime, thread.patientId, 'name', thread.id, thread.displayName, body.displayName),
+    ...order.map((o) => db.prepare('UPDATE problem_threads SET ord = ? WHERE id = ?').bind(o.ord, o.id)),
+    userEdit(db, runtime, patientId, 'thread', thread.id, 'ord', String(body.move === 'up' ? before + 1 : before - 1), String(before)),
+  ]);
+  return { ok: true };
+}
+
+/** 打って直した名前（C-1）：選別を通した後の字だけを受ける（routes.ts が intake を通す）。null は、打った名前をやめる */
+export async function setTypedName(db: Db, threadId: string, selected: string | null, runtime: Runtime): Promise<EditOutcome> {
+  const thread = await threadRow(db, threadId);
+  if (thread === null) return { ok: false, error: 'not_found' };
+  if (thread.mergedInto !== null) return { ok: false, error: 'bad_request' };
+  await db.batch([
+    db.prepare('UPDATE problem_threads SET typed_name = ? WHERE id = ?').bind(selected, thread.id),
+    userEdit(db, runtime, thread.patientId, 'thread', thread.id, 'typed_name', thread.typedName, selected),
   ]);
   return { ok: true };
 }
