@@ -40,7 +40,7 @@ import type { Organizer } from './organizer.ts';
 import { type CallGate, discuss, gatherReferences, materialFor, propose, talkHasShapes } from './proposal.ts';
 import type { BookSearcher } from './references.ts';
 import { type EditOutcome, type LinkOutcome, linkPatient, moveMention, patchThread, setTypedName } from './problems.ts';
-import { SELECT_PROMPT_VERSION } from './prompt.ts';
+import { ORGANIZE_PROMPTS, SELECT_PROMPT_VERSION } from './prompt.ts';
 import {
   createEncounter,
   createPatient,
@@ -60,7 +60,7 @@ import {
   type Source,
 } from './records.ts';
 import type { Runtime } from './runtime.ts';
-import { runSelfCheck, selfCheckCases, SelfCheckRequest } from './selfcheck.ts';
+import { OrganizeCheckRequest, organizeCheckCases, runOrganizeCheck, runSelfCheck, selfCheckCases, SelfCheckRequest } from './selfcheck.ts';
 import type { Selector } from './selector.ts';
 import { callsOn, countCall } from './usage.ts';
 
@@ -462,6 +462,28 @@ export async function recordApi(request: Request, path: string, deps: RecordDeps
       if (deps.dailyAiLimit > 0 && (await callsOn(db, today)) >= deps.dailyAiLimit) return reply(429, { error: 'ai_limit' });
       await countCall(db, today);
       const result = await runSelfCheck(body.id, body.seed, deps.selector);
+      return result === null ? missing() : reply(200, { result });
+    }
+    return null;
+  }
+
+  // 整理の評価（selfcheck.ts）：架空の文だけを、本番と同じ鍵・モデルで、いまの版か前の版の指示で整理し、決まりで数える
+  if (path === '/api/selfcheck/organize') {
+    if (method === 'GET') {
+      return reply(200, {
+        cases: organizeCheckCases(),
+        versions: { current: ORGANIZE_PROMPTS.current.version, previous: ORGANIZE_PROMPTS.previous.version },
+        model: deps.model,
+        ready: deps.organizer !== null,
+      });
+    }
+    if (method === 'POST') {
+      const body = await readBody(request, OrganizeCheckRequest);
+      if (body === null) return bad();
+      if (deps.organizer === null) return reply(503, { error: 'no_ai' });
+      if (deps.dailyAiLimit > 0 && (await callsOn(db, today)) >= deps.dailyAiLimit) return reply(429, { error: 'ai_limit' });
+      await countCall(db, today);
+      const result = await runOrganizeCheck(body.id, body.prompt, deps.organizer);
       return result === null ? missing() : reply(200, { result });
     }
     return null;

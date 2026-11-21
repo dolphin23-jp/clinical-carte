@@ -5,7 +5,7 @@ import { zodOutputFormat } from '@anthropic-ai/sdk/helpers/zod';
 import { DiscussAnswer, DraftAnswer, LinkAnswer, OrganizeAnswer, ProposalAnswer, SelectionAnswer } from '@clinical-carte/core';
 
 import type { DiscussResult, DrafterResult, LinkerResult, Organizer, OrganizerResult, ProposerResult, ResearchResult } from './organizer.ts';
-import { AP_SYSTEM, DISCUSS_SYSTEM, DRAFT_SYSTEM, LINK_SYSTEM, ORGANIZE_SYSTEM, RESEARCH_SYSTEM, SELECT_SYSTEM, WEB_DOMAINS } from './prompt.ts';
+import { AP_SYSTEM, DISCUSS_SYSTEM, DRAFT_SYSTEM, LINK_SYSTEM, ORGANIZE_PROMPTS, type OrganizePromptChoice, RESEARCH_SYSTEM, SELECT_SYSTEM, WEB_DOMAINS } from './prompt.ts';
 import type { WebHit } from './references.ts';
 import type { Selector, SelectorResult } from './selector.ts';
 
@@ -52,7 +52,7 @@ export function createAnthropicSelector(options: AnthropicOptions): Selector {
 export function createAnthropicOrganizer(options: AnthropicOptions): Organizer {
   const client = new Anthropic({ apiKey: options.apiKey, maxRetries: 2, timeout: 180_000 });
   return {
-    async organize(text: string): Promise<OrganizerResult> {
+    async organize(text: string, prompt: OrganizePromptChoice = 'current'): Promise<OrganizerResult> {
       try {
         const response = await client.beta.messages.parse({
           model: options.model,
@@ -60,7 +60,7 @@ export function createAnthropicOrganizer(options: AnthropicOptions): Organizer {
           betas: ['server-side-fallback-2026-07-01'],
           fallbacks: 'default',
           cache_control: { type: 'ephemeral' },
-          system: ORGANIZE_SYSTEM,
+          system: ORGANIZE_PROMPTS[prompt].system,
           output_config: { effort: 'medium', format: zodOutputFormat(OrganizeAnswer) },
           messages: [{ role: 'user', content: text }],
         });

@@ -5,7 +5,7 @@ import { DRAFT_SENTENCE_MAX, PLAN_KINDS, PROPOSAL_SENTENCE_MAX, EVENT_KINDS, FAC
 import { describe, expect, test } from 'vitest';
 
 import { dailyLimitOf } from '../src/index.ts';
-import { AP_PROMPT_VERSION, AP_SYSTEM, DISCUSS_PROMPT_VERSION, DISCUSS_SYSTEM, RESEARCH_PROMPT_VERSION, RESEARCH_SYSTEM, WEB_DOMAINS, DRAFT_PROMPT_VERSION, DRAFT_SYSTEM, LINK_PROMPT_VERSION, LINK_SYSTEM, ORGANIZE_PROMPT_VERSION, ORGANIZE_SYSTEM, SELECT_PROMPT_VERSION, SELECT_SYSTEM } from '../src/prompt.ts';
+import { AP_PROMPT_VERSION, AP_SYSTEM, DISCUSS_PROMPT_VERSION, DISCUSS_SYSTEM, RESEARCH_PROMPT_VERSION, RESEARCH_SYSTEM, WEB_DOMAINS, DRAFT_PROMPT_VERSION, DRAFT_SYSTEM, LINK_PROMPT_VERSION, LINK_SYSTEM, ORGANIZE_PROMPT_VERSION, ORGANIZE_PROMPT_VERSION_PREVIOUS, ORGANIZE_PROMPTS, ORGANIZE_SYSTEM, ORGANIZE_SYSTEM_PREVIOUS, SELECT_PROMPT_VERSION, SELECT_SYSTEM } from '../src/prompt.ts';
 import { DEFAULT_DAILY_AI_LIMIT } from '../src/usage.ts';
 
 describe('選別の指示', () => {
@@ -92,10 +92,51 @@ describe('整理の指示（段2）', () => {
     const digest = createHash('sha256').update(ORGANIZE_SYSTEM).digest('hex').slice(0, 16);
     expect({ version: ORGANIZE_PROMPT_VERSION, digest }).toMatchInlineSnapshot(`
       {
-        "digest": "7a1a6f41d8c0bb0a",
-        "version": "organize-2",
+        "digest": "c148ccb46b8678b9",
+        "version": "organize-3",
       }
     `);
+  });
+
+  test('前の版（評価で比べるためだけ）は、organize-2 の中身のまま変えない。本番の選び先は、いまの版', () => {
+    const digest = createHash('sha256').update(ORGANIZE_SYSTEM_PREVIOUS).digest('hex').slice(0, 16);
+    expect({ version: ORGANIZE_PROMPT_VERSION_PREVIOUS, digest }).toEqual({ version: 'organize-2', digest: '7a1a6f41d8c0bb0a' });
+    expect(ORGANIZE_PROMPTS.current).toEqual({ version: ORGANIZE_PROMPT_VERSION, system: ORGANIZE_SYSTEM });
+    expect(ORGANIZE_PROMPTS.previous.system).not.toBe(ORGANIZE_SYSTEM);
+  });
+});
+
+describe('整理の指示（organize-3 の足し分：拾いすぎを止める）', () => {
+  test('問題：番号つきの一覧があれば、それだけ。所見・「なし」の所見・鑑別・背景の既往を問題にしない', () => {
+    expect(ORGANIZE_SYSTEM).toContain('その一覧・見出しに挙げられた問題だけを返します');
+    expect(ORGANIZE_SYSTEM).toContain('括弧の中の補足');
+    expect(ORGANIZE_SYSTEM).toContain('所見・症状・検査の結果');
+    expect(ORGANIZE_SYSTEM).toContain('「〜なし」と書かれた所見');
+    expect(ORGANIZE_SYSTEM).toContain('背景として触れただけの既往');
+  });
+
+  test('測定値：評価・考察で挙げ直した値と、医師コールの条件・基準を入れない', () => {
+    expect(ORGANIZE_SYSTEM).toContain('根拠として挙げ直した値');
+    expect(ORGANIZE_SYSTEM).toContain('医師コールの条件・ガイドラインの基準');
+  });
+
+  test('投薬：条件つき・使わない薬・方針との二重・入出量の内訳・総称を入れない', () => {
+    expect(ORGANIZE_SYSTEM).toContain('条件つきの指示');
+    expect(ORGANIZE_SYSTEM).toContain('「〜は追加しない」');
+    expect(ORGANIZE_SYSTEM).toContain('実施の記録の行だけを返します');
+    expect(ORGANIZE_SYSTEM).toContain('入出量・水分バランスの内訳');
+    expect(ORGANIZE_SYSTEM).toContain('総称だけの語');
+  });
+
+  test('できごと：結果待ち・方針の項目・評価の中の触れ直し・見出しだけの題を入れない', () => {
+    expect(ORGANIZE_SYSTEM).toContain('結果待ち・保留・提出予定');
+    expect(ORGANIZE_SYSTEM).toContain('行ったと書かれていなければ入れません');
+    expect(ORGANIZE_SYSTEM).toContain('根拠として触れ直したこと');
+    expect(ORGANIZE_SYSTEM).toContain('見出しの文字');
+  });
+
+  test('同じ事実は、起きた・測った・行った場所を1つだけ', () => {
+    expect(ORGANIZE_SYSTEM).toContain('実際に起きた・測った・行ったと書かれた場所を1つだけ返します');
   });
 });
 

@@ -461,6 +461,40 @@ export async function runSelfCheck(id: string, seed: number): Promise<Result<Sel
   return field<SelfCheckResult>(await call('POST', 'selfcheck', { id, seed }), 'result');
 }
 
+// --- 整理の評価（架空の文だけを、いまの版か前の版の指示で整理し、記録に入る行を決まりで数える）
+
+export type OrganizePrompt = 'current' | 'previous';
+
+export interface OrganizeCheckInfo {
+  readonly cases: readonly { readonly id: string; readonly note: string; readonly rules: readonly { readonly id: string; readonly label: string }[] }[];
+  readonly versions: Readonly<Record<OrganizePrompt, string>>;
+  readonly model: string;
+  readonly ready: boolean;
+}
+
+export interface OrganizeCheckResult {
+  readonly id: string;
+  readonly failed: string | null;
+  /** 決まりを超えた（拾いすぎ）決まりの id */
+  readonly extra: readonly string[];
+  /** 足りない（拾い漏れ）決まりの id */
+  readonly missing: readonly string[];
+  readonly counts: { readonly problems: number; readonly medications: number; readonly events: number; readonly measurements: number } | null;
+  readonly unverified: number;
+}
+
+export async function getOrganizeCheck(): Promise<Result<OrganizeCheckInfo>> {
+  const result = await call('GET', 'selfcheck/organize');
+  if (!result.ok) return result;
+  const { cases, versions, model, ready } = result.value;
+  if (!Array.isArray(cases) || typeof versions !== 'object' || versions === null || typeof model !== 'string' || typeof ready !== 'boolean') return { ok: false, error: 'network' };
+  return { ok: true, value: { cases: cases as OrganizeCheckInfo['cases'], versions: versions as OrganizeCheckInfo['versions'], model, ready } };
+}
+
+export async function runOrganizeCheck(id: string, prompt: OrganizePrompt): Promise<Result<OrganizeCheckResult>> {
+  return field<OrganizeCheckResult>(await call('POST', 'selfcheck/organize', { id, prompt }), 'result');
+}
+
 // --- 問題の筋（段3a）
 
 /** つないでいない問題の記載を、もう一度つなぐ（AI を使う） */

@@ -5,6 +5,9 @@ import { z } from 'zod';
 
 import { CASES } from '../eval/cases.ts';
 import { build, checkCases, type EvalCase, score } from '../eval/lib.ts';
+import { ORGANIZE_CASES } from '../eval/organize-cases.ts';
+import { checkOrganizeCases, type OrganizeCase, type OrganizeScore, scoreOrganize } from '../eval/organize-lib.ts';
+import type { Organizer } from './organizer.ts';
 import type { Selector } from './selector.ts';
 
 const cases: readonly EvalCase[] = checkCases(CASES);
@@ -46,4 +49,33 @@ export async function runSelfCheck(id: string, seed: number, selector: Selector)
   if (found === undefined) return null;
   const s = await score(build(found, seed), selector);
   return { id: s.id, failed: s.failed, leaked: s.leaked.length, lost: s.lost.length, exact: s.exact, altered: s.altered };
+}
+
+// ---------------------------------------------------------------------------
+// 整理の評価（CD-018）：架空の文を、選んだ版の指示（いまの版・前の版）で整理し、記録に入る行を決まりで数える。
+// 前後を比べるために、前の版の指示を残してある（prompt.ts の ORGANIZE_PROMPTS。本番の整理は、いつもいまの版）。
+// 保存するのは、AI を呼んだ回数だけ。文・AI の答え・結果は、保存もログもしない。
+
+const organizeCases: readonly OrganizeCase[] = checkOrganizeCases(ORGANIZE_CASES);
+
+export const OrganizeCheckRequest = z.strictObject({
+  id: z.string().min(1).max(20),
+  prompt: z.enum(['current', 'previous']),
+});
+
+export interface OrganizeCheckCase {
+  readonly id: string;
+  readonly note: string;
+  /** 決まりの id と説明（架空の文の決まり。AI の答えではない） */
+  readonly rules: readonly { readonly id: string; readonly label: string }[];
+}
+
+export function organizeCheckCases(): OrganizeCheckCase[] {
+  return organizeCases.map((c) => ({ id: c.id, note: c.note, rules: c.rules.map((r) => ({ id: r.id, label: r.label })) }));
+}
+
+export async function runOrganizeCheck(id: string, prompt: 'current' | 'previous', organizer: Organizer): Promise<OrganizeScore | null> {
+  const found = organizeCases.find((c) => c.id === id);
+  if (found === undefined) return null;
+  return scoreOrganize(found, organizer, prompt);
 }

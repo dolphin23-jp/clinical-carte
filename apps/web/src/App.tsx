@@ -10,6 +10,7 @@ import { type ApiError, type DeviceView, getSession } from './net/api.ts';
 import { PatientPage } from './PatientPage.tsx';
 import { Patients } from './Patients.tsx';
 import { Register } from './Register.tsx';
+import { OrganizeCheck } from './OrganizeCheck.tsx';
 import { SelfCheck } from './SelfCheck.tsx';
 
 type State =
@@ -25,6 +26,7 @@ export function App() {
   const [showDevices, setShowDevices] = useState(false);
   const [showBooks, setShowBooks] = useState(false);
   const [showSelfCheck, setShowSelfCheck] = useState(false);
+  const [showOrganizeCheck, setShowOrganizeCheck] = useState(false);
   const toList = useCallback(() => {
     setPatientId(null);
   }, []);
@@ -89,6 +91,20 @@ export function App() {
               data-testid="show-selfcheck"
             >
               選別の評価（架空の文で、AI の落とし漏れを数える）
+            </button>
+          )}
+          {showOrganizeCheck ? (
+            <OrganizeCheck onLeft={toRegister} />
+          ) : (
+            <button
+              className="button link"
+              type="button"
+              onClick={() => {
+                setShowOrganizeCheck(true);
+              }}
+              data-testid="show-organizecheck"
+            >
+              整理の評価（架空の文で、AI の整理の拾いすぎ・拾い漏れを数える）
             </button>
           )}
           {showBooks ? (

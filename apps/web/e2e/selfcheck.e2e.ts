@@ -5,12 +5,16 @@ import { afterAll, afterEach, beforeAll, describe, expect, test } from 'vitest';
 
 import { CASES } from '../../worker/eval/cases.ts';
 import { checkCases, oracleSelector } from '../../worker/eval/lib.ts';
+import { ORGANIZE_CASES } from '../../worker/eval/organize-cases.ts';
+import { checkOrganizeCases } from '../../worker/eval/organize-lib.ts';
+import { ORGANIZE_PROMPT_VERSION, ORGANIZE_PROMPT_VERSION_PREVIOUS } from '../../worker/src/prompt.ts';
 import type { Selector } from '../../worker/src/selector.ts';
 import { type DevServer, startDevServer } from '../../worker/test/devserver.ts';
-import { fakeSelector, TEST_KEY } from '../../worker/test/support.ts';
+import { EMPTY_ORGANIZE, type FakeOrganizer, fakeOrganizer, fakeSelector, TEST_KEY } from '../../worker/test/support.ts';
 import { type BuiltApp, buildApp, launch } from './support.ts';
 
 const cases = checkCases(CASES);
+const organizeCases = checkOrganizeCases(ORGANIZE_CASES);
 let app: BuiltApp;
 let browser: Browser;
 let server: DevServer | null = null;
@@ -32,8 +36,8 @@ afterEach(async () => {
   server = null;
 });
 
-async function open(selector: Selector | null): Promise<{ page: Page; server: DevServer }> {
-  const started = await startDevServer({ dist: app.dir, key: TEST_KEY, selector });
+async function open(selector: Selector | null, organizer?: FakeOrganizer): Promise<{ page: Page; server: DevServer }> {
+  const started = await startDevServer({ dist: app.dir, key: TEST_KEY, selector, ...(organizer === undefined ? {} : { organizer }) });
   server = started;
   const context = await browser.newContext({ ...presets['iPhone 15'] });
   contexts.push(context);
@@ -83,5 +87,33 @@ describe('選別の評価', () => {
     const { page } = await open(null);
     await page.getByTestId('selfcheck').getByRole('alert').waitFor();
     expect(await page.getByTestId('run-selfcheck').isDisabled()).toBe(true);
+  });
+});
+
+describe('整理の評価', () => {
+  test('いまの版と前の版を、同じ架空の文で動かして並べる。選んだ版が整理の係に届く。記録には何も保存しない', async () => {
+    // 代役：前の版は何も拾わない（欠けが出る）、いまの版も同じ答え（比べる行が出ることを確かめる）
+    const organizer = fakeOrganizer(() => ({ ok: true, answer: EMPTY_ORGANIZE }));
+    const { page, server: s } = await open(oracleSelector(cases), organizer);
+    await page.getByTestId('show-organizecheck').click();
+    await page.getByTestId('organizecheck-config').waitFor();
+    const config = (await page.getByTestId('organizecheck-config').textContent()) ?? '';
+    expect(config).toContain(ORGANIZE_PROMPT_VERSION);
+    expect(config).toContain(ORGANIZE_PROMPT_VERSION_PREVIOUS);
+    await page.getByTestId('run-organizecheck-previous').click();
+    await page.getByTestId('organizecheck-result-previous').waitFor();
+    await expect.poll(() => page.getByTestId('organizecheck-result-previous').textContent()).toContain(`調べた文：${String(organizeCases.length)} / ${String(organizeCases.length)}`);
+    await page.getByTestId('run-organizecheck-current').click();
+    await page.getByTestId('organizecheck-compare').waitFor();
+    const current = (await page.getByTestId('organizecheck-result-current').textContent()) ?? '';
+    expect(current).toContain('余分 0');
+    expect(current).toContain('欠け「問題：一覧の #1 を拾う」');
+    expect(organizer.prompts).toEqual([...organizeCases.map(() => 'previous'), ...organizeCases.map(() => 'current')]);
+    expect(s.db.raw.prepare('SELECT calls FROM usage_daily').get()).toEqual({ calls: organizeCases.length * 2 });
+    for (const table of ['patients', 'sources', 'observations', 'problems', 'medications', 'events']) expect(s.db.raw.prepare(`SELECT COUNT(*) AS n FROM ${table}`).get(), table).toEqual({ n: 0 });
+    if (process.env.CARTE_SCREENSHOTS !== undefined) await page.getByTestId('organizecheck').screenshot({ path: `${process.env.CARTE_SCREENSHOTS}/organizecheck-iphone.png` });
+    // 架空の文そのものは、画面に出さない
+    expect(await page.content()).not.toContain('尿道カテーテル留置');
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
   });
 });
