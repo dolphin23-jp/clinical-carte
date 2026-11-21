@@ -23,8 +23,8 @@ const ANSWER: OrganizeAnswer = {
   events: [{ kind: 'test', title: '胸部X線を撮影', when: '11/19' }],
   problems: [{ name: '#1 市中肺炎', status: 'problem', activity: null }],
   measurements: [
-    { quote: 'BT 37.2', when: null },
-    { quote: 'BT 38.4', when: '昨日' },
+    { quote: 'BT 37.2', when: null, specimen: null },
+    { quote: 'BT 38.4', when: '昨日', specimen: null },
   ],
 };
 

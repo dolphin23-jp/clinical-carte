@@ -229,5 +229,12 @@ describe('1日の濃い記録でも読めるように', () => {
       ['Cr', '7.68', 2],
       ['pH', '7.31', 1],
     ]);
+    expect(g.repeatedLabs.map((l) => l.name)).toEqual(['Cr']);
+    expect(g.singleLabs.map((l) => l.name)).toEqual(['pH']);
+  });
+
+  test('はじめての記載に既往（非活動）と書かれた病名は、24時間の一覧に「はじめて書かれた」を出さず、状態の1行だけ', () => {
+    const s = patientState(base({ mentions: [mention({ threadId: 'T1', name: '高血圧', activity: 'inactive', at: '2026-11-20T09:00' })] }));
+    expect(s.recent?.items.filter((i) => i.type === 'problem_new' || i.type === 'problem_activity').map((i) => i.type)).toEqual(['problem_activity']);
   });
 });

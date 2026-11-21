@@ -1,6 +1,6 @@
 // 検査の推移：項目ごとの小さな線のグラフ（項目と、書かれた単位ごと）。正常範囲・色分けは描かない。
 // 縦の目盛りは、その項目の目盛りの上と下だけを左に書く。タップした点の値を、カードの下に出す。値は、下の表でも読める。
-import { type ChartPoint, type LabTrend, niceTicks } from '@clinical-carte/core';
+import { type ChartPoint, type LabTrend, latestPoint, niceTicks, untimedSameDay } from '@clinical-carte/core';
 import { type PointerEvent, useRef, useState } from 'react';
 
 import { shortWhen, tickText } from './format.ts';
@@ -12,7 +12,7 @@ const PAD_X = 8;
 const GUT = 30;
 const PAD_Y = 8;
 
-function MiniChart({ trend, domain }: { trend: LabTrend; domain: [number, number] }) {
+function MiniChart({ trend, domain, unitless }: { trend: LabTrend; domain: [number, number]; unitless: boolean }) {
   const box = useRef<HTMLDivElement>(null);
   const width = useWidth(box, 160);
   const [picked, setPicked] = useState<ChartPoint | null>(null);
@@ -23,7 +23,7 @@ function MiniChart({ trend, domain }: { trend: LabTrend; domain: [number, number
   const x = (t: number): number => GUT + (span <= 0 ? plotW / 2 : ((t - domain[0]) / span) * plotW);
   const y = (v: number): number => PAD_Y + (H - 2 * PAD_Y) - ((v - scale.min) / (scale.max - scale.min)) * (H - 2 * PAD_Y);
   const path = trend.points.map((p, i) => `${i === 0 ? 'M' : 'L'}${String(x(p.t))},${String(y(p.value))}`).join(' ');
-  const latest = trend.points[trend.points.length - 1];
+  const latest = latestPoint(trend.points) ?? undefined;
   const shown = picked ?? latest ?? null;
 
   const pick = (event: PointerEvent<SVGRectElement>) => {
@@ -40,11 +40,15 @@ function MiniChart({ trend, domain }: { trend: LabTrend; domain: [number, number
         <span className="trend-name">
           {trend.name}
           {trend.unit !== null && <span className="trend-unit">（{trend.unit}）</span>}
+          {unitless && <span className="trend-unit">（単位の記載なし）</span>}
         </span>
         {shown !== null && (
           <span className="trend-value" data-testid="trend-value">
             {shown.text}
-            <span className="trend-when">{shortWhen(shown.at, shown)}</span>
+            <span className="trend-when">
+              {shortWhen(shown.at, shown)}
+              {shown === latest && untimedSameDay(trend.points, latest) && '・同じ日に時刻のない値あり'}
+            </span>
           </span>
         )}
       </div>
@@ -80,7 +84,7 @@ export function TrendGrid({ trends }: { trends: readonly LabTrend[] }) {
     <div className="trends" data-testid="trends">
       <div className="trend-grid">
         {plotted.map((t) => (
-          <MiniChart key={t.key} trend={t} domain={domain} />
+          <MiniChart key={t.key} trend={t} domain={domain} unitless={t.unit === null && trends.some((o) => o !== t && o.name === t.name && o.unit !== null)} />
         ))}
       </div>
       {onlyTable.length > 0 && <p className="note">表だけの項目（不等号・定性など）：{onlyTable.map((t) => t.name).join('・')}</p>}

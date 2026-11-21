@@ -21,8 +21,8 @@ const ORACLE: Readonly<Record<string, OrganizeAnswer>> = {
       { name: '糖尿病', status: 'diagnosis', activity: 'inactive' },
     ],
     measurements: [
-      { quote: 'BT 39.4℃、HR 124、BP 78/42（MAP 54）、RR 26、SpO2 94%（室内気）', when: '09:20' },
-      { quote: 'WBC 18,200/μL、Plt 9.6万/μL、Cr 2.84 mg/dL、K 5.6 mEq/L、Lac 4.2 mmol/L', when: null },
+      { quote: 'BT 39.4℃、HR 124、BP 78/42（MAP 54）、RR 26、SpO2 94%（室内気）', when: '09:20', specimen: null },
+      { quote: 'WBC 18,200/μL、Plt 9.6万/μL、Cr 2.84 mg/dL、K 5.6 mEq/L、Lac 4.2 mmol/L', when: null, specimen: null },
     ],
     medications: [{ name: 'セフトリアキソン', dose: '2 g', action: 'start', when: '09:40' }],
     events: [{ kind: 'procedure', title: '尿道カテーテル留置', when: '09:45' }],
@@ -33,8 +33,8 @@ const ORACLE: Readonly<Record<string, OrganizeAnswer>> = {
       { name: '#2 急性腎障害', status: 'problem', activity: null },
     ],
     measurements: [
-      { quote: 'pH 7.28、Lac 3.4', when: '12:00' },
-      { quote: 'BT 38.2℃、HR 112、BP 96/54、SpO2 95%', when: null },
+      { quote: 'pH 7.28、Lac 3.4', when: '12:00', specimen: null },
+      { quote: 'BT 38.2℃、HR 112、BP 96/54、SpO2 95%', when: null, specimen: null },
     ],
     medications: [
       { name: 'メロペネム', dose: '1 g', action: 'start', when: '10:00' },
@@ -45,16 +45,25 @@ const ORACLE: Readonly<Record<string, OrganizeAnswer>> = {
   }),
   'prog-01': a({
     problems: [{ name: '市中肺炎', status: 'diagnosis', activity: null }],
-    measurements: [{ quote: 'BT 37.1 SpO2 97%', when: null }, { quote: 'WBC 9,800', when: null }],
+    measurements: [{ quote: 'BT 37.1 SpO2 97%', when: null, specimen: null }, { quote: 'WBC 9,800', when: null, specimen: null }],
     medications: [{ name: 'セフトリアキソン', dose: null, action: 'continue', when: null }],
     events: [{ kind: 'test', title: '胸部X線を撮影', when: '昨日' }],
+  }),
+  'ua-01': a({
+    measurements: [
+      { quote: 'pH 7.31、PaCO2 28、Lac 3.6', when: '09:30', specimen: null },
+      { quote: 'WBC 18,200/μL、Hb 12.6 g/dL', when: null, specimen: null },
+      { quote: '比重 1.012、pH 5.5、蛋白 2+、潜血 2+、白血球 1+', when: null, specimen: 'urine' },
+      { quote: 'RBC 5、WBC 10', when: null, specimen: 'urine' },
+      { quote: '尿Na 58、尿K 32', when: null, specimen: 'urine' },
+    ],
   }),
   'adm-01': a({
     problems: [
       { name: '高血圧', status: 'diagnosis', activity: 'inactive' },
       { name: 'うっ血性心不全の急性増悪', status: 'suspected', activity: null },
     ],
-    measurements: [{ quote: 'BNP 820 pg/mL、Cr 1.1', when: null }],
+    measurements: [{ quote: 'BNP 820 pg/mL、Cr 1.1', when: null, specimen: null }],
     medications: [{ name: 'フロセミド', dose: '20 mg', action: 'start', when: null }],
   }),
 };
@@ -69,7 +78,7 @@ const OVERREACH: OrganizeAnswer = a({
     { name: '気胸', status: 'ruled_out', activity: null },
     { name: '糖尿病', status: 'diagnosis', activity: null },
   ],
-  measurements: [...(ORACLE['er-01']?.measurements ?? []), { quote: '乳酸4.2、MAP 54', when: null }],
+  measurements: [...(ORACLE['er-01']?.measurements ?? []), { quote: '乳酸4.2、MAP 54', when: null, specimen: null }],
   medications: [
     ...(ORACLE['er-01']?.medications ?? []),
     { name: 'セフトリアキソン', dose: '2 g q24h', action: 'start', when: null },
@@ -123,6 +132,15 @@ describe('採点', () => {
     const failed = await scoreOrganize(c, fakeOrganizer(() => ({ ok: false, reason: 'unavailable' })), 'current');
     expect(failed).toEqual({ id: 'prog-01', failed: 'unavailable', extra: [], missing: [], counts: null, unverified: 0 });
   });
+});
+
+test('尿を指さない答え（前の版の形）は、尿の pH・白血球を血液の項目にして、決まりを超える（CD-023）', async () => {
+  const c = cases.find((x) => x.id === 'ua-01');
+  if (c === undefined) throw new Error('ua-01 がない');
+  const plain = (ORACLE['ua-01']?.measurements ?? []).map((m) => ({ ...m, specimen: null }));
+  const s = await scoreOrganize(c, fakeOrganizer(() => ({ ok: true, answer: a({ measurements: plain }) })), 'previous');
+  expect(s.extra).toEqual(['m1', 'm3']);
+  expect(s.missing).toEqual(['m2', 'm4', 'm5', 'm6']);
 });
 
 describe('サーバーの入口（/api/selfcheck/organize）', () => {

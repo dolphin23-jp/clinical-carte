@@ -249,7 +249,7 @@ export function patientState(input: StateInput): PatientState {
   const current = views.threads
     .filter((t) => t.group === 'current')
     .map((thread) => {
-      const notes = problemNotes(thread.mentions, input.segments);
+      const notes = problemNotes(thread.mentions, input.segments, input.mentions);
       const last = notes.at(-1);
       const related = relatedFacts(thread.mentions, input.segments, { observations: input.observations, medications: input.medications, events: input.events });
       const values = related.valueNames
@@ -298,7 +298,8 @@ export function patientState(input: StateInput): PatientState {
     const encounterSourceIds = new Set(encounterSources.map((s) => s.id));
     for (const t of views.threads) {
       const first = t.mentions[0];
-      if (first !== undefined && encounterSourceIds.has(first.sourceId) && inside(first.at)) items.push({ type: 'problem_new', at: first.at, name: first.name, threadId: t.id });
+      // はじめての記載に解決・非活動（既往）と書かれていれば、「はじめて書かれた」は出さず、下の状態の1行だけにする（同じ病名を2行にしない）
+      if (first !== undefined && first.activity === null && encounterSourceIds.has(first.sourceId) && inside(first.at)) items.push({ type: 'problem_new', at: first.at, name: first.name, threadId: t.id });
       for (const m of t.mentions) {
         if (m.activity !== null && encounterSourceIds.has(m.sourceId) && inside(m.at)) items.push({ type: 'problem_activity', at: m.at, name: m.name, activity: m.activity });
       }
@@ -351,6 +352,10 @@ export interface RecentGroups {
   readonly events: readonly RecentItem[];
   /** 検査値は、項目ごとに、いちばん新しい値と、この間の件数 */
   readonly labs: readonly { readonly name: string; readonly latest: Extract<RecentItem, { type: 'lab' }>; readonly count: number }[];
+  /** labs のうち、この間に2回以上書かれた項目（推移のあるもの。先に見せる） */
+  readonly repeatedLabs: RecentGroups['labs'];
+  /** labs のうち、この間に1回だけの項目（畳む） */
+  readonly singleLabs: RecentGroups['labs'];
 }
 
 export function recentGroups(items: readonly RecentItem[]): RecentGroups {
@@ -364,10 +369,13 @@ export function recentGroups(items: readonly RecentItem[]): RecentGroups {
       if (compareDateTime(item.at, found.latest.at) > 0) found.latest = item;
     }
   }
+  const sortedLabs = [...labs.values()].sort((a, b) => compareDateTime(b.latest.at, a.latest.at));
   return {
     problems: items.filter((i) => i.type === 'problem_new' || i.type === 'problem_activity'),
     medications: items.filter((i) => i.type === 'medication'),
     events: items.filter((i) => i.type === 'event'),
-    labs: [...labs.values()].sort((a, b) => compareDateTime(b.latest.at, a.latest.at)),
+    labs: sortedLabs,
+    repeatedLabs: sortedLabs.filter((l) => l.count > 1),
+    singleLabs: sortedLabs.filter((l) => l.count === 1),
   };
 }

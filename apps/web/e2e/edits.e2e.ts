@@ -21,7 +21,7 @@ const ANSWER: OrganizeAnswer = {
   problems: [{ name: '#1 市中肺炎', status: 'diagnosis', activity: null }],
   medications: [{ name: 'セフトリアキソン', dose: '2g', action: 'continue', when: null }],
   events: [{ kind: 'test', title: '胸部X線を撮影', when: null }],
-  measurements: [{ quote: 'CRP 6.8', when: null }],
+  measurements: [{ quote: 'CRP 6.8', when: null, specimen: null }],
 };
 const DRAFT: DraftAnswer = {
   sections: [

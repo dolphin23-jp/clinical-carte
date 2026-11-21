@@ -4,6 +4,8 @@ import {
   ENCOUNTER_KIND_LABELS,
   ENCOUNTER_KINDS,
   type EncounterKind,
+  foldedEventIds,
+  foldedMedicationIds,
   headline,
   hospitalDay,
   labTrends,
@@ -138,6 +140,11 @@ export function PatientPage({ patientId, onBack, onLeft }: { patientId: string; 
   const shownSources = kindFilter === 'all' || !kindsHere.includes(kindFilter) ? sources : sources.filter((s) => s.kind === kindFilter);
 
   const panels = vitalPanels(observations);
+  // 同じ日の二重（時刻のない方針の行と、時刻つきの実施の行）は、経過表・いまでは、時刻つきのほうだけを出す（消さない。投薬・できごとのタブで見られる）
+  const foldedMeds = foldedMedicationIds(medications);
+  const foldedEvents = foldedEventIds(events);
+  const shownMeds = medications.filter((m) => !foldedMeds.has(m.id));
+  const shownEvents = events.filter((e) => !foldedEvents.has(e.id));
   const toComposer = () => {
     composerRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
   };
@@ -276,8 +283,8 @@ export function PatientPage({ patientId, onBack, onLeft }: { patientId: string; 
               segments: record.segments,
               threads: record.problemThreads,
               mentions: record.problems,
-              medications,
-              events,
+              medications: shownMeds,
+              events: shownEvents,
               observations,
             })}
             sources={record.sources}
@@ -287,7 +294,7 @@ export function PatientPage({ patientId, onBack, onLeft }: { patientId: string; 
           />
         )}
         {tab === 'overview' && current !== null && (
-          <Timeline panels={panels} medications={medicationTimeline(medications)} events={events} encounterStart={current.start} encounterEnd={current.end} inpatient={current.kind === 'inpatient'} />
+          <Timeline panels={panels} medications={medicationTimeline(shownMeds)} events={shownEvents} encounterStart={current.start} encounterEnd={current.end} inpatient={current.kind === 'inpatient'} />
         )}
         {tab === 'values' && (
           <>

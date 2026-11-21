@@ -12,6 +12,8 @@ import {
   medicationSpans,
   niceTicks,
   timeDomain,
+  latestPoint,
+  untimedSameDay,
   type VitalPanel,
 } from '@clinical-carte/core';
 import { type PointerEvent, useRef, useState } from 'react';
@@ -171,7 +173,7 @@ export function Timeline({ panels, medications, events, encounterStart, encounte
         ))}
 
         {layout.map(({ p, top, scale, yOf }) => {
-          const latest = p.points[p.points.length - 1];
+          const latest = latestPoint(p.points);
           const cls = `series-${p.id}`;
           const path = p.points.map((pt, i) => `${i === 0 ? 'M' : 'L'}${String(x(pt.t))},${String(yOf(pt.value))}`).join(' ');
           return (
@@ -179,7 +181,7 @@ export function Timeline({ panels, medications, events, encounterStart, encounte
               <text x={0} y={top - 11} className="panel-title">
                 {p.name}
                 <tspan className="panel-unit">{` ${p.unit}`}</tspan>
-                {latest !== undefined && <tspan className="panel-latest">{`\u3000最新 ${latest.text}（${shortWhen(latest.at, latest)}）`}</tspan>}
+                {latest !== null && <tspan className="panel-latest">{`\u3000最新 ${latest.text}（${shortWhen(latest.at, latest)}${untimedSameDay(p.points, latest) ? '・同じ日に時刻のない値あり' : ''}）`}</tspan>}
               </text>
               {scale.ticks.map((v) => (
                 <g key={v}>

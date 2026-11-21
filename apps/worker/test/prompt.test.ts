@@ -1,7 +1,7 @@
 // AI への指示の、必須の部分を固定する（AGENTS.md の 3）。指示を変えるときは、版を上げ、ここを同じ変更で直す。
 import { createHash } from 'node:crypto';
 
-import { DRAFT_SENTENCE_MAX, PLAN_KINDS, PROPOSAL_SENTENCE_MAX, EVENT_KINDS, FACILITY_ROLES, PROBLEM_ACTIVITIES, IDENTIFIER_KINDS, MEDICATION_ACTIONS, ORGANIZE_QUOTE_MAX, PROBLEM_STATUSES, QUOTE_MAX, QUOTE_MIN, SEGMENT_LABELS, SOURCE_KINDS } from '@clinical-carte/core';
+import { MEASUREMENT_SPECIMENS, DRAFT_SENTENCE_MAX, PLAN_KINDS, PROPOSAL_SENTENCE_MAX, EVENT_KINDS, FACILITY_ROLES, PROBLEM_ACTIVITIES, IDENTIFIER_KINDS, MEDICATION_ACTIONS, ORGANIZE_QUOTE_MAX, PROBLEM_STATUSES, QUOTE_MAX, QUOTE_MIN, SEGMENT_LABELS, SOURCE_KINDS } from '@clinical-carte/core';
 import { describe, expect, test } from 'vitest';
 
 import { dailyLimitOf } from '../src/index.ts';
@@ -92,15 +92,15 @@ describe('整理の指示（段2）', () => {
     const digest = createHash('sha256').update(ORGANIZE_SYSTEM).digest('hex').slice(0, 16);
     expect({ version: ORGANIZE_PROMPT_VERSION, digest }).toMatchInlineSnapshot(`
       {
-        "digest": "c148ccb46b8678b9",
-        "version": "organize-3",
+        "digest": "b6721930fe1d26f5",
+        "version": "organize-4",
       }
     `);
   });
 
-  test('前の版（評価で比べるためだけ）は、organize-2 の中身のまま変えない。本番の選び先は、いまの版', () => {
+  test('前の版（評価で比べるためだけ）は、organize-3 の中身のまま変えない。本番の選び先は、いまの版', () => {
     const digest = createHash('sha256').update(ORGANIZE_SYSTEM_PREVIOUS).digest('hex').slice(0, 16);
-    expect({ version: ORGANIZE_PROMPT_VERSION_PREVIOUS, digest }).toEqual({ version: 'organize-2', digest: '7a1a6f41d8c0bb0a' });
+    expect({ version: ORGANIZE_PROMPT_VERSION_PREVIOUS, digest }).toEqual({ version: 'organize-3', digest: 'c148ccb46b8678b9' });
     expect(ORGANIZE_PROMPTS.current).toEqual({ version: ORGANIZE_PROMPT_VERSION, system: ORGANIZE_SYSTEM });
     expect(ORGANIZE_PROMPTS.previous.system).not.toBe(ORGANIZE_SYSTEM);
   });
@@ -133,6 +133,12 @@ describe('整理の指示（organize-3 の足し分：拾いすぎを止める�
     expect(ORGANIZE_SYSTEM).toContain('行ったと書かれていなければ入れません');
     expect(ORGANIZE_SYSTEM).toContain('根拠として触れ直したこと');
     expect(ORGANIZE_SYSTEM).toContain('見出しの文字');
+  });
+
+  test('測定値の検体：尿の検査は、項目名に「尿」がなくても urine（CD-023 の答え）。種類の名前は core と同じ', () => {
+    for (const sp of MEASUREMENT_SPECIMENS) expect(ORGANIZE_SYSTEM, sp).toContain(`尿の検査（尿定性・尿沈渣・尿化学）の引用なら ${sp}`);
+    expect(ORGANIZE_SYSTEM).toContain('項目名に「尿」が付いていなくても');
+    expect(ORGANIZE_SYSTEM).toContain('1つの引用に、尿の検査とそれ以外を混ぜません');
   });
 
   test('同じ事実は、起きた・測った・行った場所を1つだけ', () => {

@@ -511,8 +511,9 @@ export function sharedPlanSegments(segments: readonly NoteSegment[]): NoteSegmen
  *  - 「#問題」の見出しの区切りにあれば、その見出しから次の見出しまで（S・O・A・P が続くあいだ）の A・P・A/P の区切り（なければ、見出しの区切りそのもの）
  *  - A・P・A/P の区切りの中にあれば、その区切り
  * を返す（同じ場所は1回。記載の順）。文の字は持たない（場所だけ。画面が保存した文から切り出す）。
+ * all（患者のすべての問題の記載）を渡すと、1つの区切りに別の問題が並ぶ一覧の形では、その問題の部分だけにする。
  */
-export function problemNotes(mentions: readonly ThreadMention[], segments: readonly NoteSegment[]): ProblemNote[] {
+export function problemNotes(mentions: readonly ThreadMention[], segments: readonly NoteSegment[], all: readonly ThreadMention[] = []): ProblemNote[] {
   const bySource = new Map<string, NoteSegment[]>();
   for (const s of segments) {
     const list = bySource.get(s.sourceId) ?? [];
@@ -524,10 +525,19 @@ export function problemNotes(mentions: readonly ThreadMention[], segments: reado
   const out: ProblemNote[] = [];
   const seen = new Set<string>();
   const push = (m: ThreadMention, s: NoteSegment): void => {
-    const key = `${s.sourceId}:${String(s.start)}`;
+    // 一覧の形（1つの区切りに、別の問題の名前が並ぶ。「A)\n#1 …\n#2 …\n#8 …」）なら、この問題の名前から、次の別の問題の名前の手前まで
+    // （2026-11-21 の本人の決定。一覧のすべてを、どの問題の A にもしない）。決定論で、場所だけ
+    const othersInside = all.filter((o) => o.sourceId === s.sourceId && o.threadId !== m.threadId && o.start >= s.start && o.start < s.end);
+    let start = s.start;
+    let end = s.end;
+    if (othersInside.length > 0 && m.sourceId === s.sourceId && m.start >= s.start && m.start < s.end) {
+      start = m.start;
+      end = othersInside.filter((o) => o.start > m.start).reduce((e, o) => Math.min(e, o.start), s.end);
+    }
+    const key = `${s.sourceId}:${String(start)}`;
     if (seen.has(key)) return;
     seen.add(key);
-    out.push({ sourceId: s.sourceId, at: m.at, label: s.label, start: s.start, end: s.end });
+    out.push({ sourceId: s.sourceId, at: m.at, label: s.label, start, end });
   };
   for (const m of [...mentions].sort(compareMentions)) {
     const list = bySource.get(m.sourceId) ?? [];

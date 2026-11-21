@@ -151,7 +151,7 @@ export function noteDay(input: NoteInput): NoteDay {
     const related = relatedFacts(mentionsUpTo, segs, { observations: obs, medications: [], events: [] });
     const names = new Set(related.valueNames);
     const values = latestByName(obs.filter((x) => names.has(x.name ?? x.nameRaw) && upTo(x.at, input.day)));
-    const notes = problemNotes(mentionsUpTo, segs);
+    const notes = problemNotes(mentionsUpTo, segs, input.threads.flatMap((t) => t.mentions));
     const lastSource = notes.at(-1)?.sourceId;
     const lastAp = notes.filter((n) => n.sourceId === lastSource).map((n) => ({ sourceId: n.sourceId, label: n.label, start: n.start, end: n.end }));
     if (mentionsUpTo.length === 0) continue;
@@ -200,7 +200,7 @@ export function recordSources(input: NoteInput, problems: readonly MaterialProbl
     const np = byThread.get(p.threadId);
     if (np === undefined) continue;
     const mentionsUpTo = np.thread.mentions.filter((m) => ids.has(m.sourceId) && upTo(atOf.get(m.sourceId) ?? null, input.day));
-    const notes = problemNotes(mentionsUpTo, input.segments);
+    const notes = problemNotes(mentionsUpTo, input.segments, input.threads.flatMap((t) => t.mentions));
     const keepSources = [...new Set(notes.map((n) => n.sourceId))].slice(-RECORD_AP_SOURCES);
     for (const n of notes.filter((x) => keepSources.includes(x.sourceId))) quote(p.ref, { sourceId: n.sourceId, label: n.label, start: n.start, end: n.end });
     for (const part of [...np.s, ...np.o]) quote(p.ref, part);
