@@ -3,6 +3,7 @@ import { useCallback, useEffect, useState } from 'react';
 
 import { Banner } from './Banner.tsx';
 import { Devices } from './Devices.tsx';
+import { BookKey } from './BookKey.tsx';
 import { KeyMaker } from './KeyMaker.tsx';
 import { errorMessage } from './messages.ts';
 import { type ApiError, type DeviceView, getSession } from './net/api.ts';
@@ -22,6 +23,7 @@ export function App() {
   /** 開いている患者（一覧なら null）。画面のメモリだけに持つ（読み込み直すと、一覧に戻る） */
   const [patientId, setPatientId] = useState<string | null>(null);
   const [showDevices, setShowDevices] = useState(false);
+  const [showBooks, setShowBooks] = useState(false);
   const [showSelfCheck, setShowSelfCheck] = useState(false);
   const toList = useCallback(() => {
     setPatientId(null);
@@ -87,6 +89,20 @@ export function App() {
               data-testid="show-selfcheck"
             >
               選別の評価（架空の文で、AI の落とし漏れを数える）
+            </button>
+          )}
+          {showBooks ? (
+            <BookKey onLeft={toRegister} />
+          ) : (
+            <button
+              className="button link"
+              type="button"
+              onClick={() => {
+                setShowBooks(true);
+              }}
+              data-testid="show-bookkey"
+            >
+              書籍の参照元（clinical-RAG）の設定
             </button>
           )}
           {showDevices ? (

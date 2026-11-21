@@ -3,10 +3,18 @@
 // どちらも、AI に見せる出典（RefSource）にするだけで、保存しない。保存するのは、採用した A/P の参照（題・頁・URL）だけ。
 import type { RefSource } from '@clinical-carte/core';
 
+/** つながりの確かめの結果：ok・鍵が違う（RAG が断った）・つながらない */
+export type BookCheck = 'ok' | 'unauthorized' | 'unavailable';
+
 /** 書籍の検索（RAG）。例外を投げず、失敗は空 */
 export interface BookSearcher {
   search(queries: readonly string[]): Promise<readonly BookHit[]>;
+  /** つながりを確かめる（決めた一般の語〔CHECK_QUERY〕で1回だけ検索する。答えの中身は使わない） */
+  check(): Promise<BookCheck>;
 }
+
+/** つながりの確かめに送る語（症例の値ではない、一般の語） */
+export const CHECK_QUERY = '肺炎';
 
 export interface BookHit {
   readonly title: string;
@@ -43,6 +51,19 @@ export function createRagSearcher(options: { url: string; token: string; fetcher
         });
       } catch {
         return [];
+      }
+    },
+    async check() {
+      try {
+        const response = await fetcher(new URL('/api/search', options.url).toString(), {
+          method: 'POST',
+          headers: { 'content-type': 'application/json', authorization: `Bearer ${options.token}` },
+          body: JSON.stringify({ queries: [CHECK_QUERY], parents: 1 }),
+        });
+        if (response.status === 401 || response.status === 403) return 'unauthorized';
+        return response.ok ? 'ok' : 'unavailable';
+      } catch {
+        return 'unavailable';
       }
     },
   };

@@ -295,6 +295,11 @@ export async function recordApi(request: Request, path: string, deps: RecordDeps
     },
   };
 
+  // 書籍の参照元（clinical-RAG）のつながりを確かめる。設定がなければ off。送るのは決めた一般の語だけ
+  if (path === '/api/references' && method === 'GET') {
+    return reply(200, { books: deps.books === null ? 'off' : await deps.books.check() });
+  }
+
   // A/P を残す（段5。CA-031・034）：本人が書いた・AI の案から採用した、決まったことだけ。文は選別（C-1）を通す。まとめて1回の選別
   const apNew = /^\/api\/encounters\/([^/]+)\/ap-notes$/.exec(path);
   if (apNew && method === 'POST') {

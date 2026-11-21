@@ -24,7 +24,7 @@ export interface Env {
   readonly DAILY_AI_LIMIT?: string;
   /** 本人の clinical-RAG（段5。wrangler.jsonc の services のサービスバインディング。Worker の名前 medbook-rag）。clinical-modules と同じ呼び方 */
   readonly RAG?: { fetch(request: Request): Promise<Response> };
-  /** clinical-RAG のアプリのトークン（Cloudflare の画面の Secret）。なければ、書籍を参照元にしない */
+  /** clinical-RAG の書籍の検索だけを開ける carte 専用の鍵（Cloudflare の画面の Secret。RAG の CARTE_SEARCH_TOKEN と同じ値。docs/05 の作業 7b）。なければ、書籍を参照元にしない */
   readonly RAG_TOKEN?: string;
 }
 
