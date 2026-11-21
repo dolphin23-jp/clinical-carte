@@ -76,6 +76,8 @@ export async function documentMaterialFor(db: Db, encounterId: string, type: Doc
     medications: record.medications.filter((m) => !m.excluded),
     events: record.events.filter((e) => !e.excluded),
     apNotes: record.apNotes,
+    course: record.course,
+    problemList: (record.problemList?.items ?? []).filter((i) => !i.hidden),
   });
 }
 

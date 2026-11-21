@@ -199,6 +199,10 @@ export interface DocumentInput {
   readonly medications: readonly DocMedication[];
   readonly events: readonly DocEvent[];
   readonly apNotes: readonly DocApNote[];
+  /** 経過の出来事（CA-056。AI の短い要約と日時） */
+  readonly course?: readonly { readonly encounterId: string; readonly at: string | null; readonly atApprox: string | null; readonly category: string; readonly summary: string }[];
+  /** AI のプロブレムリスト（CA-057。外したものは除いて渡す） */
+  readonly problemList?: readonly { readonly name: string; readonly certainty: string; readonly activity: string; readonly since: string | null }[];
 }
 
 export interface DocRecord {
@@ -350,6 +354,13 @@ export function documentMaterial(input: DocumentInput): DocMaterial {
     .filter((n) => encounterIds.has(n.encounterId) && n.day >= scope.from && n.day <= scope.to)
     .map((n) => `${n.day} ${threadName.get(n.threadId) ?? '問題'} ${n.part === 'assessment' ? 'A' : 'P'}：${n.text}`);
 
+  // 経過の出来事（CA-056）：日ごとの経過として、時間の順に（範囲の受診の、その日まで。来院より前の病歴も含める）
+  const courseLines = (input.course ?? [])
+    .filter((c) => encounterIds.has(c.encounterId) && (c.at === null || c.at.slice(0, 10) <= scope.to))
+    .sort((a, b) => compareDateTime(a.at, b.at))
+    .map((c) => `${showAt(c.at)}${c.atApprox === null ? '' : `（${c.atApprox}）`} ${c.summary}`);
+  const problemList = (input.problemList ?? []).map((p) => ({ name: p.name, certainty: p.certainty, activity: p.activity, since: p.since }));
+
   const age = ageNow(input.patient.age, input.patient.ageOn, input.day);
   const payload: Record<string, unknown> = {
     document: { type: input.type, name: DOC_TYPE_NAMES[input.type], sections: DOC_SECTIONS[input.type].map((x) => ({ key: x.key, heading: x.heading, guide: x.guide })) },
@@ -362,6 +373,8 @@ export function documentMaterial(input: DocumentInput): DocMaterial {
       hospitalDay: inpatient ? hospitalDay(input.encounter.start, input.day) : null,
     },
     problems,
+    problemList,
+    course: courseLines,
     records: records.map((r) => ({ id: r.id, kind: SOURCE_KIND_LABELS[r.kind], author: AUTHOR_ROLE_LABELS[own.find((x) => x.id === r.sourceId)?.authorRole ?? 'unknown'], date: showAt(r.at), day: r.day === null ? null : `${String(r.day)}病日`, shortened: r.shortened, text: r.text })),
     labs,
     vitals,
@@ -378,6 +391,8 @@ export function documentMaterial(input: DocumentInput): DocMaterial {
     ...meds.flatMap((m) => [m.name, ...m.entries]),
     ...events,
     ...savedAp,
+    ...courseLines,
+    ...problemList.map((p) => p.name),
     ...problems.map((p) => p.name),
     String(age),
   ];

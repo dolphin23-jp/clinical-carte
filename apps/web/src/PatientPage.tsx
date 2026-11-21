@@ -36,6 +36,8 @@ import { LabTable } from './LabTable.tsx';
 import { LatestStrip } from './LatestStrip.tsx';
 import { ProblemThreads } from './ProblemThreads.tsx';
 import { errorMessage } from './messages.ts';
+import { CourseView } from './CourseView.tsx';
+import { ProblemListView, useProblemList } from './ProblemListView.tsx';
 import { EventView, MedicationView } from './Facts.tsx';
 import {
   type ClinicalEvent,
@@ -79,7 +81,7 @@ const COURSE_VIEWS: readonly (readonly [CourseView, string])[] = [
   ['overview', '経過表'],
   ['values', '検査'],
   ['medications', '投薬'],
-  ['events', 'できごと'],
+  ['events', '時系列'],
   ['chart', '記載'],
 ];
 
@@ -127,6 +129,8 @@ export function PatientPage({ patientId, onBack, onLeft }: { patientId: string; 
   const wide = useWide();
   const [kindFilter, setKindFilter] = useState<SourceKind | 'all'>('all');
   // 記録のタブ：開いた記載（段I。既定は、いちばん新しいものだけ開く）。画面のメモリだけ
+  // まとめて整理し直す（段J。CA-056）：この受診の記載を、古い順に1件ずつ（AI の回数は記載の数）
+  const [reorganizing, setReorganizing] = useState<{ done: number; total: number; failed: number } | null>(null);
   const [opened, setOpened] = useState<ReadonlyMap<string, boolean>>(new Map());
   const composerRef = useRef<HTMLElement>(null);
   const [panel, setPanel] = useState<'none' | 'encounter' | 'end' | 'kind' | 'delete'>('none');
@@ -142,6 +146,8 @@ export function PatientPage({ patientId, onBack, onLeft }: { patientId: string; 
     });
   }, [patientId, onLeft, onBack]);
   useEffect(load, [load]);
+  // AI のプロブレムリスト（CA-057）：記録が増えたら、自動で組み直す（いま・問題のタブの主な見方）
+  const listBuilder = useProblemList(patientId, record, load, onLeft);
 
   if (record === null) {
     return (
@@ -414,6 +420,8 @@ export function PatientPage({ patientId, onBack, onLeft }: { patientId: string; 
                 observations,
               })}
               sources={record.sources}
+              list={(record.problemList?.items ?? []).filter((i) => !i.hidden)}
+              listBusy={listBuilder.busy}
               onProblems={() => {
                 setTab('problems');
               }}
@@ -476,7 +484,19 @@ export function PatientPage({ patientId, onBack, onLeft }: { patientId: string; 
                 {view === 'events' && (
                   <>
                     {day !== null && <p className="note">{`${day.slice(5).replace('-', '/')} の記録だけを出しています（日を外すと、全期間）。`}</p>}
-                    <EventView events={events.filter((e) => onDayOf(e.at))} sources={encounterSources} />
+                    <CourseView
+                      course={record.course.filter((c) => c.encounterId === current.id)}
+                      events={shownEvents}
+                      medications={shownMeds}
+                      observations={observations}
+                      sources={encounterSources}
+                      encounter={current}
+                      day={day}
+                    />
+                    <details className="fact-more">
+                      <summary>できごとだけの一覧（{String(events.filter((e) => onDayOf(e.at)).length)}）</summary>
+                      <EventView events={events.filter((e) => onDayOf(e.at))} sources={encounterSources} />
+                    </details>
                   </>
                 )}
                 {view === 'chart' && noteView(current.id)}
@@ -492,6 +512,8 @@ export function PatientPage({ patientId, onBack, onLeft }: { patientId: string; 
         )}
         {tab === 'problems' && (
           <>
+            <ProblemListView patientId={patientId} record={record} builder={listBuilder} onChanged={load} onLeft={onLeft} />
+            <h3 className="sub-title problems-written">記録に書かれた問題（筋）</h3>
             <ProblemThreads
               patientId={patientId}
               problems={record.problems}
@@ -532,6 +554,36 @@ export function PatientPage({ patientId, onBack, onLeft }: { patientId: string; 
           <>
           <div className="row-actions sources-actions">
             <span className="note">新しい順。押すと全体を開きます。</span>
+            <button
+              type="button"
+              className="chip small"
+              disabled={reorganizing !== null}
+              onClick={() => {
+                const list = [...sources].reverse();
+                setReorganizing({ done: 0, total: list.length, failed: 0 });
+                void (async () => {
+                  let failed = 0;
+                  for (const [i, s] of list.entries()) {
+                    const r = await organizeSource(s.id);
+                    if (!r.ok) {
+                      if (r.error === 'unregistered') {
+                        onLeft();
+                        return;
+                      }
+                      failed += 1;
+                      if (r.error === 'ai_limit') break;
+                    }
+                    setReorganizing({ done: i + 1, total: list.length, failed });
+                  }
+                  setReorganizing(null);
+                  setMessage(failed > 0 ? `整理し直せなかった記載が ${String(failed)} 件あります（各記載の「整理し直す」で、もう一度できます）。` : null);
+                  load();
+                })();
+              }}
+              data-testid="sources-reorganize"
+            >
+              {reorganizing === null ? 'まとめて整理し直す' : `整理し直しています ${String(reorganizing.done)}/${String(reorganizing.total)}`}
+            </button>
             <button
               type="button"
               className="chip small"
