@@ -32,7 +32,7 @@ export function DraftView({ encounterId, onLeft }: { encounterId: string; onLeft
     <div className="draft" data-testid="draft">
       <p className="draft-banner">AI の草案です。保存しません（ほかのタブや患者へ移ると消えます）。正本は病院のカルテで、この草案は記録ではありません。</p>
       <p className="note">
-        入院後経過を、問題ごとに下書きします。材料は、この受診の記載のうち、問題ごとの A・P と、その問題の記載に書かれた投薬・できごとだけです。文ごとに根拠の引用を確かめ、引用にない数がある文・根拠のない文は出しません。AI を 1 回使います。
+        入院後経過を、問題ごとに下書きします。材料は、この受診の記載のうち、問題ごとの A・P と、その問題の記載に書かれた投薬・できごと、どの問題の記載にも書かれていないできごと（共通の資料。どの問題に関わるかは決めていません）だけです。文ごとに根拠の引用を確かめ、引用にない数がある文・根拠のない文は出しません。AI を 1 回使います。
       </p>
       <button type="button" className="button primary" disabled={busy} onClick={make} data-testid="draft-make">
         {busy ? '作っています…（30 秒ほどかかることがあります）' : result === null ? '入院後経過の草案を作る' : 'もう一度作る'}

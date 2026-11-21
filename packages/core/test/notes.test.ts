@@ -140,6 +140,39 @@ describe('AI の資料（recordSources）', () => {
   });
 });
 
+describe('AI の資料の共通の引用（CA-048）', () => {
+  const problems: MaterialProblem[] = [{ ref: 'T1', threadId: 'TA', name: '#1 市中肺炎' }];
+  test('その日の、どの問題にも入らない S・O と、その日までの検査値（項目ごとのいちばん新しい値）を、どの問題にも使える引用にする', () => {
+    const T2 = 'S) 食欲が戻った\nO) 歩行でふらつく';
+    const base = input();
+    const q = recordSources(
+      {
+        ...base,
+        sources: [...base.sources, { id: 's2', encounterId: 'e1', at: '2026-11-19T15:00', text: T2 }],
+        segments: [...base.segments, ...seg('s2', T2, [['subjective', 'S) 食欲'], ['objective', 'O) 歩行']])],
+        observations: [
+          ...base.observations,
+          { id: 'k1', sourceId: 'sl', encounterId: 'e1', at: '2026-11-18T06:00', name: 'K', nameRaw: 'K', kind: 'lab', valueText: '3.4', unit: null, start: 0, end: 5 },
+          { id: 'k2', sourceId: 'sl2', encounterId: 'e1', at: '2026-11-19T06:00', name: 'K', nameRaw: 'K', kind: 'lab', valueText: '3.8', unit: null, start: 0, end: 5 },
+          // その日より後の値・別の受診の値は入れない
+          { id: 'k3', sourceId: 'sl3', encounterId: 'e1', at: '2026-11-20T06:00', name: 'K', nameRaw: 'K', kind: 'lab', valueText: '4.1', unit: null, start: 0, end: 5 },
+          { id: 'n1', sourceId: 'sx', encounterId: 'e0', at: '2026-11-19T06:00', name: 'Na', nameRaw: 'Na', kind: 'lab', valueText: '130', unit: null, start: 0, end: 6 },
+        ],
+      },
+      problems,
+    );
+    const shared = q.filter((x) => x.problem === null).map((x) => [x.label, x.text]);
+    expect(shared).toEqual([
+      ['S', 'S) 食欲が戻った'],
+      ['O', 'O) 歩行でふらつく'],
+      ['検査（K）', 'K 3.8'],
+      ['バイタル（体温）', 'BT 36.9'],
+    ]);
+    // 問題の範囲に書かれた値（CRP）は、問題の引用のまま。共通の引用に二重に入れない
+    expect(q.filter((x) => x.text.startsWith('CRP')).map((x) => x.problem)).toEqual(['T1']);
+  });
+});
+
 describe('AI の案の確かめ（checkProposal）', () => {
   const problems: MaterialProblem[] = [
     { ref: 'T1', threadId: 'TA', name: '#1 市中肺炎' },

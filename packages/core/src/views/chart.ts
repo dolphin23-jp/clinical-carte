@@ -293,3 +293,40 @@ export function medicationSpans(entries: readonly { readonly action: string | nu
   }
   return spans;
 }
+
+/** 二重をたたむ値の形（サーバーの行の、使う分だけ） */
+export interface FoldObservation {
+  readonly id: string;
+  readonly sourceId: string;
+  readonly at: string | null;
+  readonly name: string | null;
+  readonly nameRaw: string;
+  readonly value: number | null;
+  readonly comparator: string | null;
+  readonly valueText: string;
+}
+
+/**
+ * 同じ値の二重（CA-049）：経過・入院時などの記載の中で挙げ直した値のうち、同じ日に、検査結果・バイタルの文に、同じ項目・同じ値（不等号も同じ）が
+ * あるもの。経過表・検査の推移と表・いま・問題では出さない（消さない。記録の各記載の「整理した事実」には残る）。
+ * 検査結果・バイタルの文どうしは、たたまない（別の時刻に測った同じ値でありうる）。fromValueSheet は、その文が検査結果・バイタルの文か。
+ */
+export function foldedObservationIds(list: readonly FoldObservation[], fromValueSheet: (sourceId: string) => boolean): Set<string> {
+  const key = (o: FoldObservation): string | null => {
+    if (o.at === null) return null;
+    const name = o.name ?? o.nameRaw.normalize('NFKC').toLowerCase().replace(/\s+/g, '');
+    const value = o.value !== null && Number.isFinite(o.value) ? String(o.value) : o.valueText.normalize('NFKC').replace(/\s+/g, '');
+    return `${o.at.slice(0, 10)}|${name}|${o.comparator ?? ''}|${value}`;
+  };
+  const sheet = new Set<string>();
+  for (const o of list) {
+    const k = key(o);
+    if (k !== null && fromValueSheet(o.sourceId)) sheet.add(k);
+  }
+  const out = new Set<string>();
+  for (const o of list) {
+    const k = key(o);
+    if (k !== null && !fromValueSheet(o.sourceId) && sheet.has(k)) out.add(o.id);
+  }
+  return out;
+}

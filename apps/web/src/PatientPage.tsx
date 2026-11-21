@@ -6,6 +6,7 @@ import {
   type EncounterKind,
   foldedEventIds,
   foldedMedicationIds,
+  foldedObservationIds,
   headline,
   hospitalDay,
   labTrends,
@@ -127,12 +128,17 @@ export function PatientPage({ patientId, onBack, onLeft }: { patientId: string; 
   const title = headline({ ...record.patient, encounter: latest }, record.today);
   const sources = record.sources.filter((s) => s.encounterId === current?.id).sort(newestFirst);
   // 本人が外した事実（段3e）は、見方から除く。記載ごとの「事実を見る・直す」には、外したものも出す
+  // 同じ値の二重（CA-049）：記載の中で挙げ直した値で、同じ日の検査結果・バイタルの文に同じ値があるものは、見方では出さない（消さない）
+  const kindOf = new Map(record.sources.map((s) => [s.id, s.kind]));
+  const notExcluded = record.observations.filter((o) => !o.excluded);
+  const foldedValues = foldedObservationIds(notExcluded, (id) => READ_VALUES_KINDS.includes(kindOf.get(id) ?? 'unsorted'));
   const live = {
-    observations: record.observations.filter((o) => !o.excluded),
+    observations: notExcluded.filter((o) => !foldedValues.has(o.id)),
     medications: record.medications.filter((m) => !m.excluded),
     events: record.events.filter((e) => !e.excluded),
   };
   const observations = live.observations.filter((o) => o.encounterId === current?.id);
+  const foldedHere = notExcluded.filter((o) => o.encounterId === current?.id && foldedValues.has(o.id)).length;
   const encounterSources = record.sources.filter((s) => s.encounterId === current?.id);
   const medications = live.medications.filter((m) => m.encounterId === current?.id);
   const events = live.events.filter((e) => e.encounterId === current?.id);
@@ -302,6 +308,11 @@ export function PatientPage({ patientId, onBack, onLeft }: { patientId: string; 
             <TrendGrid trends={labTrends(observations)} />
             <h3 className="sub-title">表（書かれたとおり）</h3>
             <LabTable observations={observations} />
+            {foldedHere > 0 && (
+              <p className="note" data-testid="values-folded">
+                記載（経過など）の中で挙げ直した値のうち、同じ日の検査結果・バイタルの文に同じ項目・同じ値があるもの {String(foldedHere)} 件は、二重になるので、ここ・経過表・いまでは出していません（消していません。記録の各記載の「整理した事実」にあります）。
+              </p>
+            )}
           </>
         )}
         {tab === 'medications' && <MedicationView medications={medications} sources={encounterSources} />}

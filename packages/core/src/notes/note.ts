@@ -175,7 +175,8 @@ export const RECORD_AP_SOURCES = 3;
 
 /**
  * AI の案・議論の資料のうち、記録の引用（Q）：問題ごとに、その日までの A・P（新しい記載から3つ）、その日の S・O、
- * その日までの、その問題の記載に書かれた値と薬。その日のバイタルは、どの問題にも使える引用にする。
+ * その日までの、その問題の記載に書かれた値と薬。その日のバイタル・記載全体の P・どの問題にも入らない S・O・
+ * その日までの検査値（項目ごとのいちばん新しい値。CA-048）は、どの問題にも使える引用にする。
  */
 export function recordSources(input: NoteInput, problems: readonly MaterialProblem[]): RefSource[] {
   const day = noteDay(input);
@@ -222,6 +223,16 @@ export function recordSources(input: NoteInput, problems: readonly MaterialProbl
   }
   // 記載全体の P は、どの問題にも結びつけず、どの問題にも使える引用にする
   for (const part of day.shared) quote(null, part);
+  // 共通の資料（CA-048）：その日の、どの問題の範囲にも入らない S・O と、その日までの検査値（項目ごとのいちばん新しい値）。
+  // 結びつきは保存しない・推し量らない（どの問題にも使える引用として渡すだけ）
+  for (const part of day.unassigned) quote(null, { sourceId: part.sourceId, label: part.label, start: part.start, end: part.end });
+  const quotedValues = new Set(out.filter((q) => q.ref.k === 'record').map((q) => (q.ref.k === 'record' ? `${q.ref.sourceId}:${String(q.ref.start)}` : '')));
+  const labs = latestByName(input.observations.filter((o) => o.encounterId === input.encounter.id && o.kind === 'lab' && upTo(o.at, input.day)));
+  for (const t of observationTexts(labs.sort((a, b) => compareDateTime(a.at, b.at)))) {
+    const v = t.items[0];
+    if (v === undefined || quotedValues.has(`${v.sourceId}:${String(v.start)}`)) continue;
+    out.push({ kind: 'record', problem: null, text: t.text, at: v.at, day: dayOf(v.at), label: `検査（${t.name}）`, ref: { k: 'record', sourceId: v.sourceId, start: v.start, end: v.end } });
+  }
   for (const t of observationTexts(day.vitals)) {
     const v = t.items[0];
     if (v === undefined) continue;

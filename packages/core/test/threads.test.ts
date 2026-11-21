@@ -182,16 +182,34 @@ describe('threadViews', () => {
       m({ threadId: null, name: '便秘', at: '2026-11-19' }),
     ];
     const v = threadViews(rows, ms);
+    // 並びは、いちばん新しい記載の順（低K血症〔11/19〕が先。同じ日時の記載は、書かれた順）
     expect(v.threads.map((x) => [x.name, x.group, x.status])).toEqual([
-      ['#1 市中肺炎', 'current', 'diagnosis'],
       ['#2 低K血症', 'closed', 'problem'],
+      ['#1 市中肺炎', 'current', 'diagnosis'],
       ['肺塞栓', 'ruled_out', 'ruled_out'],
     ]);
-    const pneu = v.threads[0];
+    const pneu = v.threads[1];
     expect(pneu?.names.map((x) => x.name)).toEqual(['#1 発熱', '#3 咳嗽', '#1 市中肺炎']);
     expect(pneu?.first).toBe('2026-11-17T10:00');
-    expect(v.threads[1]?.activity).toBe('resolved');
+    expect(v.threads[0]?.activity).toBe('resolved');
     expect(v.unlinked.map((x) => x.name)).toEqual(['便秘']);
+  });
+
+  test('既定の並び：いちばん新しい記載が新しい筋ほど前。同じ記載の中は、書かれた順。日時のない記載は後ろ', () => {
+    const v = threadViews(
+      [t('T-er'), t('T-1'), t('T-3'), t('T-x')],
+      [
+        // 救急の記録の評価から拾った名前（最初の記載）
+        m({ threadId: 'T-er', name: '閉塞性腎盂腎炎', at: '2026-11-16', sourceId: 's0', start: 5 }),
+        m({ threadId: 'T-1', name: '#1 菌血症', at: '2026-11-16T17:30', sourceId: 's1', start: 10 }),
+        m({ threadId: 'T-3', name: '#3 2型糖尿病', at: '2026-11-16T17:30', sourceId: 's1', start: 40 }),
+        // いまの記載：#3 が #1 より後ろに書かれている
+        m({ threadId: 'T-1', name: '#1 菌血症', at: '2026-11-21', sourceId: 's9', start: 10 }),
+        m({ threadId: 'T-3', name: '#3 2型糖尿病', at: '2026-11-21', sourceId: 's9', start: 80 }),
+        m({ threadId: 'T-x', name: '不明の記載', at: null, sourceId: 's5', start: 0 }),
+      ],
+    );
+    expect(v.threads.map((x) => x.id)).toEqual(['T-1', 'T-3', 'T-er', 'T-x']);
   });
 
   test('解決と書かれた後に、また書かれたら「いまの問題」。前の解決は earlierActivity に残る', () => {

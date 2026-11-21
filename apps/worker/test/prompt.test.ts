@@ -195,6 +195,8 @@ describe('草案の指示（段4）', () => {
     expect(DRAFT_SYSTEM).toContain('予定・検討として書き、行ったことにしません');
     expect(DRAFT_SYSTEM).toContain('確定したように書きません');
     expect(DRAFT_SYSTEM).toContain('人の名前・番号・施設の名前は書きません');
+    // 共通の資料（CA-048）：どの問題の記載にもないできごとは、関わりが引用から読み取れるときだけ使う
+    expect(DRAFT_SYSTEM).toContain('problem が null の引用は、その問題に関わることが引用の文から読み取れるときだけ使い、関わりを推し量って足しません');
   });
 
   test('文の長さの決まりは、core の検査と同じ', () => {
@@ -205,8 +207,8 @@ describe('草案の指示（段4）', () => {
     const digest = createHash('sha256').update(DRAFT_SYSTEM).digest('hex').slice(0, 16);
     expect({ version: DRAFT_PROMPT_VERSION, digest }).toMatchInlineSnapshot(`
       {
-        "digest": "5832b8996deddbe5",
-        "version": "draft-1",
+        "digest": "c087b811615f2e7f",
+        "version": "draft-2",
       }
     `);
   });

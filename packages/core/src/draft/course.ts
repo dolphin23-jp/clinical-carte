@@ -2,7 +2,8 @@
 //
 // - 草案は、保存しない・ログに残さない。その場で作り、画面に出すだけ（記録の正本にしない）。
 // - AI に渡すのは、保存した文から決定論で切り出した「引用」（記号 Q1… 付き）だけ：問題ごとの A・P の区切り、
-//   その問題の記載に書かれた投薬・できごと（段3c の範囲）。日付と病日を添える（数の確かめに使う）。
+//   その問題の記載に書かれた投薬・できごと（段3c の範囲）。どの問題の範囲にも入らないできごとは、共通の資料（problem: null。CA-048）。
+//   日付と病日を添える（数の確かめに使う）。
 // - AI は文を書き、文ごとに根拠の引用の記号を付ける。確かめ（checkDraft）は決定論：
 //   記号が実在する・その問題の引用である・文の中の数が根拠の引用にある（日付・時刻・病日の形の数だけは、引用の日時・病日でもよい）・識別情報の形がない・長さ。
 //   通らない文は出さず、理由ごとの件数だけを返す（黙って捨てない）。
@@ -86,6 +87,14 @@ export function courseMaterial(input: MaterialInput): DraftMaterial {
     for (const e of withinBlocks(input.events, blocks)) {
       pool.push({ problem: ref, sourceId: e.sourceId, at: e.at, day: dayOf(e.at), from: `できごと（${EVENT_KIND_NAMES[e.kind]}）`, text: e.title });
     }
+  }
+  // どの問題の範囲にも入らないできごと（他科の記載の処置・救急の経過のコンサルト・転棟など）は、どの問題にも結びつけない「共通の資料」にする（CA-048）。
+  // 結びつきは保存しない・推し量らない。AI は、その問題に関わると引用から読み取れるときだけ根拠に使う
+  const allMentions = input.threads.flatMap((t) => t.mentions.filter((m) => own.has(m.sourceId)));
+  const covered = new Set(withinBlocks(input.events, problemBlocks(allMentions, input.segments)));
+  for (const e of input.events) {
+    if (covered.has(e) || !own.has(e.sourceId)) continue;
+    pool.push({ problem: null, sourceId: e.sourceId, at: e.at, day: dayOf(e.at), from: `できごと（${EVENT_KIND_NAMES[e.kind]}）`, text: e.title });
   }
   // 古い順に並べ、長さの上限を超えたら、古いものから落とす
   pool.sort((a, b) => compareDateTime(a.at, b.at));
@@ -185,7 +194,8 @@ export function checkDraft(answer: DraftAnswer, material: DraftMaterial): Checke
         continue;
       }
       const real = cited.filter((q): q is DraftQuote => q !== undefined);
-      if (real.some((q) => q.problem !== problem.ref)) {
+      // 共通の資料（problem が null。CA-048）は、どの問題の根拠にもできる
+      if (real.some((q) => q.problem !== null && q.problem !== problem.ref)) {
         count('other_problem');
         continue;
       }
