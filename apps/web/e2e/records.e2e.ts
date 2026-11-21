@@ -80,6 +80,12 @@ async function send(page: Page, text: string, kind?: string): Promise<void> {
   await page.getByTestId('send').click();
 }
 
+/** 受診の切り替え・直す操作は、畳んだ欄の中（段H）。開いていなければ開く */
+async function encounterMenu(page: Page): Promise<void> {
+  const d = page.getByTestId('encounter-details');
+  if (!(await d.evaluate((el) => (el as HTMLDetailsElement).open))) await d.locator(':scope > summary').click();
+}
+
 const fits = (page: Page) => page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth);
 
 describe('患者', () => {
@@ -232,13 +238,15 @@ describe('検査・バイタル', () => {
     const unread = page.getByTestId('unread').first();
     expect(await unread.textContent()).toContain('「昨日より改善」');
 
+    await page.getByTestId('tab-course').click();
+
     await page.getByTestId('tab-values').click();
     const table = page.getByTestId('lab-table');
     await table.waitFor();
     const rows = await table.locator('tbody tr').allTextContents();
     // バイタルが先
     expect(rows).toEqual(['収縮期血圧78', '拡張期血圧40', 'WBC12.3', 'CRP<0.1', '尿潜血(-)']);
-    expect(await table.locator('thead').textContent()).toContain('2026-11-20 09:00');
+    expect(await table.locator('thead').textContent()).toContain('2026-11-20'); // 列は日ごと（段H）
     // 判定を示すもの（色のクラス・矢印）がない
     const html = await table.innerHTML();
     expect(html).not.toMatch(/↑|↓|high|low|abnormal|alert|warn/i);
@@ -255,9 +263,10 @@ describe('検査・バイタル', () => {
     await page.getByTestId('text').fill('WBC 15.1');
     await page.getByTestId('send').click();
     await expect.poll(() => page.getByTestId('source').count()).toBe(2);
+    await page.getByTestId('tab-course').click();
     await page.getByTestId('tab-values').click();
     const table = page.getByTestId('lab-table');
-    expect(await table.locator('thead th').allTextContents()).toEqual(['項目', '2026-11-19 06:30', '2026-11-20 09:00']);
+    expect(await table.locator('thead th').allTextContents()).toEqual(['項目', '2026-11-19', '2026-11-20']); // 列は日ごと（段H）
     expect(await table.locator('tbody tr').allTextContents()).toEqual(['WBC15.112.3', 'CRP8.5']);
   });
 });
@@ -266,11 +275,13 @@ describe('受診', () => {
   test('終わり（退院）を入れると、見出しに出る。受診を足すと、切り替えられる', async () => {
     const page = await open();
     await newPatient(page);
+    await encounterMenu(page);
     await page.getByTestId('set-end').click();
     await page.getByTestId('end-day').fill('2026-12-01');
     await page.getByTestId('save-end').click();
     await expect.poll(() => page.getByTestId('headline').textContent()).toBe('72歳 男 ｜ 入院 2026-11-18〜2026-12-01');
 
+    await encounterMenu(page);
     await page.getByTestId('add-encounter').click();
     await page.getByTestId('encounter-form').locator('input[type=date]').fill('2026-12-15');
     await page.getByTestId('create-encounter').click();
@@ -283,6 +294,7 @@ describe('受診', () => {
     const page = await open();
     await newPatient(page, '62', '男', '救急', '2026-11-21');
     expect(await page.getByTestId('headline').textContent()).toContain('救急 2026-11-21');
+    await encounterMenu(page);
     await page.getByTestId('set-kind').click();
     expect(await page.getByTestId('kind-inpatient').getAttribute('aria-checked')).toBe('true');
     await page.getByTestId('save-kind').click();
@@ -294,6 +306,7 @@ describe('受診', () => {
   test('終わりを、始まりより前にはできない', async () => {
     const page = await open();
     await newPatient(page);
+    await encounterMenu(page);
     await page.getByTestId('set-end').click();
     await page.getByTestId('end-day').fill('2026-11-01');
     await page.getByTestId('save-end').click();
@@ -313,6 +326,7 @@ describe('消す', () => {
     await expect.poll(() => page.getByTestId('source').count()).toBe(0);
     expect(server.db.raw.prepare('SELECT COUNT(*) AS n FROM observations').get()).toEqual({ n: 0 });
 
+    await encounterMenu(page); // 患者を消すは、受診の欄の中（段H）
     await page.getByTestId('delete-patient').click();
     await page.getByTestId('confirm-delete-patient').click();
     await page.getByTestId('home').waitFor();
@@ -334,6 +348,7 @@ describe('電話の幅と、端末の保存先', () => {
       await page.getByTestId('composer-done').waitFor();
       await expect.poll(() => page.getByTestId('text').inputValue()).toBe('');
     }
+    await page.getByTestId('tab-course').click();
     await page.getByTestId('tab-values').click();
     await page.getByTestId('lab-table').waitFor();
     expect(await fits(page)).toBe(true);

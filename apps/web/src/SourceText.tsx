@@ -1,7 +1,25 @@
 // 記載の表示（docs/04 の 3.3）：保存した文を、整理の区切りの見出しで並べ直す。文字は1字も変えない（文を範囲で切り出すだけ）。
 import { SEGMENT_LABEL_NAMES } from '@clinical-carte/core';
 
+import { type ReactNode, useState } from 'react';
+
 import type { Segment } from './net/api.ts';
+
+/** これより長い文は、はじめは畳む（段H。記録のタブを短くする）。字は消さず、高さだけ */
+const FOLD_CHARS = 500;
+
+function Fold({ length, children }: { length: number; children: ReactNode }) {
+  const [open, setOpen] = useState(false);
+  if (length <= FOLD_CHARS) return <>{children}</>;
+  return (
+    <div className={open ? 'source-text-wrap' : 'source-text-wrap clamped'}>
+      {children}
+      <button type="button" className="button link small" onClick={() => { setOpen(!open); }} aria-expanded={open} data-testid="source-fold">
+        {open ? '畳む' : `全文を見る（${String(length)} 字）`}
+      </button>
+    </div>
+  );
+}
 
 export interface TextPart {
   readonly label: string | null;
@@ -26,12 +44,15 @@ export function SourceText({ text, segments }: { text: string; segments: readonl
   const parts = splitBySegments(text, segments);
   if (segments.length === 0) {
     return (
-      <p className="source-text" data-testid="source-text">
-        {text}
-      </p>
+      <Fold length={text.length}>
+        <p className="source-text" data-testid="source-text">
+          {text}
+        </p>
+      </Fold>
     );
   }
   return (
+    <Fold length={text.length}>
     <div className="source-parts" data-testid="source-text">
       {parts.map((part, i) => (
         <div key={i} className="source-part">
@@ -44,5 +65,6 @@ export function SourceText({ text, segments }: { text: string; segments: readonl
         </div>
       ))}
     </div>
+    </Fold>
   );
 }

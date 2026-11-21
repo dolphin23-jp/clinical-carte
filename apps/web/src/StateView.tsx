@@ -1,6 +1,7 @@
 // 「いまの状態」（段3b。CA-023・CA-026・CA-027）：患者の現在地を1画面に。作文しない：1行の要約は決定論のひな形、
 // ほかは整理した事実と、保存した文の区切りの字そのもの。「いま」は記録の上での最後の日時で、端末の時計ではない。判定しない。
 import { EVENT_KIND_NAMES, MEDICATION_ACTION_NAMES, PROBLEM_ACTIVITY_NAMES, PROBLEM_STATUS_NAMES, type PatientState, type RecentItem, recentGroups, SEGMENT_LABEL_NAMES } from '@clinical-carte/core';
+import { useState } from 'react';
 
 import { showDateTime } from './format.ts';
 import type { Source } from './net/api.ts';
@@ -23,7 +24,7 @@ function recentText(item: RecentItem): { tag: string; text: string } {
 const labText = (item: Extract<RecentItem, { type: 'lab' }>): string => `${item.name} ${item.comparator ?? ''}${item.valueText}${item.unit === null ? '' : ` ${item.unit}`}`;
 
 /** 1つのまとまりで、はじめに見せる数（残りは畳む） */
-const FIRST = 6;
+const FIRST = 3;
 
 function RecentRows({ items }: { items: readonly RecentItem[] }) {
   return (
@@ -94,8 +95,30 @@ function RecentList({ items }: { items: readonly RecentItem[] }) {
   );
 }
 
+/** 24時間の動きの数（見出しに出す。畳んでいても、何があったかの数が分かる） */
+function recentCounts(items: readonly RecentItem[]): string {
+  if (items.length === 0) return '記載なし';
+  const g = recentGroups(items);
+  return [
+    g.problems.length > 0 ? `問題 ${String(g.problems.length)}` : null,
+    g.medications.length > 0 ? `投薬の動き ${String(g.medications.length)}` : null,
+    g.events.length > 0 ? `できごと ${String(g.events.length)}` : null,
+    g.labs.length > 0 ? `検査 ${String(g.labs.length)} 項目` : null,
+  ]
+    .filter((x): x is string => x !== null)
+    .join('・');
+}
+
 export function StateView({ state, sources, onProblems }: { state: PatientState; sources: readonly Source[]; onProblems: () => void }) {
   const textOf = (sourceId: string, start: number, end: number): string => sources.find((s) => s.id === sourceId)?.text.slice(start, end).trim() ?? '';
+  // A・P の文は4行までに畳み、押すと全文（段H。「いま」を1〜2画面に）。開いたものは画面のメモリだけ
+  const [open, setOpen] = useState<ReadonlySet<string>>(new Set());
+  const toggle = (id: string) => {
+    const next = new Set(open);
+    if (next.has(id)) next.delete(id);
+    else next.add(id);
+    setOpen(next);
+  };
 
   return (
     <div className="state" data-testid="state">
@@ -108,6 +131,8 @@ export function StateView({ state, sources, onProblems }: { state: PatientState;
         。病院のカルテの写しで、最新とは限りません。
       </p>
 
+      <div className="state-cols">
+      <div className="state-col">
       <section className="state-section" data-testid="state-problems">
         <h3 className="sub-title">いまの問題（{String(state.current.length)}）</h3>
         {state.current.length === 0 ? (
@@ -119,10 +144,22 @@ export function StateView({ state, sources, onProblems }: { state: PatientState;
                 <div className="thread-head">
                   <strong className="thread-name">{thread.name}</strong>
                   <span className="tag">{PROBLEM_STATUS_NAMES[thread.status]}</span>
+                  {notes.length > 0 && <span className="thread-when">{showDateTime(notes[0]?.at ?? null)}</span>}
                 </div>
                 {notes.length > 0 ? (
-                  <div className="thread-note" data-testid="state-note">
-                    <span className="part-label">{showDateTime(notes[0]?.at ?? null)}</span>
+                  <div
+                    className={open.has(thread.id) ? 'thread-note' : 'thread-note clamped'}
+                    role="button"
+                    tabIndex={0}
+                    aria-expanded={open.has(thread.id)}
+                    onClick={() => {
+                      toggle(thread.id);
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' || e.key === ' ') toggle(thread.id);
+                    }}
+                    data-testid="state-note"
+                  >
                     {notes.map((n) => (
                       <p key={`${n.sourceId}:${String(n.start)}`} className="source-text">
                         <span className="sr-only">{SEGMENT_LABEL_NAMES[n.label]}：</span>
@@ -133,23 +170,44 @@ export function StateView({ state, sources, onProblems }: { state: PatientState;
                 ) : (
                   <p className="thread-sub">A・P の区切りは見つかっていません（最後の記載 {showDateTime(thread.last)}）。</p>
                 )}
-                {values.length > 0 && (
-                  <p className="thread-sub" data-testid="state-problem-values">
-                    記載に書かれた値：{values.map((o) => `${o.name ?? o.nameRaw} ${o.comparator ?? ''}${o.valueText}${o.unit === null ? '' : ` ${o.unit}`}（${showDateTime(o.at)}）`).join('・')}
-                  </p>
-                )}
-                {medications.length > 0 && (
-                  <p className="thread-sub" data-testid="state-problem-meds">
-                    記載に書かれた薬：
-                    {medications.map((m) => `${m.name} ${m.action === null ? '動きの記載なし' : MEDICATION_ACTION_NAMES[m.action]}（${showDateTime(m.at)}）`).join('・')}
-                  </p>
+                {(values.length > 0 || medications.length > 0) && (
+                  <details className="thread-more">
+                    <summary>
+                      この問題の記載に書かれた{values.length > 0 && `値 ${String(values.length)}`}
+                      {values.length > 0 && medications.length > 0 && '・'}
+                      {medications.length > 0 && `薬 ${String(medications.length)}`}
+                    </summary>
+                    {values.length > 0 && (
+                      <p className="thread-sub" data-testid="state-problem-values">
+                        記載に書かれた値：{values.map((o) => `${o.name ?? o.nameRaw} ${o.comparator ?? ''}${o.valueText}${o.unit === null ? '' : ` ${o.unit}`}（${showDateTime(o.at)}）`).join('・')}
+                      </p>
+                    )}
+                    {medications.length > 0 && (
+                      <p className="thread-sub" data-testid="state-problem-meds">
+                        記載に書かれた薬：
+                        {medications.map((m) => `${m.name} ${m.action === null ? '動きの記載なし' : MEDICATION_ACTION_NAMES[m.action]}（${showDateTime(m.at)}）`).join('・')}
+                      </p>
+                    )}
+                  </details>
                 )}
               </li>
             ))}
           </ul>
         )}
         {state.sharedPlan !== null && (
-          <div className="thread-note" data-testid="state-shared-plan">
+          <div
+            className={open.has('shared') ? 'thread-note' : 'thread-note clamped'}
+            role="button"
+            tabIndex={0}
+            aria-expanded={open.has('shared')}
+            onClick={() => {
+              toggle('shared');
+            }}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' || e.key === ' ') toggle('shared');
+            }}
+            data-testid="state-shared-plan"
+          >
             <span className="part-label">記載全体の方針（問題に分けて書かれていない P）・{showDateTime(state.sharedPlan.at)}</span>
             {state.sharedPlan.parts.map((n) => (
               <p key={`${n.sourceId}:${String(n.start)}`} className="source-text">
@@ -170,23 +228,27 @@ export function StateView({ state, sources, onProblems }: { state: PatientState;
           問題のタブで、くわしく見る・直す
         </button>
       </section>
+      </div>
+      <div className="state-col">
 
       {state.recent !== null && (
-        <section className="state-section" data-testid="state-recent">
-          <h3 className="sub-title">
-            最後の記録までの24時間（{showDateTime(state.recent.from)}〜{showDateTime(state.recent.to)}）
-          </h3>
+        <details className="state-section folded" data-testid="state-recent">
+          <summary className="sub-title">
+            最後の記録までの24時間（{showDateTime(state.recent.from)}〜{showDateTime(state.recent.to)}）：{recentCounts(state.recent.items)}
+          </summary>
           {state.recent.items.length === 0 ? (
             <p className="note">この間に、問題・投薬の動き・できごと・検査値の記載はありません（バイタルは上の帯と経過表）。</p>
           ) : (
             <RecentList items={state.recent.items} />
           )}
-        </section>
+        </details>
       )}
 
       {(state.medications.length > 0 || state.stoppedMedications.length > 0) && (
-        <section className="state-section" data-testid="state-medications">
-          <h3 className="sub-title">投薬（薬ごとの最後の記載）</h3>
+        <details className="state-section folded" data-testid="state-medications">
+          <summary className="sub-title">
+            投薬（薬ごとの最後の記載。{String(state.medications.length)} 種{state.stoppedMedications.length > 0 && `・中止と書かれたもの ${String(state.stoppedMedications.length)}`}）
+          </summary>
           <ul className="fact-list">
             {state.medications.map((m) => (
               <li key={m.name} className="fact-row">
@@ -201,12 +263,12 @@ export function StateView({ state, sources, onProblems }: { state: PatientState;
           </ul>
           {state.stoppedMedications.length > 0 && <p className="thread-sub">中止と書かれたもの：{state.stoppedMedications.map((m) => `${m.name}（${showDateTime(m.at)}）`).join('、')}</p>}
           <p className="note">いま続いているかは、書かれていないので補っていません。</p>
-        </section>
+        </details>
       )}
 
       {state.background.length > 0 && (
-        <section className="state-section" data-testid="state-background">
-          <h3 className="sub-title">背景（いちばん新しい記載の、その区切り）</h3>
+        <details className="state-section folded" data-testid="state-background">
+          <summary className="sub-title">背景（{state.background.map((b) => b.name).join('・')}）</summary>
           {state.background.map((b) => (
             <div key={b.label} className="thread-note" data-testid="state-background-part">
               <span className="part-label">
@@ -216,8 +278,10 @@ export function StateView({ state, sources, onProblems }: { state: PatientState;
               <p className="source-text">{textOf(b.sourceId, b.start, b.end)}</p>
             </div>
           ))}
-        </section>
+        </details>
       )}
+      </div>
+      </div>
     </div>
   );
 }

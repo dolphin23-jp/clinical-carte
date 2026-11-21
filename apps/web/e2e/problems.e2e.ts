@@ -251,6 +251,7 @@ describe('記載全体の P と、経過表の足した段（2026-11-21 の本�
     expect(await page.getByTestId('state-shared-plan').textContent()).toContain('P) 輸液は少量ずつ');
     const notes = await page.getByTestId('state-problem').allTextContents();
     expect(notes.find((t) => t.includes('#2 急性腎障害'))).not.toContain('P) 輸液');
+    await page.getByTestId('tab-course').click();
     await page.getByTestId('tab-overview').click();
     for (const key of ['map', 'jcs', 'o2']) await page.getByTestId(`panel-${key}`).waitFor();
     expect(await fits(page)).toBe(true);
@@ -274,12 +275,12 @@ describe('問題の記載に書かれた値・薬（段3c）と、回診リス�
     await page.getByTestId('tab-problems').click();
     const pneu = page.getByTestId('problem-line').filter({ has: page.getByTestId('thread-name').filter({ hasText: '#1 市中肺炎' }) });
     const related = pneu.getByTestId('thread-related');
-    await related.locator('summary').click();
+    await related.locator(':scope > summary').click();
     const names = await related.getByTestId('trend').locator('.trend-name').allTextContents();
     expect(names.sort()).toEqual(['CRP', 'WBC']); // Na は #2 の範囲なので、#1 には出ない
     expect(await related.getByTestId('thread-related-meds').textContent()).toContain('セフトリアキソン');
     const hypoNa = page.getByTestId('problem-line').filter({ has: page.getByTestId('thread-name').filter({ hasText: '#2 低Na血症' }) });
-    await hypoNa.getByTestId('thread-related').locator('summary').click();
+    await hypoNa.getByTestId('thread-related').locator(':scope > summary').click();
     expect(await hypoNa.getByTestId('thread-related').getByTestId('trend').locator('.trend-name').allTextContents()).toEqual(['Na']);
     expect(await fits(page)).toBe(true);
     if (SHOTS !== undefined) await page.screenshot({ path: `${SHOTS}/related-iphone.png`, fullPage: true });

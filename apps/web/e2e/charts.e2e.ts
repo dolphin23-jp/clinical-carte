@@ -107,7 +107,8 @@ describe('経過表', () => {
     expect(await page.getByTestId('tab-notes').getAttribute('aria-selected')).toBe('true');
     expect(await page.getByTestId('source').first().textContent()).toContain('BT 36.9 HR 80 BP 120/74 RR 16 SpO2 97%');
 
-    // 見出しの帯：最新の値
+    // 最新の値（段H：見出しから「いま」へ移した）
+    await page.getByTestId('tab-state').click();
     const latest = page.getByTestId('latest-item');
     expect(await latest.allTextContents()).toEqual([
       expect.stringContaining('36.9'),
@@ -117,9 +118,14 @@ describe('経過表', () => {
       expect.stringContaining('97'),
     ]);
 
+    await page.getByTestId('tab-course').click();
+
     await page.getByTestId('tab-overview').click();
     for (const id of ['bt', 'hr', 'bp', 'rr', 'spo2']) await page.getByTestId(`panel-${id}`).waitFor();
     expect(await page.getByTestId('panel-bp').locator('.range').count()).toBe(12); // 4回 × 縦の線と上下の印
+    // 既定の範囲は、最後の記録までの3日（段H）。全期間にすると、入院の日（1病日）から
+    expect(await page.getByTestId('range-3d').getAttribute('aria-pressed')).toBe('true');
+    await page.getByTestId('range-all').click();
     expect(await page.getByTestId('timeline').textContent()).toContain('1病日');
     // 判定の語・色を出さない
     expect(await page.getByTestId('timeline').textContent()).not.toMatch(/異常|正常値|高値|低値|警告/u);
@@ -157,16 +163,69 @@ describe('経過表', () => {
     next = { ok: true, answer: EMPTY_ORGANIZE }; // 後の文には、薬の答えを返さない
     await vitals(page, '2026-11-20', '06:00', { BT: '36.8', HR: '78' });
 
+    await page.getByTestId('tab-course').click();
+
     await page.getByTestId('tab-overview').click();
     const meds = page.getByTestId('timeline-medications');
     await meds.waitFor();
     expect(await meds.textContent()).toContain('セフトリアキソン');
     expect(await meds.textContent()).toContain('アモキシシリン');
     expect(await meds.locator('.med-span').count()).toBe(1); // 開始〜中止のあいだだけ。アモキシシリンは1回の記録で、先へ伸ばさない
+    // 既定の範囲（最後の記録までの3日）の外のできごとは段にせず、1行で知らせる。全期間にすると段に出る
+    expect(await page.getByTestId('timeline-outside').textContent()).toContain('この範囲に、できごとの記録はありません');
+    await page.getByTestId('range-all').click();
     expect(await page.getByTestId('timeline-events').textContent()).toContain('できごと');
     expect(await page.getByTestId('timeline').textContent()).toContain('最後の記録より先は');
     expect(await fits(page)).toBe(true);
     if (SHOTS !== undefined) await page.screenshot({ path: `${SHOTS}/medications-iphone.png`, fullPage: true });
+  });
+});
+
+describe('経過（段H。CA-053）', () => {
+  test('日の帯で日を選ぶと、経過表はその日の0〜24時になり、記載もその日になる。範囲のボタン・前後・縮小図で範囲を動かせる', async () => {
+    const page = await openPatient();
+    await vitals(page, '2026-11-17', '10:00', { BT: '38.6', HR: '104' });
+    await vitals(page, '2026-11-19', '06:00', { BT: '37.4', HR: '88' });
+    await vitals(page, '2026-11-19', '18:00', { BT: '37.0', HR: '84' });
+    await page.getByTestId('tab-course').click();
+    const cells = page.getByTestId('day-cell');
+    // 受診の始まりの日から、最後の記録の日まで（記録のない日も並ぶ）
+    expect(await cells.allTextContents()).toEqual([expect.stringContaining('11/17'), expect.stringContaining('11/18'), expect.stringContaining('11/19')]);
+    expect(await cells.nth(1).getAttribute('class')).toContain('empty');
+    const label = page.getByTestId('range-label');
+    await cells.nth(2).click();
+    await expect.poll(() => label.textContent()).toBe('11/19 00:00 〜 11/20 00:00');
+    expect(await page.getByTestId('day-selected').textContent()).toContain('11/19 を見ています');
+    // 前の日へ
+    await page.getByTestId('day-prev').click();
+    await expect.poll(() => label.textContent()).toBe('11/18 00:00 〜 11/19 00:00');
+    // 日を外すと、既定（最後の記録までの3日）
+    await page.getByTestId('day-clear').click();
+    expect(await page.getByTestId('range-3d').getAttribute('aria-pressed')).toBe('true');
+    await page.getByTestId('range-24h').click();
+    const day = await label.textContent();
+    await page.getByTestId('range-prev').click();
+    await expect.poll(() => label.textContent()).not.toBe(day);
+    // 縮小図の左の端を押すと、範囲が最初の記録のほうへ動く
+    await page.getByTestId('minimap-hit').click({ position: { x: 2, y: 10 } });
+    await expect.poll(() => label.textContent()).toContain('11/17');
+    // 投薬・できごとの一覧は、選んだ日の分だけ
+    await cells.nth(2).click();
+    await page.getByTestId('tab-chart').click();
+    await page.getByTestId('note-view').waitFor();
+    expect(await fits(page)).toBe(true);
+    expect(problems).toEqual([]);
+  });
+
+  test('PC の幅では、経過表の右に、その日の記載が並ぶ（2列）', async () => {
+    const page = await openPatient('Desktop Chrome');
+    await vitals(page, '2026-11-19', '06:00', { BT: '37.4', HR: '88' });
+    await page.getByTestId('tab-course').click();
+    await page.getByTestId('timeline').waitFor();
+    const side = page.locator('.course-side');
+    expect(await side.count()).toBe(1);
+    expect(await side.getByTestId('note-view').count()).toBe(1);
+    expect(await fits(page)).toBe(true);
   });
 });
 
@@ -193,6 +252,7 @@ describe('検査値の推移', () => {
       expect(await page.getByTestId('text').inputValue()).toBe(`CRP ${crp} WBC ${wbc}`);
       await sendAndWait(page);
     }
+    await page.getByTestId('tab-course').click();
     await page.getByTestId('tab-values').click();
     const trends = page.getByTestId('trend');
     await expect.poll(() => trends.count()).toBe(2);
@@ -201,6 +261,9 @@ describe('検査値の推移', () => {
     expect(text).toContain('2.1');
     expect(text).toContain('7.6');
     await page.getByTestId('lab-table').waitFor();
+    // 押すと大きく見る（値の一覧つき）
+    await trends.first().getByTestId('trend-expand').click();
+    expect(await trends.first().getByTestId('trend-values').locator('li').count()).toBeGreaterThan(0);
     expect(await fits(page)).toBe(true);
     if (SHOTS !== undefined) await page.screenshot({ path: `${SHOTS}/trends-iphone.png`, fullPage: true });
     expect(problems).toEqual([]);
@@ -218,6 +281,7 @@ describe('単位の「同じ目盛り」（CA-051）', () => {
     await when(page, '2026-11-18', '06:00');
     await page.getByTestId('text').fill('WBC 9800 /μL');
     await sendAndWait(page);
+    await page.getByTestId('tab-course').click();
     await page.getByTestId('tab-values').click();
     const trends = page.getByTestId('trend');
     await expect.poll(() => trends.count()).toBe(2);
