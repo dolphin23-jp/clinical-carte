@@ -3,7 +3,7 @@
 // - 名前は AI が整えたもの。結びつけた「記録に書かれた問題」の名前と、経過の出来事を並べて出す。「AI の整理」の印
 // - 先生は直せる：名前（選別を通す）・確からしさ・状態・並べ替え・外す（外したものは下で戻せる）
 // - 判定しない：色を付けない。確からしさ・状態は、書かれたこと（と AI の整理）を語で出すだけ
-import { COURSE_CATEGORY_NAMES, LIST_ACTIVITIES, LIST_ACTIVITY_NAMES, LIST_CERTAINTIES, LIST_CERTAINTY_NAMES, LIST_NAME_MAX, type ListItem, listBasis, type ListPatch, threadViews } from '@clinical-carte/core';
+import { COURSE_CATEGORY_NAMES, LIST_ACTIVITIES, LIST_ACTIVITY_NAMES, LIST_CERTAINTIES, LIST_CERTAINTY_NAMES, LIST_NAME_MAX, type ListItem, listBasis, type ListPatch, numberedList, threadViews } from '@clinical-carte/core';
 import { useEffect, useRef, useState } from 'react';
 
 import { showDateTime } from './format.ts';
@@ -68,7 +68,8 @@ export function ProblemListView({ patientId, record, builder, onChanged, onLeft 
 
   const threads = threadViews(record.problemThreads, record.problems).threads;
   const items = list?.items ?? [];
-  const shown = items.filter((i) => !i.hidden);
+  // 番号は core の numberedList の1か所（いま・1行の要約・回診リストと同じ）
+  const shown = numberedList(items);
   const hidden = items.filter((i) => i.hidden);
   const courseOf = (item: ListItem): CourseItem[] => item.course.map((p) => record.course.find((c) => c.sourceId === p.sourceId && c.start === p.start)).filter((c): c is CourseItem => c !== undefined);
 
@@ -96,7 +97,7 @@ export function ProblemListView({ patientId, record, builder, onChanged, onLeft 
       )}
       {shown.length > 0 && (
         <ol className="plist-items">
-          {shown.map((item, i) => {
+          {shown.map(({ item, no }, i) => {
             const on = open === item.key;
             const written = item.threadIds.map((id) => threads.find((t) => t.id === id)?.name).filter((n): n is string => n !== undefined);
             return (
@@ -114,7 +115,7 @@ export function ProblemListView({ patientId, record, builder, onChanged, onLeft 
                     {on ? '▾' : '▸'}
                   </span>
                   <strong className="thread-name">
-                    #{String(i + 1)} {item.name}
+                    #{String(no)} {item.name}
                   </strong>
                   <span className="tag">{LIST_CERTAINTY_NAMES[item.certainty]}</span>
                   {item.activity !== 'active' && <span className="tag">{LIST_ACTIVITY_NAMES[item.activity]}</span>}

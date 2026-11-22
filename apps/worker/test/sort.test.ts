@@ -92,6 +92,9 @@ describe('AI のプロブレムリスト（CA-057）', () => {
     const list = (await s.record()).problemList;
     expect(list?.items.map((i) => [i.name, i.certainty, i.since])).toEqual([['市中肺炎疑い', 'suspected', '2026-11-17T17:00']]);
     expect(list?.items[0]?.threadIds).toEqual([(await s.record()).problemThreads[0]?.id]);
+    // 回診リストの問題は、リストの番号と名前（2026-11-22。記録に書かれた「#1 発熱」ではなく）
+    const patients = (await (await s.w.call('GET', '/api/patients', { cookie: s.cookie })).json()) as { patients: { round: { problems: string[]; listed: boolean } }[] };
+    expect(patients.patients[0]?.round).toMatchObject({ problems: ['#1 市中肺炎疑い'], listed: true });
   });
 
   test('先生の直し：名前は選別を通す（置き換わる）。状態・外す・並べ替え。組み直しても引き継ぐ。直した記録が残る', async () => {

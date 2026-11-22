@@ -96,6 +96,7 @@ function RoundRow({ summary, today, onOpen }: { summary: PatientSummary; today: 
         <span className="row-title">{headline({ ...patient, encounter: latest }, today)}</span>
         <span className="round-problems" data-testid="round-problems">
           {day !== null && <span className="tag">{`${String(day)}病日（記録の上で）`}</span>}
+          {round.listed && <span className="tag ai-tag">AI の整理</span>}
           {round.problems.length === 0 ? 'いまの問題の記載なし' : round.problems.join('、')}
         </span>
         <span className="row-sub">
