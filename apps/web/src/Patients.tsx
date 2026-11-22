@@ -2,6 +2,7 @@
 // 回診リストの行は、自動の見出し・記録の上での病日・いまの問題の名前・記録の上で最後の日時だけ（作文しない。判定しない）。
 // 受け持ち全員の申し送り（段K7。CA-067）：患者ごとに、1行の要約と、残した申し送りのいちばん新しいもの（先生が選んだ重症度・日）を読むだけ。
 // AI は呼ばない（全員の分を自動で出さない）。申し送りを出す・直すのは、患者の画面の「記載」。
+// 受け持ちから探す（段K8。CA-070）：保存した記録から字で探す（AI を使わない。探す字は保存しない）。当たりを押すと、その患者の記載を開く。
 import { AGE_MAX, DOC_ORIGIN_NAMES, DOC_SECTIONS, dayOnRecord, ENCOUNTER_KIND_LABELS, ENCOUNTER_KINDS, type EncounterKind, headline, oneLinerOf, SEX_LABELS, SEXES, type SavedHandoff, type Sex } from '@clinical-carte/core';
 import { type SyntheticEvent, useCallback, useEffect, useState } from 'react';
 
@@ -9,8 +10,9 @@ import { SeverityTag } from './DocumentView.tsx';
 import { joinDateTime, nowLocal, showDateTime } from './format.ts';
 import { errorMessage } from './messages.ts';
 import { createPatient, listHandoffs, listPatients, type PatientSummary } from './net/api.ts';
+import { type OpenFocus, SearchPanel } from './SearchView.tsx';
 
-export function Patients({ onOpen, onLeft }: { onOpen: (patientId: string) => void; onLeft: () => void }) {
+export function Patients({ onOpen, onLeft }: { onOpen: (patientId: string, focus?: OpenFocus) => void; onLeft: () => void }) {
   const [list, setList] = useState<{ patients: readonly PatientSummary[]; today: string } | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
@@ -82,6 +84,7 @@ export function Patients({ onOpen, onLeft }: { onOpen: (patientId: string) => vo
           onLeft={onLeft}
         />
       )}
+      {list !== null && list.patients.length > 0 && <SearchPanel onOpen={onOpen} onLeft={onLeft} />}
       {list !== null && handoffs !== null && <HandoffAll patients={list.patients.filter((p) => p.latest !== null && p.latest.end === null)} today={list.today} handoffs={handoffs} onOpen={onOpen} />}
       {list === null ? (
         <p className="note">読み込んでいます…</p>

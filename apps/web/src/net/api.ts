@@ -1,6 +1,9 @@
 // サーバーの API を呼ぶ、ただ1つの場所（ESLint と試験が見張る）。宛先は、自分のオリジンの /api/ だけ。
 // 印（Cookie）は、ブラウザが付ける。画面のプログラムからは読めない（HttpOnly）。
 import type {
+  SearchHit,
+  SearchPatient,
+  SearchEncounter,
   AuthorRole,
   Comparator,
   DeviceKind,
@@ -826,4 +829,19 @@ export async function markPending(patientId: string, key: string, mark: PendingM
 /** 記録に聞く（保存しない。問いも答えも、画面のメモリだけ） */
 export async function askRecord(patientId: string, question: string): Promise<Result<AskReply>> {
   return field<AskReply>(await call('POST', `patients/${encodeURIComponent(patientId)}/ask`, { question }), 'answer');
+}
+
+/** 受け持ちを横断する検索（段K8。CA-070）の答え。保存しない（画面のメモリだけ） */
+export interface SearchReply {
+  readonly total: number;
+  readonly shown: number;
+  readonly patients: readonly { readonly patientId: string; readonly headline: string; readonly patient: SearchPatient; readonly encounter: SearchEncounter | null; readonly total: number; readonly hits: readonly SearchHit[] }[];
+}
+
+/** 受け持ちから探す（AI を使わない）。問いは本文で送る（道の字に載せない）。サーバーは保存しない */
+export async function searchAll(q: string): Promise<Result<SearchReply>> {
+  const result = await call('POST', 'search', { q });
+  if (!result.ok) return result;
+  const { total, shown, patients } = result.value;
+  return typeof total === 'number' && typeof shown === 'number' && Array.isArray(patients) ? { ok: true, value: { total, shown, patients: patients as SearchReply['patients'] } } : { ok: false, error: 'network' };
 }

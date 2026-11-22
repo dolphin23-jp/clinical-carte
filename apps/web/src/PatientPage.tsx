@@ -77,6 +77,8 @@ import { SupportPanel, useSupport } from './SupportView.tsx';
 import { AskPanel } from './AskView.tsx';
 import { PendingPanel, usePending } from './PendingView.tsx';
 import { nextDayLabel } from './NextDayAsk.tsx';
+import { FluidLine, FluidView } from './FluidView.tsx';
+import { type OpenFocus, Snippet } from './SearchView.tsx';
 import { DocumentView } from './DocumentView.tsx';
 
 // 見方（段H。CA-053）：9つのタブを4つにまとめた。経過・検査・投薬・できごと・記載は、どれも同じ時間の上のものなので、
@@ -88,10 +90,11 @@ const TABS: readonly (readonly [Tab, string])[] = [
   ['problems', '問題'],
   ['notes', '記録'],
 ];
-type CourseView = 'overview' | 'values' | 'medications' | 'events' | 'chart';
+type CourseView = 'overview' | 'values' | 'fluid' | 'medications' | 'events' | 'chart';
 const COURSE_VIEWS: readonly (readonly [CourseView, string])[] = [
   ['overview', '経過表'],
   ['values', '検査'],
+  ['fluid', '水分'],
   ['medications', '投薬'],
   ['events', '時系列'],
   ['chart', '記載'],
@@ -127,11 +130,13 @@ const newestFirst = (a: Source, b: Source): number => {
   return a.at < b.at ? 1 : -1;
 };
 
-export function PatientPage({ patientId, onBack, onLeft }: { patientId: string; onBack: () => void; onLeft: () => void }) {
+export function PatientPage({ patientId, focus = null, onBack, onLeft }: { patientId: string; focus?: OpenFocus | null; onBack: () => void; onLeft: () => void }) {
   const [record, setRecord] = useState<PatientRecord | null>(null);
   const [message, setMessage] = useState<string | null>(null);
-  const [encounterId, setEncounterId] = useState<string | null>(null);
-  const [tab, setTab] = useState<Tab>('state');
+  // 受け持ちから探した当たり（段K8）から開いたときは、その記載の受診・記録のタブ（AI のプロブレムリストの項目は、問題のタブ）
+  const [encounterId, setEncounterId] = useState<string | null>(focus?.kind === 'source' ? focus.encounterId : null);
+  const [tab, setTab] = useState<Tab>(focus === null ? 'state' : focus.kind === 'source' ? 'notes' : 'problems');
+  const [found, setFound] = useState<OpenFocus | null>(focus);
   const [view, setView] = useState<CourseView>('overview');
   // 日の帯で選んだ日と、経過表の表示の範囲（画面のメモリだけ）
   const [day, setDay] = useState<string | null>(null);
@@ -143,7 +148,7 @@ export function PatientPage({ patientId, onBack, onLeft }: { patientId: string; 
   // 記録のタブ：開いた記載（段I。既定は、いちばん新しいものだけ開く）。画面のメモリだけ
   // まとめて整理し直す（段J。CA-056）：この受診の記載を、古い順に1件ずつ（AI の回数は記載の数）
   const [reorganizing, setReorganizing] = useState<{ done: number; total: number; failed: number } | null>(null);
-  const [opened, setOpened] = useState<ReadonlyMap<string, boolean>>(new Map());
+  const [opened, setOpened] = useState<ReadonlyMap<string, boolean>>(focus?.kind === 'source' ? new Map([[focus.sourceId, true]]) : new Map());
   const composerRef = useRef<HTMLElement>(null);
   const [panel, setPanel] = useState<'none' | 'encounter' | 'end' | 'kind' | 'delete'>('none');
 
@@ -158,6 +163,15 @@ export function PatientPage({ patientId, onBack, onLeft }: { patientId: string; 
     });
   }, [patientId, onLeft, onBack]);
   useEffect(load, [load]);
+  // 探した当たりの記載へ、読み込んだあと1回だけ動く（画面の位置だけ。何も残さない）
+  const scrolled = useRef(false);
+  useEffect(() => {
+    if (record === null || found?.kind !== 'source' || scrolled.current) return;
+    scrolled.current = true;
+    requestAnimationFrame(() => {
+      document.getElementById(`source-${found.sourceId}`)?.scrollIntoView({ block: 'start' });
+    });
+  }, [record, found]);
   // AI のプロブレムリスト（CA-057）：記録が増えたら、自動で組み直す（いま・問題のタブの主な見方）
   const listBuilder = useProblemList(patientId, record, load, onLeft);
   // AI の臨床支援（段K5）：プロブレムリストが組み直されたら、自動で組み直す（いまのタブ）
@@ -453,10 +467,26 @@ export function PatientPage({ patientId, onBack, onLeft }: { patientId: string; 
             </button>
           ))}
         </div>
+        {found !== null && ((tab === 'notes' && found.kind === 'source') || (tab === 'problems' && found.kind === 'problems')) && (
+          <div className="search-found" data-testid="search-found">
+            <span className="note">受け持ちから探した字の場所（{found.kind === 'source' ? 'この記載を開いています' : 'AI のプロブレムリストの項目です'}）：</span>
+            <Snippet hit={found.hit} />
+            <button
+              type="button"
+              className="button link small"
+              onClick={() => {
+                setFound(null);
+              }}
+            >
+              閉じる
+            </button>
+          </div>
+        )}
         {tab === 'state' && current !== null && state !== null && (
           <>
             <div className="state-latest">
               <LatestStrip panels={panels} />
+              <FluidLine observations={observations} />
             </div>
             <StateView
               state={state}
@@ -525,6 +555,7 @@ export function PatientPage({ patientId, onBack, onLeft }: { patientId: string; 
                     )}
                   </>
                 )}
+                {view === 'fluid' && <FluidView observations={observations} encounter={current} day={day} />}
                 {view === 'medications' && (
                   <>
                     {day !== null && <p className="note">{`${day.slice(5).replace('-', '/')} の記録だけを出しています（日を外すと、全期間）。`}</p>}
@@ -882,13 +913,13 @@ function SourceCard({
   );
   if (!open)
     return (
-      <li className="source folded" data-testid="source">
+      <li className="source folded" id={`source-${source.id}`} data-testid="source">
         {head}
       </li>
     );
 
   return (
-    <li className="source" data-testid="source">
+    <li className="source" id={`source-${source.id}`} data-testid="source">
       {head}
       {previous !== null && (
         <div className="row-actions">

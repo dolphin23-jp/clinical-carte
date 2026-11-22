@@ -33,3 +33,5 @@ export * from './presets/index.ts';
 export * from './support/support.ts';
 export * from './pending/pending.ts';
 export * from './ask/ask.ts';
+export * from './views/fluid.ts';
+export * from './search/search.ts';

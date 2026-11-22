@@ -1,6 +1,6 @@
 // 記録の読み書き（段1：患者・受診・取り込んだ文・測定値）。書く表は、docs/04 の 6 の一覧のとおり。
 // ここは、形を確かめた後の値だけを受け取る（形の確かめは handler.ts、文の選別は intake.ts）。
-import { COURSE_CATEGORIES, type CourseCategory, DOC_ORIGINS, DOC_TYPES, type DocOrigin, type DocType, isDocOrigin, isHandoffSeverity, latestHandoff, type HandoffSeverity, type SavedHandoff, type ListItem, ListItemShape, roundSummary, type RoundSummary, type SavedDocument, PendingBody, SavedSection, SupportBody } from '@clinical-carte/core';
+import { COURSE_CATEGORIES, type CourseCategory, type SearchInput, DOC_ORIGINS, DOC_TYPES, type DocOrigin, type DocType, isDocOrigin, isHandoffSeverity, latestHandoff, type HandoffSeverity, type SavedHandoff, type ListItem, ListItemShape, roundSummary, type RoundSummary, type SavedDocument, PendingBody, SavedSection, SupportBody } from '@clinical-carte/core';
 import { z } from 'zod';
 import { ApRef, type ApOrigin, type ApPart, type FactField, type FactKind, type PlanKind, USER_EDIT_FIELDS, USER_EDIT_TARGETS, type UserEditField, type UserEditTarget } from '@clinical-carte/core';
 import type { AuthorRole, Comparator, EncounterKind, EventKind, HistoryAction, LabRow, MedicationAction, OrganizeReport, ProblemActivity, ProblemStatus, SegmentLabel, Sex, SourceKind } from '@clinical-carte/core';
@@ -678,6 +678,64 @@ export async function listPatients(db: Db): Promise<PatientSummary[]> {
     })
     // いちばん新しい受診の開始が新しい順（受け持ち中の患者が上に来る）
     .sort((a, b) => (b.latest?.start ?? '').localeCompare(a.latest?.start ?? '') || b.patient.id.localeCompare(a.patient.id));
+}
+
+
+/**
+ * 受け持ちを横断する検索（段K8。CA-070）の資料：すべての患者の、保存した文（識別情報を置き換えた後）と、整理した事実の名前・題・要約。
+ * 読むだけ（何も書かない）。外した事実・隠した項目・外した筋の記載は、渡さない（見方と同じ）。問いは、ここに来ない
+ */
+export async function searchInput(db: Db): Promise<SearchInput> {
+  const [patients, encounters, sources, medications, events, course, observations, problems, threads, lists] = await Promise.all([
+    db.prepare('SELECT id, age, age_on, sex, created_on FROM patients ORDER BY id').all(),
+    db.prepare('SELECT id, patient_id, kind, started, ended FROM encounters ORDER BY started, id').all(),
+    db.prepare('SELECT id, patient_id, encounter_id, kind, author_role, at, entered_at, text, replaced, organized, organized_version, organize_report, next_day_from FROM sources ORDER BY id').all(),
+    db.prepare('SELECT id, source_id, encounter_id, name, dose_text, action, at, at_approx, span_start, span_end, excluded, origin FROM medications ORDER BY source_id, span_start').all(),
+    db.prepare('SELECT id, source_id, encounter_id, kind, title, at, at_approx, span_start, span_end, excluded, origin FROM events ORDER BY source_id, span_start').all(),
+    db.prepare('SELECT id, source_id, encounter_id, at, at_approx, category, summary, span_start, span_end FROM course_items ORDER BY source_id, span_start').all(),
+    db.prepare('SELECT id, source_id, encounter_id, at, name, name_raw, kind, value, comparator, value_text, unit, span_start, span_end, excluded, origin FROM observations ORDER BY source_id, ord').all(),
+    db.prepare(`SELECT ${PROBLEM_COLUMNS} FROM problems ORDER BY source_id, span_start`).all(),
+    db.prepare(`SELECT patient_id, ${THREAD_COLUMNS} FROM problem_threads ORDER BY id`).all(),
+    db.prepare('SELECT patient_id, made_at, prompt_version, basis, items FROM problem_lists').all(),
+  ]);
+  const sourceList = sources.results.map(toSource).filter(present);
+  const atOf = new Map(sourceList.map((s) => [s.id, s.at]));
+  const threadRows = threads.results.flatMap((row) => {
+    const t = toThread(row);
+    const patientId = text(row, 'patient_id');
+    return t === null || patientId === null ? [] : [{ ...t, patientId }];
+  });
+  const excludedThreads = new Set(threadRows.filter((t) => t.excluded).map((t) => t.id));
+  const mentions = problems.results.map(toProblem).filter(present);
+  // 打って直した名前の開く場所：その筋の、いちばん新しい記載
+  const latestMention = new Map<string, { sourceId: string; start: number; at: string | null }>();
+  for (const m of mentions) {
+    if (m.threadId === null) continue;
+    const at = atOf.get(m.sourceId) ?? null;
+    const prev = latestMention.get(m.threadId);
+    if (prev === undefined || (at !== null && (prev.at === null || at >= prev.at))) latestMention.set(m.threadId, { sourceId: m.sourceId, start: m.start, at });
+  }
+  return {
+    patients: patients.results.map(toPatient).filter(present),
+    encounters: encounters.results.map(toEncounter).filter(present),
+    sources: sourceList.map((s) => ({ id: s.id, patientId: s.patientId, encounterId: s.encounterId, kind: s.kind, at: s.at, text: s.text })),
+    medications: medications.results.map(toMedication).filter(present).map((m) => ({ id: m.id, sourceId: m.sourceId, start: m.start, end: m.end, name: m.name, excluded: m.excluded })),
+    events: events.results.map(toEvent).filter(present).map((e) => ({ id: e.id, sourceId: e.sourceId, start: e.start, end: e.end, title: e.title, excluded: e.excluded })),
+    course: course.results.map(toCourse).filter(present).map((c) => ({ id: c.id, sourceId: c.sourceId, start: c.start, end: c.end, summary: c.summary })),
+    observations: observations.results.map(toObservation).filter(present).map((o) => ({ id: o.id, sourceId: o.sourceId, start: o.start, end: o.end, name: o.name, excluded: o.excluded, at: o.at })),
+    problems: mentions.filter((m) => m.threadId === null || !excludedThreads.has(m.threadId)).map((m) => ({ id: m.id, sourceId: m.sourceId, start: m.start, end: m.end, name: m.name })),
+    typedThreads: threadRows
+      .filter((t) => !t.excluded && t.mergedInto === null && t.typedName !== null && t.typedName !== '')
+      .map((t) => {
+        const where = latestMention.get(t.id);
+        return { id: t.id, patientId: t.patientId, name: t.typedName ?? '', sourceId: where?.sourceId ?? null, start: where?.start ?? 0 };
+      }),
+    listItems: lists.results.flatMap((row) => {
+      const patientId = text(row, 'patient_id');
+      const list = problemListOf(row);
+      return patientId === null || list === null ? [] : list.items.filter((i) => !i.hidden).map((i) => ({ patientId, key: i.key, name: i.name }));
+    }),
+  };
 }
 
 /** 受け持ち全員の申し送り（段K7）：患者ごとに、いちばん新しい受診の、いちばん新しい申し送り（残したものだけ。AI は呼ばない） */

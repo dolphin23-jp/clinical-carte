@@ -215,7 +215,7 @@ AI が返すのは、次の3つだけ（構造化した出力）。
 
 - 打った原文・AI へ送った文・AI の答えそのものは、どの表にも書かない。ログにも出さない。
 - 表を足すときは、先にこの一覧を直す。
-- いまある表（段0〜段5）は `devices`・`entrance_daily`・`patients`・`encounters`・`sources`・`observations`・`usage_daily`・`schema_migrations`・`segments`・`medications`・`events`・`problems`・`problem_threads`・`history`・`fact_edits`・`user_edits`・`ap_notes`・`ap_history`・`scale_links`・`documents`・`document_history`・`handoffs`・`course_items`・`problem_lists`・`problem_list_edits`・`clinical_support`・`pending_results`・`pending_result_edits`。記録への質問（段K6。CA-066）と、前の記載との違い（段K7。CA-068）は、どの表にも書かない。`apps/worker/test/writes.test.ts` が、migrations が作る表と、ソースの SQL が書く表を、この一覧と突き合わせる。
+- いまある表（段0〜段5）は `devices`・`entrance_daily`・`patients`・`encounters`・`sources`・`observations`・`usage_daily`・`schema_migrations`・`segments`・`medications`・`events`・`problems`・`problem_threads`・`history`・`fact_edits`・`user_edits`・`ap_notes`・`ap_history`・`scale_links`・`documents`・`document_history`・`handoffs`・`course_items`・`problem_lists`・`problem_list_edits`・`clinical_support`・`pending_results`・`pending_result_edits`。記録への質問（段K6。CA-066）と、前の記載との違い（段K7。CA-068）と、水分の出入りの集計・受け持ちを横断する検索（段K8。CA-069・CA-070）は、どの表にも書かない。`apps/worker/test/writes.test.ts` が、migrations が作る表と、ソースの SQL が書く表を、この一覧と突き合わせる。
 
 ## 7. 段1 で作ったものと、案との違い
 
@@ -403,3 +403,9 @@ AI が返すのは、次の3つだけ（構造化した出力）。
 - カルテ記載の `documents` の type には入れない（`documents` の CHECK を変えるには表を作り直す必要があり、表を消す文を書かない決まりのため、表を分けた）。患者を消すと消える（`PATIENT_TABLES`）。
 - 回診リスト（`GET /api/patients`）に渡すのは、いちばん新しい受診の、いちばん新しい申し送りの id・日・重症度だけ（文は渡さない）。受け持ち全員の申し送り（`GET /api/handoffs`）は、患者ごとに、そのいちばん新しいものを、文ごと返す（読むだけ。AI を呼ばない）。
 - 前の記載との違い（CA-068）は、表を作らない。画面が、保存した文と区切りから、決定論で作る（core の `noteDiff`）。
+
+## 20. 水分の出入りと、受け持ちを横断する検索（段K8。CA-069・CA-070）
+
+- 表は足さない。どちらも、保存したものから、その場で計算する（決定論。AI を使わない）。
+- 水分の出入り（`fluidDays`）：`observations` の値（外した値・同じ値の二重を除いたもの）から、日ごとに。書かれた単位のまま足し、換算しない。結果は保存しない。名前の表に足したのは、名前・別名・単位の書き方だけ（`labs/extra-names.ts`）で、すでに保存した値は書き換えない（新しい名前は、これから読む値に効く）。
+- 受け持ちを横断する検索（`POST /api/search`）：`patients`・`encounters`・`sources`（保存した文）・`medications`・`events`・`course_items`・`observations`・`problems`・`problem_threads`・`problem_lists` を読むだけ。**問いは、どの表にも書かない・ログに出さない**（`apps/worker/test/search.test.ts`）。答えは画面のメモリだけ。

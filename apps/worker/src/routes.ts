@@ -24,6 +24,10 @@ import {
   SupportRequest,
   AskRequest,
   findShapes,
+  headline,
+  SearchRequest,
+  searchQueryProblem,
+  searchRecords,
   PendingPatch,
   FACT_KINDS,
   type FactKind,
@@ -71,6 +75,7 @@ import {
   latestHandoffs,
   listPatients,
   listScaleLinks,
+  searchInput,
   type NewObservation,
   observationOf,
   type Patient,
@@ -173,6 +178,24 @@ export async function recordApi(request: Request, path: string, deps: RecordDeps
 
   // 受け持ち全員の申し送り（段K7）：患者ごとに、いちばん新しい受診の、いちばん新しい残した申し送り（読むだけ。AI は呼ばない）
   if (path === '/api/handoffs' && method === 'GET') return reply(200, { handoffs: await latestHandoffs(db) });
+
+  // 受け持ちを横断する検索（段K8。CA-070）：決定論で、AI を使わない。読むだけ（何も書かない）。
+  // 問いは保存しない・ログに出さない・外へ送らない（本文で受ける：道の字に問いを載せない）。識別情報の形の問いは、画面と同じ関数で断る
+  if (path === '/api/search') {
+    if (method !== 'POST') return null;
+    const body = await readBody(request, SearchRequest);
+    if (body === null) return bad();
+    const problem = searchQueryProblem(body.q);
+    if (problem === 'shape') return reply(422, { error: 'shape' });
+    if (problem !== null) return bad();
+    const result = searchRecords(await searchInput(db), body.q);
+    return reply(200, {
+      today,
+      total: result.total,
+      shown: result.shown,
+      patients: result.patients.map((p) => ({ ...p, headline: headline({ ...p.patient, encounter: p.encounter }, today) })),
+    });
+  }
 
   const onePatient = /^\/api\/patients\/([^/]+)$/.exec(path);
   if (onePatient) {
