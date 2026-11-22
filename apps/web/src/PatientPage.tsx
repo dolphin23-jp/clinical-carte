@@ -225,6 +225,19 @@ export function PatientPage({ patientId, onBack, onLeft }: { patientId: string; 
           observations,
           list: record.problemList?.items ?? [],
         });
+  // スコア・診断基準（段K4）：この受診の測定値（外した値・同じ値の二重を除いたもの）と、いまの問題の名前（記録に書かれた名前と、AI のプロブレムリストの活動中の項目）
+  const scoreInput =
+    current === null
+      ? null
+      : {
+          patient: record.patient,
+          encounter: current,
+          observations,
+          problems: [
+            ...currentThreads.map((t) => ({ name: t.name, source: 'problem' as const })),
+            ...(record.problemList?.items ?? []).filter((i) => !i.hidden && i.activity === 'active').map((i) => ({ name: i.name, source: 'ai' as const })),
+          ],
+        };
   // 基準範囲の印（段K3）に使う、いまの年齢と性別
   const refPatient = { age: ageNow(record.patient.age, record.patient.ageOn, record.today), sex: record.patient.sex };
   // ボード（段K2）の問題の帯：AI のプロブレムリストの活動中の項目（番号はリストの番号）
@@ -441,6 +454,7 @@ export function PatientPage({ patientId, onBack, onLeft }: { patientId: string; 
               list={(record.problemList?.items ?? []).filter((i) => !i.hidden)}
               listBusy={listBuilder.busy}
               patient={refPatient}
+              scores={scoreInput}
               onProblems={() => {
                 setTab('problems');
               }}

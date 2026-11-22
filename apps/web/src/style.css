@@ -2418,3 +2418,128 @@ td.ref-low { color: var(--ref-low); background: var(--ref-low-bg); font-weight: 
 .ref-tag.ref-high { color: var(--ref-high); background: var(--ref-high-bg); }
 .ref-tag.ref-low { color: var(--ref-low); background: var(--ref-low-bg); }
 .ref-band { fill: var(--ref-band); fill-opacity: 0.1; }
+
+/* ===== 段K4：スコア・診断基準（臨床支援）。色だけに頼らず、字（満たす・未入力など）と、基準の項目・出典を添える ===== */
+:root {
+  --score-met: #b42318;
+  --score-met-bg: #fdecea;
+  --score-near: #8a5a00;
+  --score-near-bg: #fdf3dc;
+  --score-band: #1f6f6a;
+  --score-band-bg: #e3efed;
+  --score-open: #5b6765;
+  --score-open-line: #c9d3d0;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --score-met: #f3a29a;
+    --score-met-bg: #3a1f1c;
+    --score-near: #f0c674;
+    --score-near-bg: #3a2f14;
+    --score-band: #6fc3bb;
+    --score-band-bg: #1f3331;
+    --score-open: #9aa8a5;
+    --score-open-line: #3a4846;
+  }
+}
+
+.scores-summary {
+  font-weight: 400;
+  font-size: 13px;
+  color: var(--muted);
+}
+.preset-card {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 8px 10px;
+  min-width: 0;
+}
+.preset-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+}
+.preset-name {
+  overflow-wrap: anywhere;
+}
+.preset-body {
+  display: grid;
+  gap: 6px;
+  margin-top: 6px;
+  min-width: 0;
+}
+.score-tag {
+  display: inline-block;
+  padding: 1px 8px;
+  border-radius: 999px;
+  font-size: 12.5px;
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+.score-tag.score-met { color: var(--score-met); background: var(--score-met-bg); }
+.score-tag.score-near { color: var(--score-near); background: var(--score-near-bg); }
+.score-tag.score-band { color: var(--score-band); background: var(--score-band-bg); }
+.score-tag.score-not { color: var(--ink); background: var(--tag-bg); font-weight: 600; }
+.score-tag.score-open { color: var(--score-open); border: 1px dashed var(--score-open-line); font-weight: 600; }
+.unconfirmed-tag {
+  color: var(--muted);
+  background: transparent;
+  border: 1px solid var(--line);
+}
+.preset-items {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 6px;
+}
+.preset-item {
+  border-top: 1px solid var(--line);
+  padding-top: 6px;
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+.preset-item-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px;
+}
+.preset-item-label {
+  flex: 1 1 12em;
+  overflow-wrap: anywhere;
+}
+.item-state {
+  font-size: 12.5px;
+  font-weight: 700;
+  padding: 0 6px;
+  border-radius: 6px;
+}
+.item-state.item-yes { color: var(--score-met); background: var(--score-met-bg); }
+.item-state.item-plain { color: var(--ink); background: var(--tag-bg); }
+.item-state.item-open { color: var(--score-open); border: 1px dashed var(--score-open-line); }
+.preset-points {
+  color: var(--muted);
+  font-size: 12.5px;
+  font-variant-numeric: tabular-nums;
+}
+.preset-item-from {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12.5px;
+  overflow-wrap: anywhere;
+}
+.preset-picker > summary {
+  cursor: pointer;
+  color: var(--accent);
+  font-size: 14px;
+}
+.preset-area {
+  display: grid;
+  gap: 4px;
+  margin-top: 8px;
+}
