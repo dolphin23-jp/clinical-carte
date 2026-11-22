@@ -17,6 +17,15 @@ import {
   documentMaterial,
   documentMessage,
   findShapes,
+  foldedEventIds,
+  foldedMedicationIds,
+  foldedObservationIds,
+  handoffContext,
+  type HandoffContext,
+  type HandoffNew,
+  type HandoffPatch,
+  patientState,
+  READ_VALUES_KINDS,
   japanDateTime,
   type RefSource,
   replaceShapes,
@@ -29,7 +38,7 @@ import {
 import { selectTexts, type SelectOutcome } from './ap.ts';
 import type { Db, Statement } from './db.ts';
 import type { Organizer } from './organizer.ts';
-import { documentOf, DOCUMENT_COLUMNS, getEncounter, getRecord } from './records.ts';
+import { documentOf, DOCUMENT_COLUMNS, type Encounter, getEncounter, getRecord, HANDOFF_COLUMNS, handoffOf, type PatientRecord } from './records.ts';
 import { type BookSearcher, bookSources, webSources } from './references.ts';
 import type { Runtime } from './runtime.ts';
 import type { Selector, SelectorFailure } from './selector.ts';
@@ -78,7 +87,37 @@ export async function documentMaterialFor(db: Db, encounterId: string, type: Doc
     apNotes: record.apNotes,
     course: record.course,
     problemList: (record.problemList?.items ?? []).filter((i) => !i.hidden),
+    ...(type === 'handoff' ? { handoff: handoffFor(record, encounter, day) } : {}),
   });
+}
+
+/**
+ * 申し送りの資料（段K7）：いまの状態（画面の「いま」と同じ見方：外した事実と、同じ値・同じ日の二重を除く）から、決定論で作る。
+ * 年齢は、記載の日の時点（カルテ記載と同じ）
+ */
+export function handoffFor(record: PatientRecord, encounter: Encounter, day: string): HandoffContext {
+  const kindOf = new Map(record.sources.map((src) => [src.id, src.kind]));
+  const values = record.observations.filter((o) => !o.excluded);
+  const foldedValues = foldedObservationIds(values, (id) => READ_VALUES_KINDS.includes(kindOf.get(id) ?? 'unsorted'));
+  const meds = record.medications.filter((m) => !m.excluded && m.encounterId === encounter.id);
+  const events = record.events.filter((e) => !e.excluded && e.encounterId === encounter.id);
+  const foldedMeds = foldedMedicationIds(meds);
+  const foldedEvents = foldedEventIds(events);
+  const state = patientState({
+    patient: record.patient,
+    encounter,
+    today: day,
+    sources: record.sources,
+    segments: record.segments,
+    threads: record.problemThreads,
+    mentions: record.problems,
+    medications: meds.filter((m) => !foldedMeds.has(m.id)),
+    events: events.filter((e) => !foldedEvents.has(e.id)),
+    observations: values.filter((o) => o.encounterId === encounter.id && !foldedValues.has(o.id)),
+    list: record.problemList?.items ?? [],
+  });
+  const texts = new Map(record.sources.map((src) => [src.id, src.text]));
+  return handoffContext(state, (id) => texts.get(id) ?? null, record.pending?.body.items ?? []);
 }
 
 /** 画面に返す出典（題・頁・URL。抜き出しの字は返さない） */
@@ -204,6 +243,54 @@ export async function patchDocument(db: Db, id: string, patch: DocumentPatch, se
     history(db, runtime, patientId, id, 'edit', origin),
   ]);
   return { ok: true, id };
+}
+
+// ---------------------------------------------------------------------------
+// 申し送り（段K7。CA-067）を残す・直す・消す：重症度は、先生が選んだもの（頼みの severity）だけ。文は選別（C-1）を通す。
+// 残した・直した・消した記録は、カルテ記載と同じ document_history（文は入らない）
+
+export async function addHandoff(db: Db, encounterId: string, body: HandoffNew, selector: Selector, runtime: Runtime): Promise<SaveOutcome> {
+  const encounter = await getEncounter(db, encounterId);
+  if (encounter === null) return { ok: false, error: 'not_found' };
+  if (!sectionsFit('handoff', body.sections)) return { ok: false, error: 'bad_request' };
+  const selected = await selectSections(body.sections, selector);
+  if (!selected.ok) return selected;
+  const id = ulid(runtime.now(), runtime.randomBytes(ULID_RANDOM_BYTES));
+  const now = japanDateTime(runtime.now());
+  const origin = body.origin === 'self' ? 'self' : body.edited ? 'ai_edited' : 'ai';
+  await db.batch([
+    db
+      .prepare('INSERT INTO handoffs (id, patient_id, encounter_id, day, severity, sections, origin, entered_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)')
+      .bind(id, encounter.patientId, encounterId, body.day, body.severity, JSON.stringify(selected.sections), origin, now, now),
+    history(db, runtime, encounter.patientId, id, 'add', origin),
+  ]);
+  return { ok: true, id };
+}
+
+export async function patchHandoff(db: Db, id: string, patch: HandoffPatch, selector: Selector, runtime: Runtime): Promise<SaveOutcome> {
+  const row = await db.prepare(`SELECT patient_id, ${HANDOFF_COLUMNS} FROM handoffs WHERE id = ?`).bind(id).first();
+  const handoff = handoffOf(row);
+  const patientId = row?.['patient_id'];
+  if (handoff === null || typeof patientId !== 'string') return { ok: false, error: 'not_found' };
+  if (!sectionsFit('handoff', patch.sections)) return { ok: false, error: 'bad_request' };
+  const selected = await selectSections(patch.sections, selector);
+  if (!selected.ok) return selected;
+  // 重症度だけを選び直した（文が同じ）なら、誰の文かは変えない
+  const sameText = handoff.sections.length === patch.sections.length && patch.sections.every((x) => handoff.sections.find((y) => y.key === x.key)?.text === x.text);
+  const origin = sameText ? handoff.origin : handoff.origin === 'self' ? 'self' : 'ai_edited';
+  await db.batch([
+    db.prepare('UPDATE handoffs SET severity = ?, sections = ?, origin = ?, updated_at = ? WHERE id = ?').bind(patch.severity, JSON.stringify(selected.sections), origin, japanDateTime(runtime.now()), id),
+    history(db, runtime, patientId, id, 'edit', origin),
+  ]);
+  return { ok: true, id };
+}
+
+export async function deleteHandoff(db: Db, id: string, runtime: Runtime): Promise<boolean> {
+  const row = await db.prepare('SELECT patient_id FROM handoffs WHERE id = ?').bind(id).first();
+  const patientId = row?.['patient_id'];
+  if (row === null || typeof patientId !== 'string') return false;
+  await db.batch([db.prepare('DELETE FROM handoffs WHERE id = ?').bind(id), history(db, runtime, patientId, id, 'delete', null)]);
+  return true;
 }
 
 export async function deleteDocument(db: Db, id: string, runtime: Runtime): Promise<boolean> {

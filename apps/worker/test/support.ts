@@ -10,7 +10,7 @@ import type { Db, Statement } from '../src/db.ts';
 import { handle, type HandlerDeps } from '../src/handler.ts';
 import { MIGRATIONS as MIGRATION_LIST } from '../src/migrations.gen.ts';
 import { type Runtime, webRuntime } from '../src/runtime.ts';
-import type { DocumentResult, LinkerResult, Organizer, OrganizerResult, ProblemListResult, ResearchResult, ReviseResult, SupportResult } from '../src/organizer.ts';
+import type { AskResult, DocumentResult, LinkerResult, Organizer, OrganizerResult, PendingResultAnswer, PlanResultAnswer, ProblemListResult, ResearchResult, ReviseResult, SupportResult } from '../src/organizer.ts';
 import type { OrganizePromptChoice } from '../src/prompt.ts';
 import type { Selector, SelectorResult } from '../src/selector.ts';
 
@@ -176,6 +176,11 @@ export interface FakeOrganizer extends Organizer {
   readonly listed: string[];
   /** 臨床支援に渡された資料（JSON） */
   readonly supported: string[];
+  /** 結果待ち・記録への質問に渡された資料（JSON） */
+  readonly pended: string[];
+  readonly asked: string[];
+  /** 予定と実施に渡された資料（JSON） */
+  readonly planned: string[];
 }
 
 export interface FakeDocAnswers {
@@ -184,6 +189,9 @@ export interface FakeDocAnswers {
   readonly revise?: (message: string) => ReviseResult;
   readonly problemList?: (message: string) => ProblemListResult;
   readonly support?: (message: string) => SupportResult;
+  readonly pending?: (message: string) => PendingResultAnswer;
+  readonly plans?: (message: string) => PlanResultAnswer;
+  readonly ask?: (message: string) => AskResult;
 }
 
 /** AI の整理の代役：文を受け取り、決めた答えを返す（既定は、何も見つけない）。つなぎは、既定では何もつながない */
@@ -197,6 +205,9 @@ export function fakeOrganizer(
   const revised: string[] = [];
   const listed: string[] = [];
   const supported: string[] = [];
+  const pended: string[] = [];
+  const asked: string[] = [];
+  const planned: string[] = [];
   const seen: string[] = [];
   const prompts: OrganizePromptChoice[] = [];
   const linked: string[] = [];
@@ -209,6 +220,21 @@ export function fakeOrganizer(
     revised,
     listed,
     supported,
+    pended,
+    asked,
+    planned,
+    plans: (message) => {
+      planned.push(message);
+      return Promise.resolve(docs.plans?.(message) ?? { ok: true, answer: { items: [] } });
+    },
+    pending: (message) => {
+      pended.push(message);
+      return Promise.resolve(docs.pending?.(message) ?? { ok: true, answer: { items: [] } });
+    },
+    ask: (message) => {
+      asked.push(message);
+      return Promise.resolve(docs.ask?.(message) ?? { ok: true, answer: { answer: [], notFound: '記録に見つかりませんでした' } });
+    },
     support: (message) => {
       supported.push(message);
       return Promise.resolve(docs.support?.(message) ?? { ok: true, answer: { problems: [] } });

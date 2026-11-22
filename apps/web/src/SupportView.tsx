@@ -71,7 +71,7 @@ export function useSupport(patientId: string, record: PatientRecord | null, list
 }
 
 /** 印のついた文：資料・出典にない数に下線と「※」、「（推論）」を目立たせる（字は変えない） */
-function Marked({ value }: { value: MarkedText }) {
+export function Marked({ value }: { value: MarkedText }) {
   const out: React.ReactNode[] = [];
   let at = 0;
   const plain = (s: string, key: string) => {

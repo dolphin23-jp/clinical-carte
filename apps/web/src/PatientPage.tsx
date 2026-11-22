@@ -18,7 +18,10 @@ import {
   QUOTED_SEGMENT_LABELS,
   medicationTimeline,
   numberedList,
+  type NoteDiff,
+  noteDiff,
   patientState,
+  previousNote,
   READ_VALUES_KINDS,
   readLabText,
   SOURCE_KIND_LABELS,
@@ -33,6 +36,7 @@ import { Fragment, type SyntheticEvent, useCallback, useEffect, useRef, useState
 import { DEFAULT_TIMELINE_RANGE, Timeline, type TimelineRange } from './charts/Timeline.tsx';
 import { TrendGrid } from './charts/TrendGrid.tsx';
 
+import { CasebookPanel } from './CasebookPanel.tsx';
 import { Composer } from './Composer.tsx';
 import { DayStrip } from './DayStrip.tsx';
 import { joinDateTime, nowLocal, replacedSummary, showDateTime } from './format.ts';
@@ -71,7 +75,13 @@ import { SourceFacts } from './SourceFacts.tsx';
 import { SourceText } from './SourceText.tsx';
 import { StateView } from './StateView.tsx';
 import { SupportPanel, useSupport } from './SupportView.tsx';
+import { AskPanel } from './AskView.tsx';
+import { PendingPanel, usePending } from './PendingView.tsx';
+import { PlansPanel, usePlans } from './PlansView.tsx';
+import { useOutbox } from './outbox.ts';
 import { nextDayLabel } from './NextDayAsk.tsx';
+import { FluidLine, FluidView } from './FluidView.tsx';
+import { type OpenFocus, Snippet } from './SearchView.tsx';
 import { DocumentView } from './DocumentView.tsx';
 
 // 見方（段H。CA-053）：9つのタブを4つにまとめた。経過・検査・投薬・できごと・記載は、どれも同じ時間の上のものなので、
@@ -83,10 +93,11 @@ const TABS: readonly (readonly [Tab, string])[] = [
   ['problems', '問題'],
   ['notes', '記録'],
 ];
-type CourseView = 'overview' | 'values' | 'medications' | 'events' | 'chart';
+type CourseView = 'overview' | 'values' | 'fluid' | 'medications' | 'events' | 'chart';
 const COURSE_VIEWS: readonly (readonly [CourseView, string])[] = [
   ['overview', '経過表'],
   ['values', '検査'],
+  ['fluid', '水分'],
   ['medications', '投薬'],
   ['events', '時系列'],
   ['chart', '記載'],
@@ -122,11 +133,13 @@ const newestFirst = (a: Source, b: Source): number => {
   return a.at < b.at ? 1 : -1;
 };
 
-export function PatientPage({ patientId, onBack, onLeft }: { patientId: string; onBack: () => void; onLeft: () => void }) {
+export function PatientPage({ patientId, focus = null, onBack, onLeft }: { patientId: string; focus?: OpenFocus | null; onBack: () => void; onLeft: () => void }) {
   const [record, setRecord] = useState<PatientRecord | null>(null);
   const [message, setMessage] = useState<string | null>(null);
-  const [encounterId, setEncounterId] = useState<string | null>(null);
-  const [tab, setTab] = useState<Tab>('state');
+  // 受け持ちから探した当たり（段K8）から開いたときは、その記載の受診・記録のタブ（AI のプロブレムリストの項目は、問題のタブ）
+  const [encounterId, setEncounterId] = useState<string | null>(focus?.kind === 'source' ? focus.encounterId : null);
+  const [tab, setTab] = useState<Tab>(focus === null ? 'state' : focus.kind === 'source' ? 'notes' : 'problems');
+  const [found, setFound] = useState<OpenFocus | null>(focus);
   const [view, setView] = useState<CourseView>('overview');
   // 日の帯で選んだ日と、経過表の表示の範囲（画面のメモリだけ）
   const [day, setDay] = useState<string | null>(null);
@@ -138,9 +151,9 @@ export function PatientPage({ patientId, onBack, onLeft }: { patientId: string; 
   // 記録のタブ：開いた記載（段I。既定は、いちばん新しいものだけ開く）。画面のメモリだけ
   // まとめて整理し直す（段J。CA-056）：この受診の記載を、古い順に1件ずつ（AI の回数は記載の数）
   const [reorganizing, setReorganizing] = useState<{ done: number; total: number; failed: number } | null>(null);
-  const [opened, setOpened] = useState<ReadonlyMap<string, boolean>>(new Map());
+  const [opened, setOpened] = useState<ReadonlyMap<string, boolean>>(focus?.kind === 'source' ? new Map([[focus.sourceId, true]]) : new Map());
   const composerRef = useRef<HTMLElement>(null);
-  const [panel, setPanel] = useState<'none' | 'encounter' | 'end' | 'kind' | 'delete'>('none');
+  const [panel, setPanel] = useState<'none' | 'encounter' | 'end' | 'kind' | 'delete' | 'casebook'>('none');
 
   const load = useCallback(() => {
     void getRecord(patientId).then((result) => {
@@ -153,10 +166,31 @@ export function PatientPage({ patientId, onBack, onLeft }: { patientId: string; 
     });
   }, [patientId, onLeft, onBack]);
   useEffect(load, [load]);
+  // 送り待ち（段K9）の文が送れた・整理が済んだら、記録を読み直す
+  const outbox = useOutbox();
+  const seenVersion = useRef(outbox.version);
+  useEffect(() => {
+    if (outbox.version === seenVersion.current) return;
+    seenVersion.current = outbox.version;
+    load();
+  }, [outbox.version, load]);
+  // 探した当たりの記載へ、読み込んだあと1回だけ動く（画面の位置だけ。何も残さない）
+  const scrolled = useRef(false);
+  useEffect(() => {
+    if (record === null || found?.kind !== 'source' || scrolled.current) return;
+    scrolled.current = true;
+    requestAnimationFrame(() => {
+      document.getElementById(`source-${found.sourceId}`)?.scrollIntoView({ block: 'start' });
+    });
+  }, [record, found]);
   // AI のプロブレムリスト（CA-057）：記録が増えたら、自動で組み直す（いま・問題のタブの主な見方）
   const listBuilder = useProblemList(patientId, record, load, onLeft);
   // AI の臨床支援（段K5）：プロブレムリストが組み直されたら、自動で組み直す（いまのタブ）
   const supportBuilder = useSupport(patientId, record, listBuilder.busy, load, onLeft);
+  // 結果待ち（段K6）：記録が増えたら、自動で組み直す（いまのタブ）
+  const pendingBuilder = usePending(patientId, record, load, onLeft);
+  // 予定と実施（段K9）：記録が増えたら、自動で組み直す（いまのタブ）
+  const planBuilder = usePlans(patientId, record, load, onLeft);
 
   if (record === null) {
     return (
@@ -339,6 +373,18 @@ export function PatientPage({ patientId, onBack, onLeft }: { patientId: string; 
                   {current.kind === 'inpatient' ? '種類を変える' : '入院にする・種類を変える'}
                 </button>
               )}
+              {current !== null && current.kind !== 'outpatient' && (
+                <button
+                  className="button small"
+                  type="button"
+                  onClick={() => {
+                    setPanel(panel === 'casebook' ? 'none' : 'casebook');
+                  }}
+                  data-testid="open-casebook"
+                >
+                  Casebook へ送る
+                </button>
+              )}
             </div>
           </div>
           {panel === 'encounter' && (
@@ -362,6 +408,7 @@ export function PatientPage({ patientId, onBack, onLeft }: { patientId: string; 
               onLeft={onLeft}
             />
           )}
+          {panel === 'casebook' && current !== null && current.kind !== 'outpatient' && <CasebookPanel key={current.id} record={record} encounter={current} onChanged={load} onLeft={onLeft} />}
           {panel === 'end' && current !== null && (
             <EndForm
               encounter={current}
@@ -446,10 +493,26 @@ export function PatientPage({ patientId, onBack, onLeft }: { patientId: string; 
             </button>
           ))}
         </div>
+        {found !== null && ((tab === 'notes' && found.kind === 'source') || (tab === 'problems' && found.kind === 'problems')) && (
+          <div className="search-found" data-testid="search-found">
+            <span className="note">受け持ちから探した字の場所（{found.kind === 'source' ? 'この記載を開いています' : 'AI のプロブレムリストの項目です'}）：</span>
+            <Snippet hit={found.hit} />
+            <button
+              type="button"
+              className="button link small"
+              onClick={() => {
+                setFound(null);
+              }}
+            >
+              閉じる
+            </button>
+          </div>
+        )}
         {tab === 'state' && current !== null && state !== null && (
           <>
             <div className="state-latest">
               <LatestStrip panels={panels} />
+              <FluidLine observations={observations} />
             </div>
             <StateView
               state={state}
@@ -459,6 +522,9 @@ export function PatientPage({ patientId, onBack, onLeft }: { patientId: string; 
               patient={refPatient}
               scores={scoreInput}
               support={record.problemList === null ? null : <SupportPanel record={record} builder={supportBuilder} />}
+              pending={<PendingPanel patientId={patientId} record={record} builder={pendingBuilder} asOf={state.asOf} onChanged={load} onLeft={onLeft} />}
+              plans={<PlansPanel patientId={patientId} record={record} builder={planBuilder} asOf={state.asOf} onChanged={load} onLeft={onLeft} />}
+              ask={<AskPanel patientId={patientId} record={record} onLeft={onLeft} />}
               onProblems={() => {
                 setTab('problems');
               }}
@@ -516,6 +582,7 @@ export function PatientPage({ patientId, onBack, onLeft }: { patientId: string; 
                     )}
                   </>
                 )}
+                {view === 'fluid' && <FluidView observations={observations} encounter={current} day={day} />}
                 {view === 'medications' && (
                   <>
                     {day !== null && <p className="note">{`${day.slice(5).replace('-', '/')} の記録だけを出しています（日を外すと、全期間）。`}</p>}
@@ -651,6 +718,13 @@ export function PatientPage({ patientId, onBack, onLeft }: { patientId: string; 
                   )}
                   <SourceCard
                     source={s}
+                    previous={(() => {
+                      // 前の記載との違い（段K7。CA-068。決定論）：同じ受診・同じ種類の、前の記載
+                      const prevNote = previousNote(record.sources, s);
+                      if (prevNote === null) return null;
+                      const segOf = (id: string) => record.segments.filter((g) => g.sourceId === id);
+                      return { source: prevNote.source, sameRole: prevNote.sameRole, diff: noteDiff({ text: prevNote.source.text, segments: segOf(prevNote.source.id) }, { text: s.text, segments: segOf(s.id) }) };
+                    })()}
                     segments={record.segments.filter((g) => g.sourceId === s.id)}
                     facts={{
                       medications: record.medications.filter((m) => m.sourceId === s.id),
@@ -703,6 +777,9 @@ export function PatientPage({ patientId, onBack, onLeft }: { patientId: string; 
               if (source !== undefined) setTab('notes');
               load();
             }}
+            onQueued={() => {
+              setComposing(true);
+            }}
             onLeft={onLeft}
           />
         </section>
@@ -718,8 +795,59 @@ export function PatientPage({ patientId, onBack, onLeft }: { patientId: string; 
   );
 }
 
+/** 前の記載との違い（段K7。CA-068）：変わった行・足した行だけ。同じ見出しは畳んで数だけ。前にあってこの記載にない行は別に */
+function NoteDiffView({ previous, encounter }: { previous: { source: Source; sameRole: boolean; diff: NoteDiff }; encounter: Encounter | null }) {
+  const { diff, source } = previous;
+  const day = source.at !== null && encounter?.kind === 'inpatient' ? hospitalDay(encounter.start, source.at) : null;
+  return (
+    <section className="note-diff" data-testid="note-diff" aria-label="前の記載との違い">
+      <p className="note">
+        前の記載（{showDateTime(source.at)}
+        {day !== null && `・第${String(day)}病日`}・{SOURCE_KIND_LABELS[source.kind]}・{AUTHOR_ROLE_LABELS[source.authorRole]}）と、行で比べました（AI は使いません。比べるときだけ、全角・半角と空白をそろえています）。
+        {!previous.sameRole && '同じ書き手の前の記載がないので、ほかの書き手の記載と比べています。'}
+      </p>
+      <p className="row-sub" data-testid="note-diff-count">
+        この記載 {String(diff.lines)} 行のうち、前の記載と同じ行 {String(diff.unchanged)}・変わった・足した行 {String(diff.added)}・前の記載にあって、この記載にない行 {String(diff.removed.length)}
+      </p>
+      {diff.sections.map((x) =>
+        x.added.length === 0 ? (
+          <p key={x.key} className="row-sub" data-testid="note-diff-same">
+            <span className="diff-section-name">{x.name}</span>：前の記載と同じ（{String(x.unchanged)} 行）
+          </p>
+        ) : (
+          <div key={x.key} data-testid="note-diff-section">
+            <span className="diff-section-name">{x.name}</span>
+            {x.unchanged > 0 && <span className="row-sub">（ほかに、前の記載と同じ行 {String(x.unchanged)}）</span>}
+            <ul>
+              {x.added.map((line, i) => (
+                <li key={i} className="diff-added" data-testid="note-diff-added">
+                  ＋ {line}
+                </li>
+              ))}
+            </ul>
+          </div>
+        ),
+      )}
+      {diff.removed.length > 0 && (
+        <details data-testid="note-diff-removed">
+          <summary>前の記載にあって、この記載にない行（{String(diff.removed.length)}）</summary>
+          <ul>
+            {diff.removed.map((r, i) => (
+              <li key={i} className="diff-removed">
+                − {r.line}
+                <span className="row-sub">（{r.section}）</span>
+              </li>
+            ))}
+          </ul>
+        </details>
+      )}
+    </section>
+  );
+}
+
 function SourceCard({
   source,
+  previous,
   segments,
   facts,
   edits,
@@ -731,6 +859,8 @@ function SourceCard({
   onLeft,
 }: {
   source: Source;
+  /** 前の記載との違い（段K7。同じ受診・同じ種類の前の記載がなければ null） */
+  previous: { source: Source; sameRole: boolean; diff: NoteDiff } | null;
   segments: readonly Segment[];
   facts: { medications: readonly Medication[]; events: readonly ClinicalEvent[]; observations: readonly Observation[]; problems: readonly Problem[]; course: readonly CourseItem[] };
   edits: readonly FactEdit[];
@@ -745,6 +875,7 @@ function SourceCard({
   const [asking, setAsking] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [organizing, setOrganizing] = useState(false);
+  const [showDiff, setShowDiff] = useState(false);
   const report = source.organized === 'done' ? reportText(source.organizeReport) : null;
   const nextDay = nextDayLabel(source.text, source.nextDayFrom);
 
@@ -796,20 +927,46 @@ function SourceCard({
         {source.organized === null && <span className="tag">未整理</span>}
         {source.organized === 'failed' && <span className="tag">整理できず</span>}
         {left.length > 0 && <span className="tag" data-testid="leftover-count">振り分けられなかった字 {String(left.length)}</span>}
+        {previous !== null && (
+          <span className="tag" data-testid="diff-count">
+            前回から変わった行 {String(previous.diff.added)}
+          </span>
+        )}
+        {previous?.diff.nearlySame === true && (
+          <span className="tag diff-same" data-testid="diff-nearly-same">
+            ほぼ前回と同じ
+          </span>
+        )}
       </span>
       {!open && <span className="source-first">{firstLine}</span>}
     </button>
   );
   if (!open)
     return (
-      <li className="source folded" data-testid="source">
+      <li className="source folded" id={`source-${source.id}`} data-testid="source">
         {head}
       </li>
     );
 
   return (
-    <li className="source" data-testid="source">
+    <li className="source" id={`source-${source.id}`} data-testid="source">
       {head}
+      {previous !== null && (
+        <div className="row-actions">
+          <button
+            type="button"
+            className={showDiff ? 'chip small on' : 'chip small'}
+            aria-pressed={showDiff}
+            onClick={() => {
+              setShowDiff(!showDiff);
+            }}
+            data-testid="diff-toggle"
+          >
+            前の記載との違い
+          </button>
+        </div>
+      )}
+      {previous !== null && showDiff && <NoteDiffView previous={previous} encounter={encounter} />}
       <SourceText text={source.text} segments={segments} />
       <SourceFacts medications={facts.medications} events={facts.events} observations={facts.observations} edits={edits} userEdits={userEdits} onChanged={onChanged} onLeft={onLeft} />
       <SourceAppend key={source.text} source={source} onChanged={onChanged} onLeft={onLeft} />

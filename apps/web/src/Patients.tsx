@@ -1,16 +1,23 @@
 // 患者の一覧（回診リスト。段3d・CA-028）と、新しい患者（CA-014：自動の見出しで見分ける。氏名・ID・呼び名・病室の欄はない）。
 // 回診リストの行は、自動の見出し・記録の上での病日・いまの問題の名前・記録の上で最後の日時だけ（作文しない。判定しない）。
-import { AGE_MAX, dayOnRecord, ENCOUNTER_KIND_LABELS, ENCOUNTER_KINDS, type EncounterKind, headline, SEX_LABELS, SEXES, type Sex } from '@clinical-carte/core';
+// 受け持ち全員の申し送り（段K7。CA-067）：患者ごとに、1行の要約と、残した申し送りのいちばん新しいもの（先生が選んだ重症度・日）を読むだけ。
+// AI は呼ばない（全員の分を自動で出さない）。申し送りを出す・直すのは、患者の画面の「記載」。
+// 受け持ちから探す（段K8。CA-070）：保存した記録から字で探す（AI を使わない。探す字は保存しない）。当たりを押すと、その患者の記載を開く。
+import { AGE_MAX, DOC_ORIGIN_NAMES, DOC_SECTIONS, dayOnRecord, ENCOUNTER_KIND_LABELS, ENCOUNTER_KINDS, type EncounterKind, headline, oneLinerOf, SEX_LABELS, SEXES, type SavedHandoff, type Sex } from '@clinical-carte/core';
 import { type SyntheticEvent, useCallback, useEffect, useState } from 'react';
 
+import { SeverityTag } from './DocumentView.tsx';
 import { joinDateTime, nowLocal, showDateTime } from './format.ts';
 import { errorMessage } from './messages.ts';
-import { createPatient, listPatients, type PatientSummary } from './net/api.ts';
+import { createPatient, listHandoffs, listPatients, type PatientSummary } from './net/api.ts';
+import { type OpenFocus, SearchPanel } from './SearchView.tsx';
 
-export function Patients({ onOpen, onLeft }: { onOpen: (patientId: string) => void; onLeft: () => void }) {
+export function Patients({ onOpen, onLeft }: { onOpen: (patientId: string, focus?: OpenFocus) => void; onLeft: () => void }) {
   const [list, setList] = useState<{ patients: readonly PatientSummary[]; today: string } | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
+  // 受け持ち全員の申し送り（開いたときだけ読む。画面のメモリだけ）
+  const [handoffs, setHandoffs] = useState<ReadonlyMap<string, SavedHandoff> | 'loading' | null>(null);
 
   const load = useCallback(() => {
     void listPatients().then((result) => {
@@ -25,6 +32,31 @@ export function Patients({ onOpen, onLeft }: { onOpen: (patientId: string) => vo
     <section className="card" aria-labelledby="patients-title">
       <div className="card-head">
         <h2 id="patients-title">患者</h2>
+        {list !== null && list.patients.length > 0 && (
+          <button
+            className="button"
+            type="button"
+            aria-expanded={handoffs !== null}
+            onClick={() => {
+              if (handoffs !== null) {
+                setHandoffs(null);
+                return;
+              }
+              setHandoffs('loading');
+              void listHandoffs().then((r) => {
+                if (r.ok) setHandoffs(new Map(r.value.map((x) => [x.patientId, x.handoff])));
+                else {
+                  setHandoffs(null);
+                  if (r.error === 'unregistered') onLeft();
+                  else setMessage(errorMessage(r.error));
+                }
+              });
+            }}
+            data-testid="handoff-all-toggle"
+          >
+            {handoffs === null ? '受け持ち全員の申し送り' : '申し送りを閉じる'}
+          </button>
+        )}
         {!adding && (
           <button
             className="button primary"
@@ -52,6 +84,8 @@ export function Patients({ onOpen, onLeft }: { onOpen: (patientId: string) => vo
           onLeft={onLeft}
         />
       )}
+      {list !== null && list.patients.length > 0 && <SearchPanel onOpen={onOpen} onLeft={onLeft} />}
+      {list !== null && handoffs !== null && <HandoffAll patients={list.patients.filter((p) => p.latest !== null && p.latest.end === null)} today={list.today} handoffs={handoffs} onOpen={onOpen} />}
       {list === null ? (
         <p className="note">読み込んでいます…</p>
       ) : list.patients.length === 0 ? (
@@ -99,6 +133,12 @@ function RoundRow({ summary, today, onOpen }: { summary: PatientSummary; today: 
           {round.listed && <span className="tag ai-tag">AI の整理</span>}
           {round.problems.length === 0 ? 'いまの問題の記載なし' : round.problems.join('、')}
         </span>
+        {summary.handoff !== null && (
+          <span className="round-handoff" data-testid="round-handoff">
+            <span className="tag">申し送り {summary.handoff.day.slice(5).replace('-', '/')}</span>
+            <SeverityTag severity={summary.handoff.severity} />
+          </span>
+        )}
         <span className="row-sub">
           {round.asOf === null ? '記録の上の日時なし' : `記録の上で最後：${showDateTime(round.asOf)}`}・記録 {String(sources)} 件
           {round.otherProblems > 0 && `・解決などと書かれた問題 ${String(round.otherProblems)}`}
@@ -106,6 +146,63 @@ function RoundRow({ summary, today, onOpen }: { summary: PatientSummary; today: 
         </span>
       </button>
     </li>
+  );
+}
+
+/** 受け持ち全員の申し送り（読むだけ）：1行の要約（決定論）と、残した申し送りのいちばん新しいもの */
+function HandoffAll({ patients, today, handoffs, onOpen }: { patients: readonly PatientSummary[]; today: string; handoffs: ReadonlyMap<string, SavedHandoff> | 'loading'; onOpen: (patientId: string) => void }) {
+  return (
+    <section className="handoff-all" aria-label="受け持ち全員の申し送り" data-testid="handoff-all">
+      <h3 className="sub-title">受け持ち全員の申し送り（{String(patients.length)}）</h3>
+      <p className="note">残した申し送りのうち、いちばん新しいものを読むだけです（ここでは AI を使いません）。重症度は、先生が選んだものです。出す・直すのは、患者の画面の「記載」からです。</p>
+      {handoffs === 'loading' ? (
+        <p className="note">読み込んでいます…</p>
+      ) : patients.length === 0 ? (
+        <p className="note">受け持ち中の患者はいません。</p>
+      ) : (
+        patients.map((summary) => {
+          const h = handoffs.get(summary.patient.id) ?? null;
+          const encounter = summary.latest;
+          return (
+            <article key={summary.patient.id} className="handoff-card" data-testid="handoff-card">
+              <div className="handoff-card-head">
+                <button
+                  type="button"
+                  className="button link"
+                  onClick={() => {
+                    onOpen(summary.patient.id);
+                  }}
+                >
+                  {headline({ ...summary.patient, encounter }, today)}
+                </button>
+                {h !== null && <SeverityTag severity={h.severity} />}
+                {h !== null && <span className="tag">{`${h.day.slice(5).replace('-', '/')} の申し送り・${DOC_ORIGIN_NAMES[h.origin]}`}</span>}
+              </div>
+              {encounter !== null && (
+                <p className="handoff-oneliner" data-testid="handoff-oneliner">
+                  {oneLinerOf({ patient: summary.patient, encounter, today, asOf: summary.round.asOf, problems: summary.round.problems, listed: summary.round.listed })}
+                </p>
+              )}
+              {h === null ? (
+                <p className="note" data-testid="handoff-none">
+                  残した申し送りはありません。
+                </p>
+              ) : (
+                DOC_SECTIONS.handoff.map((d) => {
+                  const text = h.sections.find((x) => x.key === d.key)?.text ?? '';
+                  return (
+                    <div key={d.key}>
+                      <h4 className="doc-heading">【{d.heading}】</h4>
+                      {text === '' ? <p className="doc-empty">（書かれていません）</p> : <p className="doc-text">{text}</p>}
+                    </div>
+                  );
+                })
+              )}
+            </article>
+          );
+        })
+      )}
+    </section>
   );
 }
 

@@ -1,0 +1,49 @@
+{
+  "synthetic": true,
+  "description": "新しい救急の症例（架空）。パケットに架空症例の印（synthetic: true）がある：受け取り側は、架空症例として症例を作る（T059、A-070）",
+  "packet": "CBH1:eyJtYWdpYyI6IkNCSDEiLCJzY2hlbWFWZXJzaW9uIjoxLCJwYWNrZXRJZCI6IjAxTUNDNVJHMTEwMDAwMDAwMDAwMDAwMDAwIiwidGFyZ2V0Ijp7Im1vZGUiOiJuZXcifSwicGF0aWVudCI6eyJhZ2VZZWFycyI6NjIsInNleCI6IkYiLCJzZXR0aW5nIjoiZW1lcmdlbmN5In0sImhvc3BpdGFsRGF5IjoxLCJzeW50aGV0aWMiOnRydWUsIml0ZW1zIjpbeyJpdGVtSWQiOiIwMU1DQzVSRzEyMDAwMDAwMDAwMDAwMDAwMCIsInNvdXJjZSI6InVzZXIiLCJib2R5Ijp7ImtpbmQiOiJwcm9ibGVtIiwidGV4dCI6IueZuueGseOBqOWSs--8iOaetuepuu-8iSJ9fSx7Iml0ZW1JZCI6IjAxTUNDNVJHMTMwMDAwMDAwMDAwMDAwMDAwIiwic291cmNlIjoiYWkiLCJib2R5Ijp7ImtpbmQiOiJkaWFnbm9zaXMiLCJ0ZXh0Ijoi5biC5Lit6IK654KO44Gu55aR44GE77yI5p6256m677yJIiwic3RhdHVzIjoic3VzcGVjdGVkIn19LHsiaXRlbUlkIjoiMDFNQ0M1UkcxNDAwMDAwMDAwMDAwMDAwMDAiLCJkYXkiOjEsImFmdGVyTWluIjoxNSwic291cmNlIjoidXNlciIsImJvZHkiOnsia2luZCI6ImNvdXJzZSIsInRleHQiOiLog7jpg6hY57ea44Gn5Y-z5LiL6IK66YeO44Gr5rW45r2k5b2x77yI5p6256m677yJIn19XX0.1b9181c9",
+  "json": {
+    "magic": "CBH1",
+    "schemaVersion": 1,
+    "packetId": "01MCC5RG110000000000000000",
+    "target": {
+      "mode": "new"
+    },
+    "patient": {
+      "ageYears": 62,
+      "sex": "F",
+      "setting": "emergency"
+    },
+    "hospitalDay": 1,
+    "synthetic": true,
+    "items": [
+      {
+        "itemId": "01MCC5RG120000000000000000",
+        "source": "user",
+        "body": {
+          "kind": "problem",
+          "text": "発熱と咳（架空）"
+        }
+      },
+      {
+        "itemId": "01MCC5RG130000000000000000",
+        "source": "ai",
+        "body": {
+          "kind": "diagnosis",
+          "text": "市中肺炎の疑い（架空）",
+          "status": "suspected"
+        }
+      },
+      {
+        "itemId": "01MCC5RG140000000000000000",
+        "day": 1,
+        "afterMin": 15,
+        "source": "user",
+        "body": {
+          "kind": "course",
+          "text": "胸部X線で右下肺野に浸潤影（架空）"
+        }
+      }
+    ]
+  }
+}

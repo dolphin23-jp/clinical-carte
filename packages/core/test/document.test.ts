@@ -82,7 +82,7 @@ describe('種類と見出し', () => {
       expect(keys.length).toBeGreaterThan(0);
       expect(new Set(keys).size).toBe(keys.length);
     }
-    expect([...DOC_TYPES_FOR.er, ...DOC_TYPES_FOR.outpatient, ...DOC_TYPES_FOR.inpatient].sort()).toEqual([...DOC_TYPES].sort());
+    expect([...new Set([...DOC_TYPES_FOR.er, ...DOC_TYPES_FOR.outpatient, ...DOC_TYPES_FOR.inpatient])].sort()).toEqual([...DOC_TYPES].sort());
   });
   test('既定の日：入院時記録は入院の日、退院サマリーは終わりの日、選んだ日があればその日', () => {
     const e = { id: 'e1', kind: 'inpatient' as const, start: '2026-11-17T22:00', end: '2026-11-25T10:00' };

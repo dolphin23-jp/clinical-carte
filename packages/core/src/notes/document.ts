@@ -23,7 +23,13 @@ import { ApRef, type RefSource } from './ap.ts';
 // ---------------------------------------------------------------------------
 // 種類と見出し
 
-export const DOC_TYPES = ['er_record', 'outpatient_first', 'outpatient_revisit', 'admission', 'progress', 'interim_summary', 'discharge_summary'] as const;
+/** カルテ記載として `documents` に残す種類（段I） */
+export const NOTE_DOC_TYPES = ['er_record', 'outpatient_first', 'outpatient_revisit', 'admission', 'progress', 'interim_summary', 'discharge_summary'] as const;
+export type NoteDocType = (typeof NOTE_DOC_TYPES)[number];
+/**
+ * 出せる記載の種類。申し送り（handoff。段K7。CA-067）は、出す・直す・相談は同じ流れで、残す先だけが別（`handoffs`。重症度は先生が選ぶ欄として持つ）
+ */
+export const DOC_TYPES = [...NOTE_DOC_TYPES, 'handoff'] as const;
 export type DocType = (typeof DOC_TYPES)[number];
 export const DOC_TYPE_NAMES: Readonly<Record<DocType, string>> = {
   er_record: '救急外来記録',
@@ -33,13 +39,14 @@ export const DOC_TYPE_NAMES: Readonly<Record<DocType, string>> = {
   progress: 'プログレスノート',
   interim_summary: '中間サマリー',
   discharge_summary: '退院サマリー',
+  handoff: '申し送り',
 };
 
 /** 受診の種類ごとに、出せる記載（並びは、よく使う順） */
 export const DOC_TYPES_FOR: Readonly<Record<EncounterKind, readonly DocType[]>> = {
-  er: ['er_record'],
+  er: ['er_record', 'handoff'],
   outpatient: ['outpatient_first', 'outpatient_revisit'],
-  inpatient: ['progress', 'admission', 'interim_summary', 'discharge_summary'],
+  inpatient: ['progress', 'handoff', 'admission', 'interim_summary', 'discharge_summary'],
 };
 
 export interface DocSectionDef {
@@ -111,6 +118,12 @@ export const DOC_SECTIONS: Readonly<Record<DocType, readonly DocSectionDef[]>> =
     s('meds', '退院時処方', '退院時の処方（書かれているものだけ）'),
     s('outcome', '転帰', '退院の日と、退院時の状態・退院先'),
     s('followup', '退院後の方針', '外来・再診・続ける治療・残った問題'),
+  ],
+  // 申し送り（I-PASS。段K7。CA-067）：AI が書くのは P・A・S の3つだけ。I（重症度）は先生が選び、S（受け手の確認）は受け手の欄（HANDOFF_HEADINGS）
+  handoff: [
+    s('summary', '患者の要約', '1行の要約と、いまの問題ごとの状態（記録に書かれた評価）を短く'),
+    s('actions', 'やること', '今夜・次の勤務でやること（記録に書かれた予定・結果待ちの検査・確かめること）'),
+    s('contingency', '起こりうることと対応', '記録に書かれた「〜なら〜」（悪化したときの対応・連絡の基準）'),
   ],
 };
 
@@ -203,6 +216,33 @@ export interface DocumentInput {
   readonly course?: readonly { readonly encounterId: string; readonly at: string | null; readonly atApprox: string | null; readonly category: string; readonly summary: string }[];
   /** AI のプロブレムリスト（CA-057。外したものは除いて渡す） */
   readonly problemList?: readonly { readonly name: string; readonly certainty: string; readonly activity: string; readonly since: string | null }[];
+  /** 申し送りの資料（段K7。CA-067。いまの状態から決定論で作ったもの。申し送りのときだけ） */
+  readonly handoff?: HandoffContext;
+}
+
+/** 申し送りの資料（段K7。CA-067）：いまの状態（記録の上で最後の日時まで）から、決定論で作った行。作文しない */
+export interface HandoffContext {
+  /** 1行の要約（oneLinerOf） */
+  readonly oneLiner: string;
+  /** 記録の上で最後の日時 */
+  readonly asOf: string | null;
+  /** いまの問題ごとの、いちばん新しい記載の A・P（記録の字のまま） */
+  readonly problems: readonly { readonly name: string; readonly at: string | null; readonly note: string }[];
+  /** 記載全体の P（問題に分けて書かれていない方針。記録の字のまま） */
+  readonly sharedPlan: string;
+  /** 結果待ち（段K6。先生が確かめた・外したものは除く） */
+  readonly pending: readonly string[];
+  /** デバイスの日数（入れたまま。段K1） */
+  readonly devices: readonly string[];
+  /** 薬ごとの最後の記載と日数（中止と書かれたものは除く。段K1） */
+  readonly medications: readonly string[];
+  /** 記録の上で最後の日時までの24時間に入ったこと */
+  readonly recent: readonly string[];
+}
+
+/** 申し送りの資料の行（数の照らし合わせに使う） */
+export function handoffLines(h: HandoffContext): string[] {
+  return [h.oneLiner, ...h.problems.flatMap((p) => [p.name, p.note]), h.sharedPlan, ...h.pending, ...h.devices, ...h.medications, ...h.recent];
 }
 
 export interface DocRecord {
@@ -263,7 +303,8 @@ const numbersIn = (text: string): string[] => [...text.matchAll(NUMBER_RE)].map(
 function scopeOf(input: DocumentInput): { from: string; to: string; encounters: readonly DocEncounter[] } {
   const start = input.encounter.start.slice(0, 10);
   const to = input.day;
-  if (input.type === 'progress') return { from: shiftDay(input.day, -1), to, encounters: [input.encounter] };
+  // 申し送りも、その日と前の日の記載（いまの状態は handoff の資料で渡す）
+  if (input.type === 'progress' || input.type === 'handoff') return { from: shiftDay(input.day, -1), to, encounters: [input.encounter] };
   if (input.type === 'admission' || input.type === 'interim_summary' || input.type === 'discharge_summary') {
     // 直前の救急の受診（入院の始まりの前の日から、その日まで）も、入院までの経過の資料にする
     const prior = input.encounters.filter((e) => e.id !== input.encounter.id && e.kind === 'er' && e.start.slice(0, 10) <= start && daysBetween(e.start.slice(0, 10), start) <= 1);
@@ -362,6 +403,8 @@ export function documentMaterial(input: DocumentInput): DocMaterial {
   // AI のプロブレムリストは「いま」の整理なので、その日より後の記録がある（過去の日の記載を書く）ときは渡さない（後日の事実を、その日の記載に混ぜない）
   const laterRecords = input.sources.some((src) => encounterIds.has(src.encounterId) && src.at !== null && src.at.slice(0, 10) > input.day);
   const problemList = laterRecords ? [] : (input.problemList ?? []).map((p) => ({ name: p.name, certainty: p.certainty, activity: p.activity, since: p.since }));
+  // 申し送りの資料（いまの状態）も、同じ理由で、その日より後の記録があるときは渡さない
+  const handoff = input.type === 'handoff' && !laterRecords && input.handoff !== undefined ? input.handoff : null;
 
   const age = ageNow(input.patient.age, input.patient.ageOn, input.day);
   const payload: Record<string, unknown> = {
@@ -383,6 +426,7 @@ export function documentMaterial(input: DocumentInput): DocMaterial {
     medications: meds,
     events,
     savedAp,
+    ...(input.type === 'handoff' ? { handoff } : {}),
   };
 
   // 照らし合わせの数
@@ -396,6 +440,7 @@ export function documentMaterial(input: DocumentInput): DocMaterial {
     ...courseLines,
     ...problemList.map((p) => p.name),
     ...problems.map((p) => p.name),
+    ...(handoff === null ? [] : handoffLines(handoff)),
     String(age),
   ];
   const whenTexts = [
@@ -405,6 +450,7 @@ export function documentMaterial(input: DocumentInput): DocMaterial {
     input.encounter.start,
     input.encounter.end ?? '',
     input.day,
+    ...(handoff === null ? [] : handoffLines(handoff)),
     inpatient ? String(hospitalDay(input.encounter.start, input.day) ?? '') : '',
     // 病日の数は、範囲の日すべて（「3病日」と書く日が、記載の日と違ってもよい）
     ...(inpatient ? Array.from({ length: Math.max(0, daysBetween(input.encounter.start.slice(0, 10), input.day) + 1) }, (_, i) => String(i + 1)) : []),
@@ -475,6 +521,8 @@ export interface DocNotes {
   readonly shapes: ShapeCounts;
   /** 実在しない根拠の記号（参照にしていない） */
   readonly unknownRefs: number;
+  /** 申し送りで、AI が書いた重症度の行（出していない。重症度は先生が選ぶ。段K7） */
+  readonly severityLines: number;
 }
 
 export interface CheckedDocument {
@@ -523,6 +571,7 @@ export function checkDocument(answer: { readonly sections: readonly { readonly k
   let unknownSections = 0;
   let unknownRefs = 0;
   let cut = 0;
+  let severityLines = 0;
   const shapes: Partial<Record<keyof ShapeCounts, number>> = {};
   const byKey = new Map<string, { text: string[]; refs: string[] }>();
   for (const x of answer.sections) {
@@ -538,6 +587,15 @@ export function checkDocument(answer: { readonly sections: readonly { readonly k
   const sections = defs.map((d) => {
     const got = byKey.get(d.key);
     let text = tidy((got?.text ?? []).join('\n'));
+    // 申し送りの重症度は、先生が選ぶ（AI に決めさせない）。AI が「重症度：…」の行を書いても、出さずに数える
+    if (material.type === 'handoff') {
+      const kept = text.split('\n').filter((line) => {
+        const drop = SEVERITY_LINE.test(line);
+        if (drop) severityLines += 1;
+        return !drop;
+      });
+      text = tidy(kept.join('\n'));
+    }
     const replaced = replaceShapes(text);
     text = replaced.text;
     for (const [k, n] of Object.entries(replaced.counts)) shapes[k as keyof ShapeCounts] = (shapes[k as keyof ShapeCounts] ?? 0) + n;
@@ -554,8 +612,11 @@ export function checkDocument(answer: { readonly sections: readonly { readonly k
       }),
     };
   });
-  return { sections, notes: { unknownSections, cut, shapes, unknownRefs } };
+  return { sections, notes: { unknownSections, cut, shapes, unknownRefs, severityLines } };
 }
+
+/** 重症度の行（行頭の記号・空白の後に「重症度」「I（Illness severity）」など）。申し送りで AI が書いたら出さない */
+const SEVERITY_LINE = /^[\s・\-*#【［[（(]*(?:重症度|illness\s*severity|I\s*[:：（(]\s*(?:illness|重症度))/iu;
 
 /** 記載を、1つの文にする（見出しは【】。中身のない見出しも残す：書かれていないことを補わない） */
 export function documentText(type: DocType, sections: readonly { readonly key: string; readonly text: string }[]): string {
@@ -606,6 +667,7 @@ export function markNumbers(text: string, backing: Backing): NumberMark[] {
 // 頼みの形と、保存の形
 
 export const DocumentRequest = z.strictObject({ type: z.enum(DOC_TYPES), day: Day, web: z.boolean() });
+// 申し送りは、出す・直す・相談・数の表は同じ頼み（type = handoff）。残すのは HandoffNew・HandoffPatch（handoff.ts）
 export type DocumentRequest = z.infer<typeof DocumentRequest>;
 export const DocumentBackingRequest = z.strictObject({ type: z.enum(DOC_TYPES), day: Day });
 
@@ -626,7 +688,7 @@ export type SavedSection = z.infer<typeof SavedSection>;
 
 /** 記載を残す：AI が書いたままか（ai）・AI が書いたものを直したか（edited）・先生が書いたか（self） */
 export const DocumentNew = z.strictObject({
-  type: z.enum(DOC_TYPES),
+  type: z.enum(NOTE_DOC_TYPES),
   day: Day,
   sections: z.array(SavedSection).min(1).max(20),
   origin: z.enum(['ai', 'self']),

@@ -47,6 +47,20 @@ describe('通信の境界', () => {
   });
 });
 
+describe('クリップボードの境界（段K10。CA-073）', () => {
+  test('クリップボードに書くのは、Casebook へ送る画面（パケット）と、鍵を作る2つの画面（合鍵・書籍の合鍵）だけ。記録の文を、ほかのところからコピーしない', () => {
+    const users = files.filter((f) => /\bclipboard\b/.test(code(f.text))).map((f) => f.rel).sort();
+    expect(users).toEqual(['BookKey.tsx', 'CasebookPanel.tsx', 'KeyMaker.tsx']);
+    const panel = files.find((f) => f.rel === 'CasebookPanel.tsx');
+    // Casebook の画面がコピーするのは、作ったパケット（CBH1: で始まる文字列）だけ
+    expect(code(panel?.text ?? '').match(/clipboard\.writeText\(([^)]*)\)/gu)).toEqual(['clipboard.writeText(built.text)']);
+  });
+
+  test('クリップボードを読まない（Casebook から戻す向きはない）', () => {
+    for (const f of files) expect(code(f.text), f.rel).not.toMatch(/\breadText\b|clipboard\.read\b/);
+  });
+});
+
 describe('常時表示の帯', () => {
   test('帯は、画面の全体（App）に1つ置き、どの状態でも出す（状態の分岐の外にある）', () => {
     const app = files.find((f) => f.rel === 'App.tsx');

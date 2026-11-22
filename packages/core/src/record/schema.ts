@@ -117,5 +117,8 @@ export const NewSource = z.strictObject({
   text: z.string().min(1).max(TEXT_LIMIT),
   /** 記載の中で日をまたいだと、入れる欄で本人が確かめたか（CA-047）。true なら、サーバーが保存した文で場所（nextDayPoint）を決め直して持つ */
   nextDay: z.boolean().optional(),
+  /** 送る鍵（段K9。CA-072。画面が、送るボタンを押したときに作る ULID）。同じ受診に同じ鍵の文があれば、サーバーは保存し直さずに、その文を返す
+   *  （電波の弱いところで、答えが戻らずに送り直しても、二重に保存しない）。患者の情報ではない */
+  sendKey: z.string().refine(isUlid).optional(),
 });
 export type NewSource = z.infer<typeof NewSource>;
