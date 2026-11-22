@@ -5,6 +5,7 @@ import { useState } from 'react';
 
 import { showDateTime } from './format.ts';
 import type { Source } from './net/api.ts';
+import { markFor, refLetter, type RefPatient } from './refmark.ts';
 
 function recentText(item: RecentItem): { tag: string; text: string } {
   switch (item.type) {
@@ -33,7 +34,13 @@ function deviceText(d: DeviceLine): string {
   return `${d.name}${d.replaced ? '（入れ替え）' : ''}${day === '' ? '' : `・${day}`}`;
 }
 
-const labText = (item: Extract<RecentItem, { type: 'lab' }>): string => `${item.name} ${item.comparator ?? ''}${item.valueText}${item.unit === null ? '' : ` ${item.unit}`}`;
+/** 検査値の字（段K3：基準範囲の外なら H・L を添える。数として読める値だけ） */
+const labText = (item: Extract<RecentItem, { type: 'lab' }>, patient: RefPatient | null = null): string => {
+  const value = Number(item.valueText.normalize('NFKC'));
+  const m = markFor({ name: item.name, value: Number.isFinite(value) ? value : null, comparator: item.comparator, unit: item.unit }, patient);
+  const letter = m === null ? '' : refLetter(m);
+  return `${item.name} ${item.comparator ?? ''}${item.valueText}${item.unit === null ? '' : ` ${item.unit}`}${letter === '' ? '' : `【${letter}】`}`;
+};
 
 /** 1つのまとまりで、はじめに見せる数（残りは畳む） */
 const FIRST = 3;
@@ -58,7 +65,7 @@ function RecentRows({ items }: { items: readonly RecentItem[] }) {
 }
 
 /** 24時間の一覧を、種類ごとのまとまりで出す（中身は同じ。1日の濃い記録でも読めるように、新しいものから少しずつ見せる） */
-function RecentList({ items }: { items: readonly RecentItem[] }) {
+function RecentList({ items, patient }: { items: readonly RecentItem[]; patient: RefPatient | null }) {
   const g = recentGroups(items);
   const groups: readonly (readonly [string, string, readonly RecentItem[]])[] = [
     ['problems', '問題', g.problems],
@@ -92,13 +99,13 @@ function RecentList({ items }: { items: readonly RecentItem[] }) {
           <h4 className="part-label">検査値（項目ごとのいちばん新しい値。{String(g.labs.length)} 項目）</h4>
           {g.repeatedLabs.length > 0 && (
             <p className="thread-sub" data-testid="state-recent-labs-repeated">
-              この間に2回以上：{g.repeatedLabs.map((l) => `${labText(l.latest)}（${showDateTime(l.latest.at)}・${String(l.count)} 件）`).join('　')}
+              この間に2回以上：{g.repeatedLabs.map((l) => `${labText(l.latest, patient)}（${showDateTime(l.latest.at)}・${String(l.count)} 件）`).join('　')}
             </p>
           )}
           {g.singleLabs.length > 0 && (
             <details data-testid="state-recent-labs-single">
               <summary>この間に1回だけの項目（{String(g.singleLabs.length)}）</summary>
-              <p className="thread-sub">{g.singleLabs.map((l) => `${labText(l.latest)}（${showDateTime(l.latest.at)}）`).join('　')}</p>
+              <p className="thread-sub">{g.singleLabs.map((l) => `${labText(l.latest, patient)}（${showDateTime(l.latest.at)}）`).join('　')}</p>
             </details>
           )}
         </div>
@@ -127,6 +134,7 @@ export function StateView({
   onProblems,
   list = [],
   listBusy = false,
+  patient = null,
 }: {
   state: PatientState;
   sources: readonly Source[];
@@ -134,6 +142,8 @@ export function StateView({
   /** AI のプロブレムリスト（CA-057。外したものを除いた項目）。あれば、いまの問題の主な見方にする */
   list?: readonly ListItem[];
   listBusy?: boolean;
+  /** 基準範囲の印（段K3）に使う年齢と性別 */
+  patient?: RefPatient | null;
 }) {
   const textOf = (sourceId: string, start: number, end: number): string => sources.find((s) => s.id === sourceId)?.text.slice(start, end).trim() ?? '';
   // いまの問題は、名前の1行だけ。押すと、最後の A・P と、その問題の記載に書かれた値・薬が開く（段I。「いま」を1〜2画面に）。開いたものは画面のメモリだけ
@@ -362,7 +372,7 @@ export function StateView({
           {state.recent.items.length === 0 ? (
             <p className="note">この間に、問題・投薬の動き・できごと・検査値の記載はありません（バイタルは上の帯と経過表）。</p>
           ) : (
-            <RecentList items={state.recent.items} />
+            <RecentList items={state.recent.items} patient={patient} />
           )}
         </details>
       )}

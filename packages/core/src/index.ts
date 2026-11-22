@@ -5,6 +5,7 @@ export * from './ids/ulid.ts';
 export * from './labs/catalog.gen.ts';
 export * from './labs/extra-names.ts';
 export * from './labs/read.ts';
+export * from './labs/reference.ts';
 export * from './organize/answer.ts';
 export * from './organize/apply.ts';
 export * from './organize/views.ts';

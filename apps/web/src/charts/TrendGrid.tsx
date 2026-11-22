@@ -1,8 +1,9 @@
-// 検査の推移：項目ごとの小さな線のグラフ（項目と、書かれた単位ごと）。正常範囲・色分けは描かない。
+// 検査の推移：項目ごとの小さな線のグラフ（項目と、書かれた単位ごと）。基準範囲は、薄い帯と、最新の値の H・L（段K3。CA-059。単位が表と同じときだけ）。
 // 縦の目盛りは、その項目の目盛りの上と下だけを左に書く。タップした点の値を、カードの下に出す。値は、下の表でも読める。
 import { type ChartPoint, EXTRA_LAB_NAMES, LAB_NAMES, type LabTrend, latestPoint, niceTicks, untimedSameDay } from '@clinical-carte/core';
 import { type PointerEvent, useRef, useState } from 'react';
 
+import { markFor, REF_NOTE, refClass, refLetter, type RefPatient, refTitle } from '../refmark.ts';
 import { shortWhen, tickText } from './format.ts';
 import { useWidth } from './useWidth.ts';
 
@@ -14,12 +15,16 @@ const PAD_X = 8;
 const BASE_GUT = 30;
 const PAD_Y = 8;
 
-function MiniChart({ trend, domain, unitless, big, onBig }: { trend: LabTrend; domain: [number, number]; unitless: boolean; big: boolean; onBig: () => void }) {
+function MiniChart({ trend, domain, unitless, big, onBig, patient }: { trend: LabTrend; domain: [number, number]; unitless: boolean; big: boolean; onBig: () => void; patient: RefPatient | null }) {
   const H = big ? BIG_H : SMALL_H;
   const box = useRef<HTMLDivElement>(null);
   const width = useWidth(box, 160);
   const [picked, setPicked] = useState<ChartPoint | null>(null);
-  const values = trend.points.map((p) => p.value);
+  // 基準範囲（つないだ推移は、単位が混ざるので出さない）。帯が見えるように、縦の目盛りに範囲も含める（段K3）
+  const markOf = (value: number) => (trend.joined === undefined ? markFor({ name: trend.name, value, comparator: null, unit: trend.unit }, patient) : null);
+  const firstValue = trend.points[0]?.value;
+  const band = firstValue === undefined ? null : (markOf(firstValue)?.range ?? null);
+  const values = [...trend.points.map((p) => p.value), ...(band === null ? [] : [band.low, band.high])];
   const scale = niceTicks(Math.min(...values), Math.max(...values), 2);
   // 左の目盛りの数の幅：数の字数に合わせる（「15000」の頭が切れないように）
   const GUT = Math.max(BASE_GUT, Math.max(tickText(scale.min).length, tickText(scale.max).length) * 6.5 + 8);
@@ -30,6 +35,8 @@ function MiniChart({ trend, domain, unitless, big, onBig }: { trend: LabTrend; d
   const path = trend.points.map((p, i) => `${i === 0 ? 'M' : 'L'}${String(x(p.t))},${String(y(p.value))}`).join(' ');
   const latest = latestPoint(trend.points) ?? undefined;
   const shown = picked ?? latest ?? null;
+  const shownMark = shown === null ? null : markOf(shown.value);
+  const clampY = (v: number): number => Math.min(Math.max(y(v), PAD_Y), H - PAD_Y);
 
   const pick = (event: PointerEvent<SVGRectElement>) => {
     const rect = event.currentTarget.getBoundingClientRect();
@@ -58,6 +65,11 @@ function MiniChart({ trend, domain, unitless, big, onBig }: { trend: LabTrend; d
         {shown !== null && (
           <span className="trend-value" data-testid="trend-value">
             {shown.text}
+            {shownMark !== null && refLetter(shownMark) !== '' && (
+              <span className={`ref-tag ${refClass(shownMark)}`} title={refTitle(shownMark)} data-testid="ref-tag">
+                {refLetter(shownMark)}
+              </span>
+            )}
             <span className="trend-when">
               {shortWhen(shown.at, shown)}
               {shown === latest && untimedSameDay(trend.points, latest) && '・同じ日に時刻のない値あり'}
@@ -75,6 +87,11 @@ function MiniChart({ trend, domain, unitless, big, onBig }: { trend: LabTrend; d
           <text x={GUT - 5} y={y(scale.min) + 4} className="axis-text" textAnchor="end">
             {tickText(scale.min)}
           </text>
+          {band !== null && clampY(band.low) > clampY(band.high) && (
+            <rect x={GUT} y={clampY(band.high)} width={plotW} height={clampY(band.low) - clampY(band.high)} className="ref-band" data-testid="ref-band">
+              <title>{shownMark === null ? '' : refTitle(shownMark)}</title>
+            </rect>
+          )}
           {trend.points.length > 1 && <path d={path} className="line series-lab" />}
           {trend.points.map((p) => (
             <circle key={p.t} cx={x(p.t)} cy={y(p.value)} r={picked?.t === p.t ? 5 : 3.5} className={`dot series-lab${p.dateOnly ? ' hollow' : ''}`} />
@@ -92,6 +109,10 @@ function MiniChart({ trend, domain, unitless, big, onBig }: { trend: LabTrend; d
             <li key={p.t}>
               <span className="fact-when">{shortWhen(p.at, p)}</span>
               <strong>{p.text}</strong>
+              {(() => {
+                const m = markOf(p.value);
+                return m !== null && refLetter(m) !== '' ? <span className={`ref-tag ${refClass(m)}`}>{refLetter(m)}</span> : null;
+              })()}
             </li>
           ))}
         </ul>
@@ -111,7 +132,7 @@ const OPEN_ALL_MAX = 8;
  * 検査の推移（段H）：いまの問題の記載に書かれた項目（priority。推し量らない：その問題の記載の範囲に書かれた名前だけ）を先に、
  * 残りは検査の群ごとにまとめる。多いときは群を畳む。押すと大きく見る（値の一覧つき）。大きく見るものは、画面のメモリだけ
  */
-export function TrendGrid({ trends, priority = new Set<string>() }: { trends: readonly LabTrend[]; priority?: ReadonlySet<string> }) {
+export function TrendGrid({ trends, priority = new Set<string>(), patient = null }: { trends: readonly LabTrend[]; priority?: ReadonlySet<string>; patient?: RefPatient | null }) {
   const [big, setBig] = useState<string | null>(null);
   const plotted = trends.filter((t) => t.points.length > 0);
   const onlyTable = trends.filter((t) => t.points.length === 0);
@@ -128,6 +149,7 @@ export function TrendGrid({ trends, priority = new Set<string>() }: { trends: re
         setBig(big === t.key ? null : t.key);
       }}
       unitless={t.unit === null && trends.some((o) => o !== t && o.name === t.name && o.unit !== null)}
+      patient={patient}
     />
   );
   const first = plotted.filter((t) => priority.has(t.name));
@@ -153,7 +175,7 @@ export function TrendGrid({ trends, priority = new Set<string>() }: { trends: re
         </details>
       ))}
       {onlyTable.length > 0 && <p className="note">表だけの項目（不等号・定性など）：{onlyTable.map((t) => t.name).join('・')}</p>}
-      <p className="note">どの項目も、同じ時間の軸です。縦の目盛りは項目ごと（左の数は、その項目の目盛りの下と上）。基準範囲の印は、まだ付けていません（色は系列と種類の見分けだけ）。</p>
+      <p className="note">どの項目も、同じ時間の軸です。縦の目盛りは項目ごと（左の数は、その項目の目盛りの下と上）。{patient === null ? '基準範囲の印は付けていません。' : `薄い帯は基準範囲。${REF_NOTE}`}</p>
     </div>
   );
 }

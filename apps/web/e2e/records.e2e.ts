@@ -229,7 +229,7 @@ describe('日をまたいだ記載（CA-047）', () => {
 });
 
 describe('検査・バイタル', () => {
-  test('ずらりと打つと、値が表に並ぶ。読めなかった部分は、理由つきで出る。色・矢印は付かない', async () => {
+  test('ずらりと打つと、値が表に並ぶ。読めなかった部分は、理由つきで出る。範囲の外の値がなければ、色・矢印は付かない', async () => {
     const page = await open();
     await newPatient(page);
     await send(page, 'WBC 12.3 CRP <0.1 尿潜血 (-) BP 78/40 昨日より改善', '検査結果');
@@ -247,9 +247,32 @@ describe('検査・バイタル', () => {
     // バイタルが先
     expect(rows).toEqual(['収縮期血圧78', '拡張期血圧40', 'WBC12.3', 'CRP<0.1', '尿潜血(-)']);
     expect(await table.locator('thead').textContent()).toContain('2026-11-20'); // 列は日ごと（段H）
-    // 判定を示すもの（色のクラス・矢印）がない
+    // 範囲の外の値がない（WBC は単位がなく桁が読めないので比べない。CRP <0.1 は範囲内）ので、印のクラス・矢印がない（段K3）
     const html = await table.innerHTML();
     expect(html).not.toMatch(/↑|↓|high|low|abnormal|alert|warn/i);
+    expect(problems).toEqual([]);
+  });
+
+  test('基準範囲の外の値に、H・L の字と色。範囲と出典は説明に。比べられない値には付けない（段K3。CA-059）', async () => {
+    const page = await open('Desktop Chrome');
+    await newPatient(page);
+    await send(page, 'Hb 9.8 g/dL Na 128 CRP 12.4 Cr 0.8 WBC 12.3', '検査結果');
+    await page.getByTestId('composer-done').waitFor();
+    await page.getByTestId('tab-course').click();
+    await page.getByTestId('tab-values').click();
+    const table = page.getByTestId('lab-table');
+    await table.waitFor();
+    const rows = await table.locator('tbody tr').allTextContents();
+    expect(rows).toEqual(['Hb9.8 g/dL L', 'Na128 L', 'CRP12.4 H', 'Cr0.8', 'WBC12.3']);
+    expect(await table.getByTestId('ref-cell').count()).toBe(3);
+    expect(await table.locator('td.ref-high').count()).toBe(1);
+    expect(await table.locator('td.ref-low').count()).toBe(2);
+    expect(await table.locator('td.ref-high').getAttribute('title')).toMatch(/基準範囲 .+ mg\/dL（日本における主要な臨床検査項目の共用基準範囲 ―解説と利用の手引き―。未確認の目安）/u);
+    expect(await table.textContent()).toContain('臨床判断値ではありません');
+    // 推移のグラフに、基準範囲の帯と、最新の値の字
+    expect(await page.getByTestId('ref-band').count()).toBeGreaterThan(0);
+    expect(await page.getByTestId('ref-tag').allTextContents()).toEqual(expect.arrayContaining(['L', 'H']));
+    if (process.env.CARTE_SCREENSHOTS !== undefined) await page.getByTestId('course').screenshot({ path: `${process.env.CARTE_SCREENSHOTS}/reference-desktop.png` });
     expect(problems).toEqual([]);
   });
 
@@ -267,7 +290,8 @@ describe('検査・バイタル', () => {
     await page.getByTestId('tab-values').click();
     const table = page.getByTestId('lab-table');
     expect(await table.locator('thead th').allTextContents()).toEqual(['項目', '2026-11-19', '2026-11-20']); // 列は日ごと（段H）
-    expect(await table.locator('tbody tr').allTextContents()).toEqual(['WBC15.112.3', 'CRP8.5']);
+    // 段K3：CRP は基準範囲の上限より上（WBC は単位がなく比べない）
+    expect(await table.locator('tbody tr').allTextContents()).toEqual(['WBC15.112.3', 'CRP8.5 H']);
   });
 });
 

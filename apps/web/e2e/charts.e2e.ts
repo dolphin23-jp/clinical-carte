@@ -1,5 +1,5 @@
 // 見方と入れやすさの E2E：経過表（温度板・投薬・できごと）、検査値の推移、最新のバイタル、種類・日時・ひな形のチップ、
-// 数だけ打つ欄。値はすべて架空。正常範囲・色分けの判定を出さないこと、電話の幅で横にはみ出さないことも確かめる。
+// 数だけ打つ欄。値はすべて架空。経過表に判定の語を出さないこと（基準範囲の印は検査の表と推移だけ。段K3）、電話の幅で横にはみ出さないことも確かめる。
 import type { Browser, BrowserContext, Page } from 'playwright-core';
 import { devices as presets } from 'playwright-core';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from 'vitest';

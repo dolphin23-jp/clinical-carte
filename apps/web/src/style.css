@@ -661,6 +661,12 @@ select.input {
   --tone-visit: #1baf7a;
   --tone-alert: #c8322b;
   --tone-other: #898781;
+  /* 段K3：基準範囲の外（色だけに頼らず、H・L の字と一緒に） */
+  --ref-high: #b42318;
+  --ref-high-bg: #fdecea;
+  --ref-low: #1d5fb4;
+  --ref-low-bg: #e8f0fb;
+  --ref-band: #1baf7a;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -681,6 +687,11 @@ select.input {
     --tone-visit: #199e70;
     --tone-alert: #f0958c;
     --tone-other: #898781;
+    --ref-high: #f3a29a;
+    --ref-high-bg: #3a1f1c;
+    --ref-low: #8fb8f0;
+    --ref-low-bg: #1a2a40;
+    --ref-band: #199e70;
   }
 }
 
@@ -2391,3 +2402,19 @@ select.input {
   fill: var(--ink);
   font-size: 11.5px;
 }
+
+/* ===== 段K3：基準範囲の印（H・L と色。範囲と出典は title） ===== */
+td.ref-high { color: var(--ref-high); background: var(--ref-high-bg); font-weight: 600; }
+td.ref-low { color: var(--ref-low); background: var(--ref-low-bg); font-weight: 600; }
+.ref-tag {
+  display: inline-block;
+  margin-left: 4px;
+  padding: 0 5px;
+  border-radius: 6px;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1.5;
+}
+.ref-tag.ref-high { color: var(--ref-high); background: var(--ref-high-bg); }
+.ref-tag.ref-low { color: var(--ref-low); background: var(--ref-low-bg); }
+.ref-band { fill: var(--ref-band); fill-opacity: 0.1; }

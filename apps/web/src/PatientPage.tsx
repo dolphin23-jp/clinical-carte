@@ -1,5 +1,6 @@
 // 患者の画面：自動の見出し・最新のバイタル・受診、経過表（温度板・投薬・できごと）、記録、検査の推移と表、入れる欄。
 import {
+  ageNow,
   AUTHOR_ROLE_LABELS,
   ENCOUNTER_KIND_LABELS,
   ENCOUNTER_KINDS,
@@ -224,6 +225,8 @@ export function PatientPage({ patientId, onBack, onLeft }: { patientId: string; 
           observations,
           list: record.problemList?.items ?? [],
         });
+  // 基準範囲の印（段K3）に使う、いまの年齢と性別
+  const refPatient = { age: ageNow(record.patient.age, record.patient.ageOn, record.today), sex: record.patient.sex };
   // ボード（段K2）の問題の帯：AI のプロブレムリストの活動中の項目（番号はリストの番号）
   const boardProblems = numberedList(record.problemList?.items ?? [])
     .filter(({ item }) => item.activity === 'active')
@@ -437,6 +440,7 @@ export function PatientPage({ patientId, onBack, onLeft }: { patientId: string; 
               sources={record.sources}
               list={(record.problemList?.items ?? []).filter((i) => !i.hidden)}
               listBusy={listBuilder.busy}
+              patient={refPatient}
               onProblems={() => {
                 setTab('problems');
               }}
@@ -483,10 +487,10 @@ export function PatientPage({ patientId, onBack, onLeft }: { patientId: string; 
                 )}
                 {view === 'values' && (
                   <>
-                    <TrendGrid trends={trends} priority={problemValueNames} />
+                    <TrendGrid trends={trends} priority={problemValueNames} patient={refPatient} />
                     <ScaleLinks trends={trends} links={record.scaleLinks} onChanged={load} onLeft={onLeft} />
                     <h3 className="sub-title">表（書かれたとおり。日ごと）</h3>
-                    <LabTable observations={observations} />
+                    <LabTable observations={observations} patient={refPatient} />
                     {foldedHere > 0 && (
                       <p className="note" data-testid="values-folded">
                         記載（経過など）の中で挙げ直した値のうち、同じ日の検査結果・バイタルの文に同じ項目・同じ値があるもの {String(foldedHere)} 件は、二重になるので、ここ・経過表・いまでは出していません（消していません。記録の各記載の「整理した事実」にあります）。
