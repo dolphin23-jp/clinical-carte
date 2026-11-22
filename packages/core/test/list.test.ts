@@ -1,7 +1,7 @@
 // AI のプロブレムリスト（CA-057）：結びつけの確かめ・始まりの日・先生の直しの引き継ぎ・直し。架空（synthetic）。
 import { describe, expect, test } from 'vitest';
 
-import { applyListPatch, carryListEdits, checkProblemList, type ListItem, listBasis, listMaterial } from '../src/index.ts';
+import { applyListPatch, carryListEdits, checkProblemList, type ListItem, listBasis, listCurrentNames, listMaterial, numberedList } from '../src/index.ts';
 
 const material = listMaterial({
   patient: { age: 72, sex: '男' },
@@ -72,6 +72,17 @@ describe('AI のプロブレムリスト', () => {
     expect(applyListPatch(items, { key: 'a', hidden: true })?.[0]?.hidden).toBe(true);
     expect(applyListPatch(items, { key: 'b', move: 'up' })?.map((i) => i.key)).toEqual(['b', 'a']);
     expect(applyListPatch(items, { key: 'z', hidden: true })).toBeNull();
+  });
+
+  test('番号：外したものを除いた並びの #1…。いまの問題は活動中だけで、番号は詰めない（2026-11-22）', () => {
+    const it = (key: string, activity: ListItem['activity'], hidden = false): ListItem => ({ key, name: key.toUpperCase(), certainty: 'problem', activity, threadIds: [], course: [], basis: '', since: null, self: [], hidden });
+    const items = [it('a', 'active'), it('x', 'active', true), it('b', 'resolved'), it('c', 'active')];
+    expect(numberedList(items).map(({ item, no }) => [item.key, no])).toEqual([['a', 1], ['b', 2], ['c', 3]]);
+    expect(listCurrentNames(items)).toEqual(['#1 A', '#3 C']);
+    // ↑↓は、外した項目を飛ばして、見えている隣と入れ替える
+    expect(applyListPatch(items, { key: 'b', move: 'up' })?.map((i) => i.key)).toEqual(['b', 'x', 'a', 'c']);
+    expect(applyListPatch(items, { key: 'a', move: 'down' })?.map((i) => i.key)).toEqual(['b', 'x', 'a', 'c']);
+    expect(applyListPatch(items, { key: 'c', move: 'down' })?.map((i) => i.key)).toEqual(['a', 'x', 'b', 'c']);
   });
 
   test('元の記録の印：記載が増えた・整理が終わると変わる', () => {

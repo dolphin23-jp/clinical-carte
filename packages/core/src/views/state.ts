@@ -5,6 +5,7 @@
 // - 判定しない：並べるだけ。投薬は「薬ごとの最後の記載」で、いま続いているかを補わない。
 import { type EventKind, type MedicationAction, type SegmentLabel, SEGMENT_LABEL_NAMES } from '../organize/answer.ts';
 import { medicationTimeline, nameKey } from '../organize/views.ts';
+import { listCurrentNames, type ListItem } from '../problems/list.ts';
 import { type ProblemNote, problemNotes, relatedFacts, sharedPlanSegments, type ThreadMention, type ThreadRow, type ThreadView, threadViews } from '../problems/threads.ts';
 import { ageNow, hospitalDay } from '../record/headline.ts';
 import { ENCOUNTER_KIND_LABELS, type EncounterKind, type Sex } from '../record/schema.ts';
@@ -85,6 +86,8 @@ export interface StateInput {
   readonly medications: readonly StateMedication[];
   readonly events: readonly StateEvent[];
   readonly observations: readonly StateObservation[];
+  /** AI のプロブレムリスト（CA-057）の項目。活動中の項目があれば、1行の要約の問題は、リストの番号と名前にする（2026-11-22 の本人の決定） */
+  readonly list?: readonly Pick<ListItem, 'hidden' | 'activity' | 'name'>[];
 }
 
 export type RecentItem =
@@ -172,6 +175,14 @@ export interface OneLinerInput {
   readonly today: string;
   readonly asOf: string | null;
   readonly problems: readonly string[];
+  /** problems が AI のプロブレムリスト（番号つき）のとき true。要約に「AI の整理」と書く */
+  readonly listed?: boolean;
+}
+
+/** 1行の要約の問題：AI のプロブレムリストに活動中の項目があれば、その番号と名前。なければ、記録に書かれた名前 */
+export function oneLinerProblems(written: readonly string[], list: readonly Pick<ListItem, 'hidden' | 'activity' | 'name'>[] | undefined): { problems: string[]; listed: boolean } {
+  const listed = listCurrentNames(list ?? []);
+  return listed.length > 0 ? { problems: listed, listed: true } : { problems: [...written], listed: false };
 }
 
 /** 記録の上での病日（入院で、記録の上で最後の日時があるときだけ） */
@@ -189,7 +200,7 @@ export function oneLinerOf(input: OneLinerInput): string {
   const dayText = day === null ? '' : `（記録の上では ${String(day)}病日まで）`;
   const shown = input.problems.slice(0, ONE_LINER_PROBLEMS);
   const rest = input.problems.length - shown.length;
-  const problemText = input.problems.length === 0 ? 'いまの問題の記載なし' : `いまの問題：${shown.join('、')}${rest > 0 ? ` ほか ${String(rest)}` : ''}`;
+  const problemText = input.problems.length === 0 ? 'いまの問題の記載なし' : `いまの問題${input.listed === true ? '（AI の整理）' : ''}：${shown.join('、')}${rest > 0 ? ` ほか ${String(rest)}` : ''}`;
   return `${who}。${ENCOUNTER_KIND_LABELS[encounter.kind]} ${span}${dayText}。${problemText}。`;
 }
 
@@ -199,14 +210,18 @@ export interface RoundInput {
   readonly sources: readonly { readonly encounterId: string; readonly at: string | null; readonly enteredAt: string }[];
   readonly threads: readonly ThreadRow[];
   readonly mentions: readonly ThreadMention[];
+  /** AI のプロブレムリストの項目（あれば。いまの問題を、リストの番号と名前にする） */
+  readonly list?: readonly Pick<ListItem, 'hidden' | 'activity' | 'name'>[];
 }
 
 export interface RoundSummary {
   /** 記録の上で最後の日時（その受診の文の日時の最大） */
   readonly asOf: string | null;
   readonly lastEntered: string | null;
-  /** いまの問題の名前（最初の記載の順） */
+  /** いまの問題の名前（AI のプロブレムリストがあれば、その番号と名前。なければ、記録に書かれた名前を最初の記載の順） */
   readonly problems: readonly string[];
+  /** problems が AI のプロブレムリストのもの */
+  readonly listed: boolean;
   /** 解決・非活動・否定的と書かれた問題の数 */
   readonly otherProblems: number;
   /** まだ筋につないでいない問題の記載の数 */
@@ -218,10 +233,12 @@ export function roundSummary(input: RoundInput): RoundSummary {
   const own = input.sources.filter((s) => s.encounterId === input.encounter.id);
   const views = threadViews(input.threads, input.mentions);
   const current = views.threads.filter((t) => t.group === 'current');
+  const { problems, listed } = oneLinerProblems(current.map((t) => t.name), input.list);
   return {
     asOf: latestOf(own.map((s) => s.at)),
     lastEntered: latestOf(own.map((s) => s.enteredAt)),
-    problems: current.map((t) => t.name),
+    problems,
+    listed,
     otherProblems: views.threads.length - current.length,
     unlinked: views.unlinked.length,
   };
@@ -280,7 +297,7 @@ export function patientState(input: StateInput): PatientState {
   const ruledOut = views.threads.filter((t) => t.group === 'ruled_out');
 
   // 1行の要約
-  const oneLiner = oneLinerOf({ patient: input.patient, encounter, today: input.today, asOf, problems: current.map((c) => c.thread.name) });
+  const oneLiner = oneLinerOf({ patient: input.patient, encounter, today: input.today, asOf, ...oneLinerProblems(current.map((c) => c.thread.name), input.list) });
 
   // 最後の記録までの24時間
   let recent: PatientState['recent'] = null;

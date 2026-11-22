@@ -418,6 +418,7 @@ export function PatientPage({ patientId, onBack, onLeft }: { patientId: string; 
                 medications: shownMeds,
                 events: shownEvents,
                 observations,
+                list: record.problemList?.items ?? [],
               })}
               sources={record.sources}
               list={(record.problemList?.items ?? []).filter((i) => !i.hidden)}
