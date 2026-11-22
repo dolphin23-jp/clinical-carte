@@ -415,6 +415,16 @@ export function documentMaterial(input: DocumentInput): DocMaterial {
 
 const uniq = (list: readonly string[]): string[] => [...new Set(list)].sort();
 
+/** 文から、照らし合わせの表を作る（本文の数と、日時・病日の数。AI の臨床支援〔段K5〕の資料も、同じ形で数を持つ） */
+export function backingFrom(body: readonly string[], when: readonly string[]): Backing {
+  return { body: uniq(body.flatMap(numbersIn)), when: uniq(when.flatMap(numbersIn)) };
+}
+
+/** 文の中の数（全角は半角に、先頭・末尾の 0 の違いはそろえる。照らし合わせの表と同じ形） */
+export function numbersOf(text: string): string[] {
+  return numbersIn(text);
+}
+
 /** 出典（書籍・ネット）の数を、照らし合わせの表に足す */
 export function backingWith(backing: Backing, refs: readonly { readonly text: string }[]): Backing {
   return { body: uniq([...backing.body, ...refs.flatMap((r) => numbersIn(r.text))]), when: backing.when };

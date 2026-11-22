@@ -1,6 +1,6 @@
 // 記録の読み書き（段1：患者・受診・取り込んだ文・測定値）。書く表は、docs/04 の 6 の一覧のとおり。
 // ここは、形を確かめた後の値だけを受け取る（形の確かめは handler.ts、文の選別は intake.ts）。
-import { COURSE_CATEGORIES, type CourseCategory, DOC_ORIGINS, DOC_TYPES, type DocOrigin, type DocType, type ListItem, ListItemShape, roundSummary, type RoundSummary, type SavedDocument, SavedSection } from '@clinical-carte/core';
+import { COURSE_CATEGORIES, type CourseCategory, DOC_ORIGINS, DOC_TYPES, type DocOrigin, type DocType, type ListItem, ListItemShape, roundSummary, type RoundSummary, type SavedDocument, SavedSection, SupportBody } from '@clinical-carte/core';
 import { z } from 'zod';
 import { ApRef, type ApOrigin, type ApPart, type FactField, type FactKind, type PlanKind, USER_EDIT_FIELDS, USER_EDIT_TARGETS, type UserEditField, type UserEditTarget } from '@clinical-carte/core';
 import type { AuthorRole, Comparator, EncounterKind, EventKind, HistoryAction, LabRow, MedicationAction, OrganizeReport, ProblemActivity, ProblemStatus, SegmentLabel, Sex, SourceKind } from '@clinical-carte/core';
@@ -193,6 +193,14 @@ export interface ProblemListRow {
   readonly items: readonly ListItem[];
 }
 
+/** AI の臨床支援（段K5。CA-064。患者ごとに1つ） */
+export interface SupportRow {
+  readonly madeAt: string;
+  readonly promptVersion: string;
+  readonly basis: string;
+  readonly body: SupportBody;
+}
+
 export interface FactEdit {
   readonly id: string;
   readonly at: string;
@@ -343,6 +351,20 @@ export function problemListOf(row: Row | null): ProblemListRow | null {
     // 読めない中身は、空として扱う
   }
   return { madeAt, promptVersion, basis, items };
+}
+
+/** 支援の行を読む（中身が読めなければ null：組み直すと、また作られる） */
+export function supportOf(row: Row | null): SupportRow | null {
+  const madeAt = text(row, 'made_at');
+  const promptVersion = text(row, 'prompt_version');
+  const basis = text(row, 'basis');
+  if (row === null || madeAt === null || promptVersion === null || basis === null) return null;
+  try {
+    const parsed = SupportBody.safeParse(JSON.parse(text(row, 'body') ?? 'null'));
+    return parsed.success ? { madeAt, promptVersion, basis, body: parsed.data } : null;
+  } catch {
+    return null;
+  }
 }
 
 /** 外した印と、本人が直したか（列がない古い読み出しでは、どちらも false） */
@@ -627,6 +649,8 @@ export interface PatientRecord {
   readonly course: CourseItem[];
   /** AI のプロブレムリスト（CA-057。まだなければ null） */
   readonly problemList: ProblemListRow | null;
+  /** AI の臨床支援（段K5。CA-064。まだなければ null） */
+  readonly support: SupportRow | null;
 }
 
 export interface ScaleLinkRow {
@@ -658,7 +682,7 @@ export const PROBLEM_COLUMNS = 'id, source_id, encounter_id, name, status, activ
 export async function getRecord(db: Db, id: string): Promise<PatientRecord | null> {
   const patient = await getPatient(db, id);
   if (patient === null) return null;
-  const [encounters, sources, observations, segments, medications, events, problems, threads, history, factEdits, userEdits, apNotes, scaleLinks, documents, course, problemList] = await Promise.all([
+  const [encounters, sources, observations, segments, medications, events, problems, threads, history, factEdits, userEdits, apNotes, scaleLinks, documents, course, problemList, support] = await Promise.all([
     db.prepare('SELECT id, patient_id, kind, started, ended FROM encounters WHERE patient_id = ? ORDER BY started, id').bind(id).all(),
     db.prepare('SELECT id, patient_id, encounter_id, kind, author_role, at, entered_at, text, replaced, organized, organized_version, organize_report, next_day_from FROM sources WHERE patient_id = ? ORDER BY id').bind(id).all(),
     db
@@ -678,6 +702,7 @@ export async function getRecord(db: Db, id: string): Promise<PatientRecord | nul
     db.prepare(`SELECT ${DOCUMENT_COLUMNS} FROM documents WHERE patient_id = ? ORDER BY day DESC, updated_at DESC, id DESC`).bind(id).all(),
     db.prepare('SELECT id, source_id, encounter_id, at, at_approx, category, summary, span_start, span_end FROM course_items WHERE patient_id = ? ORDER BY source_id, span_start').bind(id).all(),
     db.prepare('SELECT made_at, prompt_version, basis, items FROM problem_lists WHERE patient_id = ?').bind(id).first(),
+    db.prepare('SELECT made_at, prompt_version, basis, body FROM clinical_support WHERE patient_id = ?').bind(id).first(),
   ]);
   return {
     patient,
@@ -697,6 +722,7 @@ export async function getRecord(db: Db, id: string): Promise<PatientRecord | nul
     documents: documents.results.map(toDocument).filter(present),
     course: course.results.map(toCourse).filter(present),
     problemList: problemListOf(problemList),
+    support: supportOf(support),
   };
 }
 
@@ -742,7 +768,7 @@ export async function setEncounterEnd(db: Db, id: string, end: string | null): P
 export const FACT_TABLES = ['observations', 'segments', 'medications', 'events', 'problems', 'course_items'] as const;
 
 /** 患者に付く、文からではない行の表（患者を消すと、一緒に消える。文を消しても残る：筋は、記載がなくなると見えなくなるだけ） */
-export const PATIENT_TABLES = ['problem_threads', 'history', 'fact_edits', 'user_edits', 'ap_notes', 'ap_history', 'documents', 'document_history', 'problem_lists', 'problem_list_edits'] as const;
+export const PATIENT_TABLES = ['problem_threads', 'history', 'fact_edits', 'user_edits', 'ap_notes', 'ap_history', 'documents', 'document_history', 'problem_lists', 'problem_list_edits', 'clinical_support'] as const;
 
 /** 問題の行を、表から読む */
 export function problemOf(row: Record<string, unknown>): Problem | null {

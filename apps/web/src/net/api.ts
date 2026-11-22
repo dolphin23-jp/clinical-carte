@@ -43,6 +43,7 @@ import type {
   SegmentLabel,
   Sex,
   SourceKind,
+  SupportBody,
 } from '@clinical-carte/core';
 
 export interface DeviceView {
@@ -73,6 +74,7 @@ export type ApiError =
   | 'conflict'
   | 'document_empty'
   | 'list_empty'
+  | 'support_empty'
   | 'shape'
   | 'bad_span'
   | 'too_long';
@@ -98,6 +100,7 @@ const KNOWN: readonly ApiError[] = [
   'conflict',
   'document_empty',
   'list_empty',
+  'support_empty',
   'shape',
   'bad_span',
 ];
@@ -346,6 +349,14 @@ export interface ProblemListView {
   readonly items: readonly ListItem[];
 }
 
+/** AI の臨床支援（段K5。CA-064） */
+export interface SupportView {
+  readonly madeAt: string;
+  readonly promptVersion: string;
+  readonly basis: string;
+  readonly body: SupportBody;
+}
+
 export interface PatientSummary {
   readonly patient: Patient;
   readonly latest: Encounter | null;
@@ -392,6 +403,8 @@ export interface PatientRecord {
   readonly course: readonly CourseItem[];
   /** AI のプロブレムリスト（CA-057。まだなければ null） */
   readonly problemList: ProblemListView | null;
+  /** AI の臨床支援（段K5。まだなければ null） */
+  readonly support: SupportView | null;
   /** サーバーの、今日（日本の日） */
   readonly today: string;
 }
@@ -417,7 +430,7 @@ export async function createPatient(input: NewPatient): Promise<Result<Patient>>
 export async function getRecord(patientId: string): Promise<Result<PatientRecord>> {
   const result = await call('GET', `patients/${encodeURIComponent(patientId)}`);
   if (!result.ok) return result;
-  const { patient, encounters, sources, observations, segments, medications, events, problems, problemThreads, history, factEdits, userEdits, apNotes, scaleLinks, documents, course, problemList, today } = result.value;
+  const { patient, encounters, sources, observations, segments, medications, events, problems, problemThreads, history, factEdits, userEdits, apNotes, scaleLinks, documents, course, problemList, support, today } = result.value;
   const lists = [encounters, sources, observations, segments, medications, events, problems, problemThreads, history, factEdits, userEdits, apNotes, scaleLinks, documents, course];
   if (!isRecord(patient) || lists.some((l) => !Array.isArray(l)) || typeof today !== 'string') return { ok: false, error: 'network' };
   return {
@@ -440,6 +453,7 @@ export async function getRecord(patientId: string): Promise<Result<PatientRecord
       documents: documents as SavedDocument[],
       course: course as CourseItem[],
       problemList: isRecord(problemList) ? (problemList as unknown as ProblemListView) : null,
+      support: isRecord(support) && isRecord(support['body']) ? (support as unknown as SupportView) : null,
       today,
     },
   };
@@ -741,4 +755,11 @@ export async function generateProblemList(patientId: string): Promise<Result<{ r
 /** 先生の直し（名前はサーバーで選別を通す） */
 export async function patchProblemList(patientId: string, patch: ListPatch): Promise<Result<null>> {
   return done(await call('PATCH', `patients/${encodeURIComponent(patientId)}/problem-list`, patch));
+}
+
+// --- AI の臨床支援（段K5。CA-064）
+
+/** 記録から、AI が臨床支援を組み直す（ネットの出典も探すかを選ぶ。書籍は設定があるとき、いつも） */
+export async function generateSupport(patientId: string, web: boolean): Promise<Result<null>> {
+  return done(await call('POST', `patients/${encodeURIComponent(patientId)}/support`, { web }));
 }

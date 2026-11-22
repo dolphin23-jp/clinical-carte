@@ -19,6 +19,7 @@ import {
   scaleUnitKey,
   SourceAppend,
   SourceTextPut,
+  SupportRequest,
   FACT_KINDS,
   type FactKind,
   FactPatch,
@@ -40,6 +41,7 @@ import type { z } from 'zod';
 
 import type { Db } from './db.ts';
 import { addApNotes, type ApOutcome, deleteApNote, patchApNote } from './ap.ts';
+import { generateSupport } from './clinicalsupport.ts';
 import { addDocument, type CallGate, deleteDocument, documentMaterialFor, gatherReferences, generateDocument, patchDocument, reviseDocument, type SaveOutcome, talkHasShapes } from './documents.ts';
 import { addFact, appendSource, patchSegment, patchSource, retypeSource } from './edits.ts';
 import { patchFact } from './facts.ts';
@@ -390,6 +392,24 @@ export async function recordApi(request: Request, path: string, deps: RecordDeps
     if (r.error === 'empty') return bad();
     if (r.error === 'ai') return aiFailed(r.failure);
     return reply(422, { error: 'selection_failed' });
+  }
+
+  // AI の臨床支援（段K5。CA-064）：組み直す（書籍・ネットの検索には問題の名前だけ。AI の 1 回〔ネットを頼めば、もう 1 回〕。活動中の問題がなければ呼ばない）
+  const support = /^\/api\/patients\/([^/]+)\/support$/.exec(path);
+  if (support && method === 'POST') {
+    const patientId = support[1] ?? '';
+    if (!isUlid(patientId)) return bad();
+    const body = await readBody(request, SupportRequest);
+    if (body === null) return bad();
+    if (deps.organizer === null) return reply(503, { error: 'no_ai' });
+    const r = await generateSupport(db, patientId, { web: body.web, organizer: deps.organizer, books: deps.books, gate, runtime, today });
+    if (!r.ok) {
+      if (r.reason === 'not_found') return missing();
+      if (r.reason === 'empty') return reply(422, { error: 'support_empty' });
+      if (r.reason === 'ai_limit') return reply(429, { error: 'ai_limit' });
+      return aiFailed(r.failure);
+    }
+    return reply(200, { support: r.body });
   }
 
   // 数の印の照らし合わせの表（段I）：AI を使わない（残した記載を開いたときの印に使う）。数だけを返す

@@ -27,10 +27,15 @@ import {
   latestPoint,
   untimedSameDay,
   type VitalPanel,
+  COURSE_CATEGORY_NAMES,
+  type CourseCategory,
+  type DeviceLine,
+  type EventKind,
+  medicationDays,
 } from '@clinical-carte/core';
 import { type PointerEvent, useEffect, useId, useRef, useState } from 'react';
 
-import type { ClinicalEvent } from '../net/api.ts';
+import type { ClinicalEvent, CourseItem } from '../net/api.ts';
 import { shortWhen, tickText } from './format.ts';
 import { useWidth } from './useWidth.ts';
 
@@ -58,7 +63,27 @@ interface Props {
   /** 表示の範囲（親が持つ：日の帯で選んだ日と、ほかの見方と分け合う） */
   readonly range?: TimelineRange;
   readonly onRange?: (range: TimelineRange) => void;
+  /** 段K2（ボード）：AI のプロブレムリストの活動中の項目（番号はリストの番号）。始まりから記録の上で最後まで帯にする */
+  readonly problems?: readonly BoardProblem[];
+  /** 経過の出来事（AI の要約。CA-056）。種類ごとの色の印 */
+  readonly course?: readonly CourseItem[];
+  /** デバイス（入れた〜抜いた。段K1 の deviceDays） */
+  readonly devices?: readonly DeviceLine[];
+  /** 記録の上で最後の日時（薬の「開始から何日目」を数える。数えるだけ） */
+  readonly asOf?: string | null;
 }
+
+export interface BoardProblem {
+  readonly key: string;
+  readonly no: number;
+  readonly name: string;
+  readonly since: string | null;
+}
+
+/** 経過の出来事の色の組（種類ごと。色だけに頼らず、押すと名前と字が出る） */
+const COURSE_TONE: Readonly<Record<CourseCategory, string>> = { onset: 'tone-symptom', change: 'tone-symptom', intake: 'tone-treat', treatment: 'tone-treat', test: 'tone-test', finding: 'tone-test', visit: 'tone-visit', other: 'tone-other' };
+/** できごとの色の組 */
+const EVENT_TONE: Readonly<Record<EventKind, string>> = { procedure: 'tone-treat', surgery: 'tone-treat', test: 'tone-test', consult: 'tone-visit', transfer: 'tone-visit', explanation: 'tone-visit', deterioration: 'tone-alert', other: 'tone-other' };
 
 /** 1日（ミリ秒） */
 const DAY_MS = 86_400_000;
@@ -98,13 +123,44 @@ export function ActionKey() {
   );
 }
 
+/** 薬の段の名前に添える日数（段K1。開始の記載があるときだけ） */
+function medDayText(entries: MedicationLine['entries'], asOf: string | null): string | null {
+  const d = medicationDays(entries, asOf);
+  if (d.day === null) return null;
+  return d.stoppedAt === null ? `開始から ${String(d.day)} 日目` : `${String(d.day)} 日間`;
+}
+
+/** 色の組の見方（できごと・経過の出来事）。色だけに頼らず、押すと種類の名前が出る */
+export function ToneKey() {
+  const items: readonly (readonly [string, string])[] = [
+    ['tone-symptom', '症状の出現・変化'],
+    ['tone-treat', '処置・治療・内服'],
+    ['tone-test', '検査・所見'],
+    ['tone-visit', '受診・相談・説明・転棟'],
+    ['tone-alert', '急変'],
+    ['tone-other', 'その他'],
+  ];
+  return (
+    <div className="chart-key" aria-label="できごと・経過の出来事の色">
+      {items.map(([cls, name]) => (
+        <span key={cls} className="chart-key-item">
+          <svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true">
+            <circle cx={6} cy={6} r={5} className={`mark-course ${cls}`} />
+          </svg>
+          {name}
+        </span>
+      ))}
+    </div>
+  );
+}
+
 interface HoverRow {
   readonly label: string;
   readonly value: string;
   readonly cls?: string;
 }
 
-export function Timeline({ panels, medications, events, encounterStart, encounterEnd, inpatient, range: rangeProp, onRange }: Props) {
+export function Timeline({ panels, medications, events, encounterStart, encounterEnd, inpatient, range: rangeProp, onRange, problems = [], course = [], devices = [], asOf = null }: Props) {
   const box = useRef<HTMLDivElement>(null);
   const svgRef = useRef<SVGSVGElement>(null);
   const width = useWidth(box);
@@ -138,11 +194,19 @@ export function Timeline({ panels, medications, events, encounterStart, encounte
   const empty = panels.filter((p) => p.points.length === 0);
   const meds = medications.map((m) => ({ ...m, marks: m.entries.map((e) => ({ e, time: chartTime(e.at) })) }));
   const evs = events.map((e) => ({ e, time: chartTime(e.at) }));
+  const cos = course.map((c) => ({ c, time: chartTime(c.at) }));
+  const devs = devices.map((d) => ({ d, from: chartTime(d.placedAt), to: d.removedAt === null ? null : chartTime(d.removedAt) }));
+  const probs = problems.map((p) => ({ p, from: p.since === null ? null : chartTime(p.since) }));
 
   const timeSet = new Set<number>();
   for (const p of shown) for (const pt of p.points) timeSet.add(pt.t);
   for (const m of meds) for (const { time } of m.marks) if (time !== null) timeSet.add(time.t);
   for (const { time } of evs) if (time !== null) timeSet.add(time.t);
+  for (const { time } of cos) if (time !== null) timeSet.add(time.t);
+  for (const { from, to } of devs) {
+    if (from !== null) timeSet.add(from.t);
+    if (to !== null) timeSet.add(to.t);
+  }
   const times = [...timeSet].sort((a, b) => a - b);
 
   const raw = timeDomain(times, encounterStart, encounterEnd);
@@ -186,8 +250,15 @@ export function Timeline({ panels, medications, events, encounterStart, encounte
   const medsIn = meds.filter((m) => m.marks.some(({ time }) => time !== null && inWindow(domain, time.t)) || medicationSpans(m.entries).some((sp) => sp.to >= domain[0] && sp.from <= domain[1]));
   const medsOut = meds.filter((m) => !medsIn.includes(m));
   const evsIn = evs.filter(({ time }) => time !== null && inWindow(domain, time.t));
-  // 段の位置
+  const cosIn = cos.filter(({ time }) => time !== null && inWindow(domain, time.t));
+  // 帯の終わり：抜去・解決の記載がなければ、記録の上で最後（続いているとは補わない。破線で出す）
+  const lastT = anchor;
+  const devsIn = devs.filter(({ from, to }) => from !== null && from.t <= domain[1] && (to?.t ?? lastT) >= domain[0]);
+  const probsIn = probs.filter(({ from }) => from !== null && from.t <= domain[1] && lastT >= domain[0]);
+  // 段の位置：問題の帯を、いちばん上に（何が起きているか → バイタル → 何が投与されているか の順）
   let y = AXIS_H;
+  const problemTop = y;
+  if (probsIn.length > 0) y += SECTION_H + probsIn.length * LANE_H + 4;
   const layout = inRange.map((p) => {
     const top = y + TITLE_H;
     y = top + PLOT_H + PANEL_GAP;
@@ -201,8 +272,12 @@ export function Timeline({ panels, medications, events, encounterStart, encounte
   });
   const medTop = y;
   if (medsIn.length > 0) y += SECTION_H + medsIn.length * (LANE_LABEL_H + LANE_H);
+  const deviceTop = y;
+  if (devsIn.length > 0) y += SECTION_H + devsIn.length * (LANE_LABEL_H + LANE_H);
   const eventTop = y;
   if (evsIn.length > 0) y += SECTION_H + LANE_H;
+  const courseTop = y;
+  if (cosIn.length > 0) y += SECTION_H + LANE_H;
   const height = y + 6;
 
   const hoverX = hover === null ? null : x(hover);
@@ -227,6 +302,15 @@ export function Timeline({ panels, medications, events, encounterStart, encounte
       if (time?.t !== hover || e.at === null) continue;
       hoverLabel ||= shortWhen(e.at, time);
       rows.push({ label: EVENT_KIND_NAMES[e.kind], value: e.title });
+    }
+    for (const { c, time } of cos) {
+      if (time?.t !== hover || c.at === null) continue;
+      hoverLabel ||= shortWhen(c.at, time);
+      rows.push({ label: `${COURSE_CATEGORY_NAMES[c.category]}（AI の要約）`, value: `${c.summary}${c.atApprox === null ? '' : `（${c.atApprox}）`}` });
+    }
+    for (const { d, from, to } of devs) {
+      if (from?.t === hover) rows.push({ label: 'デバイス', value: `${d.name} ${d.replaced ? '入れ替え' : '挿入・留置'}` });
+      if (to?.t === hover) rows.push({ label: 'デバイス', value: `${d.name} 抜去` });
     }
   }
 
@@ -325,7 +409,7 @@ export function Timeline({ panels, medications, events, encounterStart, encounte
       <p className="range-label" data-testid="range-label">
         {rangeText(domain)}
       </p>
-      <svg ref={svgRef} width={width} height={height} role="img" aria-label={`経過表：${inRange.map((p) => p.name).join('・')}${medsIn.length > 0 ? '・投薬' : ''}${evsIn.length > 0 ? '・できごと' : ''}`}>
+      <svg ref={svgRef} width={width} height={height} role="img" aria-label={`経過表：${probsIn.length > 0 ? '問題・' : ''}${inRange.map((p) => p.name).join('・')}${medsIn.length > 0 ? '・投薬' : ''}${devsIn.length > 0 ? '・デバイス' : ''}${evsIn.length > 0 ? '・できごと' : ''}${cosIn.length > 0 ? '・経過の出来事' : ''}`}>
         {/* 日の目盛り（縦の細線）と、日付・病日 */}
         {ticks.map((tk) => (
           <g key={tk.t}>
@@ -346,6 +430,26 @@ export function Timeline({ panels, medications, events, encounterStart, encounte
             <rect x={GUTTER - 6} y={0} width={plotW + 12} height={height} />
           </clipPath>
         </defs>
+        {probsIn.length > 0 && (
+          <g data-testid="timeline-problems">
+            <text x={0} y={problemTop + 14} className="section-title">
+              問題（AI の整理）
+            </text>
+            <g clipPath={`url(#${clipId})`}>
+              {probsIn.map(({ p, from }, i) => {
+                const cy = problemTop + SECTION_H + i * LANE_H + LANE_H / 2;
+                const x1 = Math.max(GUTTER, x(from?.t ?? domain[0]));
+                return (
+                  <g key={p.key} data-testid="timeline-problem">
+                    <line x1={x1} x2={x(lastT)} y1={cy} y2={cy} className={`problem-span tone-p${String(i % 6)}`} />
+                    <text x={x1 + 4} y={cy + 4} className="problem-label">{`#${String(p.no)} ${p.name}`}</text>
+                  </g>
+                );
+              })}
+            </g>
+          </g>
+        )}
+
         {layout.map(({ p, top, scale, yOf, points, none }) => {
           const latest = latestPoint(p.points);
           const cls = `series-${p.id}`;
@@ -403,6 +507,7 @@ export function Timeline({ panels, medications, events, encounterStart, encounte
                 <g key={m.name}>
                   <text x={0} y={laneTop + 12} className="lane-title">
                     {m.name}
+                    {medDayText(m.entries, asOf) !== null && <tspan className="panel-unit">{`\u3000${medDayText(m.entries, asOf) ?? ''}`}</tspan>}
                     {undated > 0 && <tspan className="panel-unit">{`\u3000日時不明 ${String(undated)}`}</tspan>}
                   </text>
                   <line x1={GUTTER} x2={GUTTER + plotW} y1={cy} y2={cy} className="lane" />
@@ -418,6 +523,33 @@ export function Timeline({ panels, medications, events, encounterStart, encounte
           </g>
         )}
 
+        {devsIn.length > 0 && (
+          <g data-testid="timeline-devices">
+            <text x={0} y={deviceTop + 14} className="section-title">
+              デバイス
+            </text>
+            {devsIn.map(({ d, from, to }, i) => {
+              const laneTop = deviceTop + SECTION_H + i * (LANE_LABEL_H + LANE_H);
+              const cy = laneTop + LANE_LABEL_H + LANE_H / 2;
+              const end = to?.t ?? lastT;
+              return (
+                <g key={`${d.name}-${d.placedAt}`} data-testid="timeline-device">
+                  <text x={0} y={laneTop + 12} className="lane-title">
+                    {d.name}
+                    <tspan className="panel-unit">{`\u3000${d.day === null ? '' : d.removedAt === null ? `${String(d.day)} 日目・抜去の記載なし` : `${String(d.day)} 日間`}`}</tspan>
+                  </text>
+                  <line x1={GUTTER} x2={GUTTER + plotW} y1={cy} y2={cy} className="lane" />
+                  <g clipPath={`url(#${clipId})`}>
+                    <line x1={x(from?.t ?? domain[0])} x2={x(end)} y1={cy} y2={cy} className={to === null ? 'device-span open' : 'device-span'} />
+                    {from !== null && <path d={actionShape('start', x(from.t), cy)} className="mark-med" />}
+                    {to !== null && <path d={actionShape('stop', x(to.t), cy)} className="mark-med" />}
+                  </g>
+                </g>
+              );
+            })}
+          </g>
+        )}
+
         {evsIn.length > 0 && (
           <g data-testid="timeline-events">
             <text x={0} y={eventTop + 14} className="section-title">
@@ -426,7 +558,21 @@ export function Timeline({ panels, medications, events, encounterStart, encounte
             <line x1={GUTTER} x2={GUTTER + plotW} y1={eventTop + SECTION_H + LANE_H / 2} y2={eventTop + SECTION_H + LANE_H / 2} className="lane" />
             {evsIn.map(({ e, time }) =>
               time === null ? null : (
-                <path key={e.id} d={actionShape('change', x(time.t), eventTop + SECTION_H + LANE_H / 2)} className="mark-event" />
+                <path key={e.id} d={actionShape('change', x(time.t), eventTop + SECTION_H + LANE_H / 2)} className={`mark-event ${EVENT_TONE[e.kind]}`} />
+              ),
+            )}
+          </g>
+        )}
+
+        {cosIn.length > 0 && (
+          <g data-testid="timeline-course">
+            <text x={0} y={courseTop + 14} className="section-title">
+              経過の出来事（AI）
+            </text>
+            <line x1={GUTTER} x2={GUTTER + plotW} y1={courseTop + SECTION_H + LANE_H / 2} y2={courseTop + SECTION_H + LANE_H / 2} className="lane" />
+            {cosIn.map(({ c, time }) =>
+              time === null ? null : (
+                <circle key={c.id} cx={x(time.t)} cy={courseTop + SECTION_H + LANE_H / 2} r={c.atApprox === null ? 5 : 4} className={`mark-course ${COURSE_TONE[c.category]}${c.atApprox === null ? '' : ' approx'}`} />
               ),
             )}
           </g>
@@ -481,6 +627,12 @@ export function Timeline({ panels, medications, events, encounterStart, encounte
           <p className="note">投薬の帯は、記録と記録のあいだ（中止の記録まで）。最後の記録より先は、続いているか書かれていないので、描いていません。</p>
         </>
       )}
+      {(evs.length > 0 || cos.length > 0) && <ToneKey />}
+      {(probs.length > 0 || devs.length > 0 || cos.length > 0) && (
+        <p className="note">
+          問題の帯は、AI のプロブレムリストの始まりから、記録の上で最後まで（解決は書かれたときだけ）。デバイスの破線は、抜去の記載がないもの（入っているとは補っていません）。経過の出来事の薄い印は、おおよその日時（ごろ）。タップすると、その時刻の中身が下に出ます。
+        </p>
+      )}
       {(outRange.length > 0 || medsOut.length > 0 || (evs.length > 0 && evsIn.length === 0)) && (
         <p className="note" data-testid="timeline-outside">
           {outRange.length > 0 && `この範囲に記録のない項目：${outRange.map((p) => p.name).join('・')}。`}
@@ -489,7 +641,7 @@ export function Timeline({ panels, medications, events, encounterStart, encounte
         </p>
       )}
       {empty.length > 0 && <p className="note">記録のない項目：{empty.map((p) => p.name).join('・')}</p>}
-      <p className="note">中の白い点は、日だけ分かる値（その日の真ん中に置いています）。横に動かす・2本指で拡大縮小・下の細い帯で範囲を選べます。縦の目盛りは、見えている範囲の値で決めています。正常範囲や色分けは付けていません。</p>
+      <p className="note">中の白い点は、日だけ分かる値（その日の真ん中に置いています）。横に動かす・2本指で拡大縮小・下の細い帯で範囲を選べます。縦の目盛りは、見えている範囲の値で決めています。基準範囲の印は、まだ付けていません（色は系列と種類の見分けだけ）。</p>
     </div>
   );
 }

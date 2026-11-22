@@ -1,5 +1,6 @@
 // 患者の画面：自動の見出し・最新のバイタル・受診、経過表（温度板・投薬・できごと）、記録、検査の推移と表、入れる欄。
 import {
+  ageNow,
   AUTHOR_ROLE_LABELS,
   ENCOUNTER_KIND_LABELS,
   ENCOUNTER_KINDS,
@@ -13,7 +14,10 @@ import {
   hospitalDay,
   relatedFacts,
   labTrends,
+  leftovers,
+  QUOTED_SEGMENT_LABELS,
   medicationTimeline,
+  numberedList,
   patientState,
   READ_VALUES_KINDS,
   readLabText,
@@ -41,6 +45,7 @@ import { ProblemListView, useProblemList } from './ProblemListView.tsx';
 import { EventView, MedicationView } from './Facts.tsx';
 import {
   type ClinicalEvent,
+  type CourseItem,
   createEncounter,
   deletePatient,
   deleteSource,
@@ -51,6 +56,7 @@ import {
   type Observation,
   organizeSource,
   type PatientRecord,
+  type Problem,
   type Segment,
   setEncounterEnd,
   setEncounterKind,
@@ -64,6 +70,7 @@ import { SourceEdit } from './SourceEdit.tsx';
 import { SourceFacts } from './SourceFacts.tsx';
 import { SourceText } from './SourceText.tsx';
 import { StateView } from './StateView.tsx';
+import { SupportPanel, useSupport } from './SupportView.tsx';
 import { nextDayLabel } from './NextDayAsk.tsx';
 import { DocumentView } from './DocumentView.tsx';
 
@@ -148,6 +155,8 @@ export function PatientPage({ patientId, onBack, onLeft }: { patientId: string; 
   useEffect(load, [load]);
   // AI のプロブレムリスト（CA-057）：記録が増えたら、自動で組み直す（いま・問題のタブの主な見方）
   const listBuilder = useProblemList(patientId, record, load, onLeft);
+  // AI の臨床支援（段K5）：プロブレムリストが組み直されたら、自動で組み直す（いまのタブ）
+  const supportBuilder = useSupport(patientId, record, listBuilder.busy, load, onLeft);
 
   if (record === null) {
     return (
@@ -202,6 +211,42 @@ export function PatientPage({ patientId, onBack, onLeft }: { patientId: string; 
   const foldedEvents = foldedEventIds(events);
   const shownMeds = medications.filter((m) => !foldedMeds.has(m.id));
   const shownEvents = events.filter((e) => !foldedEvents.has(e.id));
+  // いまの状態（いま・経過表のボードが同じものを使う）
+  const state =
+    current === null
+      ? null
+      : patientState({
+          patient: record.patient,
+          encounter: current,
+          today: record.today,
+          sources: record.sources,
+          segments: record.segments,
+          threads: record.problemThreads,
+          mentions: record.problems,
+          medications: shownMeds,
+          events: shownEvents,
+          observations,
+          list: record.problemList?.items ?? [],
+        });
+  // スコア・診断基準（段K4）：この受診の測定値（外した値・同じ値の二重を除いたもの）と、いまの問題の名前（記録に書かれた名前と、AI のプロブレムリストの活動中の項目）
+  const scoreInput =
+    current === null
+      ? null
+      : {
+          patient: record.patient,
+          encounter: current,
+          observations,
+          problems: [
+            ...currentThreads.map((t) => ({ name: t.name, source: 'problem' as const })),
+            ...(record.problemList?.items ?? []).filter((i) => !i.hidden && i.activity === 'active').map((i) => ({ name: i.name, source: 'ai' as const })),
+          ],
+        };
+  // 基準範囲の印（段K3）に使う、いまの年齢と性別
+  const refPatient = { age: ageNow(record.patient.age, record.patient.ageOn, record.today), sex: record.patient.sex };
+  // ボード（段K2）の問題の帯：AI のプロブレムリストの活動中の項目（番号はリストの番号）
+  const boardProblems = numberedList(record.problemList?.items ?? [])
+    .filter(({ item }) => item.activity === 'active')
+    .map(({ item, no }) => ({ key: item.key, no, name: item.name, since: item.since }));
   const composerOpen = composing ?? sources.length === 0;
   const toComposer = () => {
     setComposing(true);
@@ -401,28 +446,19 @@ export function PatientPage({ patientId, onBack, onLeft }: { patientId: string; 
             </button>
           ))}
         </div>
-        {tab === 'state' && current !== null && (
+        {tab === 'state' && current !== null && state !== null && (
           <>
             <div className="state-latest">
               <LatestStrip panels={panels} />
             </div>
             <StateView
-              state={patientState({
-                patient: record.patient,
-                encounter: current,
-                today: record.today,
-                sources: record.sources,
-                segments: record.segments,
-                threads: record.problemThreads,
-                mentions: record.problems,
-                medications: shownMeds,
-                events: shownEvents,
-                observations,
-                list: record.problemList?.items ?? [],
-              })}
+              state={state}
               sources={record.sources}
               list={(record.problemList?.items ?? []).filter((i) => !i.hidden)}
               listBusy={listBuilder.busy}
+              patient={refPatient}
+              scores={scoreInput}
+              support={record.problemList === null ? null : <SupportPanel record={record} builder={supportBuilder} />}
               onProblems={() => {
                 setTab('problems');
               }}
@@ -461,14 +497,18 @@ export function PatientPage({ patientId, onBack, onLeft }: { patientId: string; 
                     inpatient={current.kind === 'inpatient'}
                     range={range}
                     onRange={setRange}
+                    problems={boardProblems}
+                    course={record.course.filter((c) => c.encounterId === current.id)}
+                    devices={state?.devices ?? []}
+                    asOf={state?.asOf ?? null}
                   />
                 )}
                 {view === 'values' && (
                   <>
-                    <TrendGrid trends={trends} priority={problemValueNames} />
+                    <TrendGrid trends={trends} priority={problemValueNames} patient={refPatient} />
                     <ScaleLinks trends={trends} links={record.scaleLinks} onChanged={load} onLeft={onLeft} />
                     <h3 className="sub-title">表（書かれたとおり。日ごと）</h3>
-                    <LabTable observations={observations} />
+                    <LabTable observations={observations} patient={refPatient} />
                     {foldedHere > 0 && (
                       <p className="note" data-testid="values-folded">
                         記載（経過など）の中で挙げ直した値のうち、同じ日の検査結果・バイタルの文に同じ項目・同じ値があるもの {String(foldedHere)} 件は、二重になるので、ここ・経過表・いまでは出していません（消していません。記録の各記載の「整理した事実」にあります）。
@@ -616,6 +656,8 @@ export function PatientPage({ patientId, onBack, onLeft }: { patientId: string; 
                       medications: record.medications.filter((m) => m.sourceId === s.id),
                       events: record.events.filter((e) => e.sourceId === s.id),
                       observations: record.observations.filter((o) => o.sourceId === s.id),
+                      problems: record.problems.filter((p) => p.sourceId === s.id),
+                      course: record.course.filter((c) => c.sourceId === s.id),
                     }}
                     edits={record.factEdits}
                     userEdits={record.userEdits}
@@ -690,7 +732,7 @@ function SourceCard({
 }: {
   source: Source;
   segments: readonly Segment[];
-  facts: { medications: readonly Medication[]; events: readonly ClinicalEvent[]; observations: readonly Observation[] };
+  facts: { medications: readonly Medication[]; events: readonly ClinicalEvent[]; observations: readonly Observation[]; problems: readonly Problem[]; course: readonly CourseItem[] };
   edits: readonly FactEdit[];
   userEdits: readonly UserEdit[];
   encounter: Encounter | null;
@@ -726,6 +768,18 @@ function SourceCard({
   // 読めなかった部分は、保存した文から、同じ決まりで読み直して出す（保存していない）
   const unread = READ_VALUES_KINDS.includes(source.kind) ? readLabText(source.text).unread : [];
 
+  // 振り分けられなかった字（段K1。A1）：どの事実にも、引用で出す区切り（背景・A・P）にも入らなかった字。整理が終わった記載だけ
+  const left =
+    source.organized === 'done'
+      ? leftovers(source.text, [
+          ...facts.medications,
+          ...facts.events,
+          ...facts.observations,
+          ...facts.problems,
+          ...facts.course,
+          ...segments.filter((g) => QUOTED_SEGMENT_LABELS.includes(g.label)),
+        ])
+      : [];
   const firstLine = source.text.split(/\r?\n/u).find((l) => l.trim() !== '')?.trim() ?? '';
   const head = (
     <button type="button" className="source-head source-toggle" aria-expanded={open} onClick={onToggle} data-testid="source-summary">
@@ -741,6 +795,7 @@ function SourceCard({
         {CARTE_ONLY_KINDS.includes(source.kind) && <span className="tag">carte だけの記録</span>}
         {source.organized === null && <span className="tag">未整理</span>}
         {source.organized === 'failed' && <span className="tag">整理できず</span>}
+        {left.length > 0 && <span className="tag" data-testid="leftover-count">振り分けられなかった字 {String(left.length)}</span>}
       </span>
       {!open && <span className="source-first">{firstLine}</span>}
     </button>
@@ -759,6 +814,17 @@ function SourceCard({
       <SourceFacts medications={facts.medications} events={facts.events} observations={facts.observations} edits={edits} userEdits={userEdits} onChanged={onChanged} onLeft={onLeft} />
       <SourceAppend key={source.text} source={source} onChanged={onChanged} onLeft={onLeft} />
       <SourceEdit source={source} segments={segments} edits={userEdits} onChanged={onChanged} onLeft={onLeft} />
+      {left.length > 0 && (
+        <details className="unread" data-testid="leftovers">
+          <summary className="unread-title">振り分けられなかった部分（{String(left.length)} か所。どの見方にも出ていません。文には残っています）</summary>
+          <ul>
+            {left.map((u) => (
+              <li key={`${String(u.start)}-${String(u.end)}`}>「{source.text.slice(u.start, u.end)}」</li>
+            ))}
+          </ul>
+          <p className="note">「整理し直す」で、もう一度 AI に振り分けさせられます。</p>
+        </details>
+      )}
       {unread.length > 0 && (
         <div className="unread" data-testid="unread">
           <span className="unread-title">値として読めなかった部分（文には残っています）</span>

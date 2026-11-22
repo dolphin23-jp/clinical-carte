@@ -2,10 +2,10 @@
 // 答えは、決めた形（構造化した出力）で受け、確かめるのは core の applySelection。ここでは、保存もログもしない。
 import Anthropic from '@anthropic-ai/sdk';
 import { zodOutputFormat } from '@anthropic-ai/sdk/helpers/zod';
-import { DocumentAnswer, LinkAnswer, OrganizeAnswerWire, organizeFromWire, ProblemListAnswer, ReviseAnswer, SelectionAnswer } from '@clinical-carte/core';
+import { DocumentAnswer, LinkAnswer, OrganizeAnswerWire, organizeFromWire, ProblemListAnswer, ReviseAnswer, SelectionAnswer, SupportAnswer } from '@clinical-carte/core';
 
-import type { DocumentResult, LinkerResult, Organizer, OrganizerResult, ProblemListResult, ResearchResult, ReviseResult } from './organizer.ts';
-import { DOC_REVISE_SYSTEM, DOC_SYSTEM, LINK_SYSTEM, PLIST_SYSTEM, ORGANIZE_PROMPTS, type OrganizePromptChoice, RESEARCH_SYSTEM, SELECT_SYSTEM, WEB_DOMAINS } from './prompt.ts';
+import type { DocumentResult, LinkerResult, Organizer, OrganizerResult, ProblemListResult, ResearchResult, ReviseResult, SupportResult } from './organizer.ts';
+import { DOC_REVISE_SYSTEM, DOC_SYSTEM, LINK_SYSTEM, PLIST_SYSTEM, ORGANIZE_PROMPTS, type OrganizePromptChoice, RESEARCH_SYSTEM, SELECT_SYSTEM, SUPPORT_SYSTEM, WEB_DOMAINS } from './prompt.ts';
 import type { WebHit } from './references.ts';
 import type { Selector, SelectorResult } from './selector.ts';
 
@@ -198,6 +198,31 @@ export function createAnthropicOrganizer(options: AnthropicOptions): Organizer {
         if (response.stop_reason === 'refusal') return { ok: false, reason: 'refused' };
         if (response.stop_reason !== 'end_turn') return { ok: false, reason: 'bad_answer' };
         const parsed = ProblemListAnswer.safeParse(response.parsed_output);
+        return parsed.success ? { ok: true, answer: parsed.data } : { ok: false, reason: 'bad_answer' };
+      } catch (error) {
+        if (error instanceof Anthropic.APIError) return { ok: false, reason: 'unavailable' };
+        return { ok: false, reason: 'bad_answer' };
+      }
+    },
+    // AI の臨床支援（段K5。CA-064）。送るのは、記録から作った資料と、出典の抜き出しだけ（core の supportMessage）。答えは、確かめてから保存する
+    async support(message: string): Promise<SupportResult> {
+      try {
+        const response = await client.beta.messages.parse(
+          {
+            model: options.model,
+            max_tokens: 32000,
+            betas: ['server-side-fallback-2026-07-01'],
+            fallbacks: 'default',
+            cache_control: { type: 'ephemeral' },
+            system: SUPPORT_SYSTEM,
+            output_config: { effort: 'high', format: zodOutputFormat(SupportAnswer) },
+            messages: [{ role: 'user', content: message }],
+          },
+          { timeout: 300_000 },
+        );
+        if (response.stop_reason === 'refusal') return { ok: false, reason: 'refused' };
+        if (response.stop_reason !== 'end_turn') return { ok: false, reason: 'bad_answer' };
+        const parsed = SupportAnswer.safeParse(response.parsed_output);
         return parsed.success ? { ok: true, answer: parsed.data } : { ok: false, reason: 'bad_answer' };
       } catch (error) {
         if (error instanceof Anthropic.APIError) return { ok: false, reason: 'unavailable' };

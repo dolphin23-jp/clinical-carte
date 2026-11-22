@@ -11,6 +11,7 @@ import { ageNow, hospitalDay } from '../record/headline.ts';
 import { ENCOUNTER_KIND_LABELS, type EncounterKind, type Sex } from '../record/schema.ts';
 import { compareDateTime } from '../time/datetime.ts';
 import { chartTime } from './chart.ts';
+import { type DeviceLine, deviceDays, type MedicationDays, medicationDays } from './days.ts';
 
 const SEX_WORDS: Readonly<Record<Sex, string>> = { male: '男性', female: '女性', other: '性別その他・不明' };
 
@@ -115,6 +116,8 @@ export interface MedicationLast {
   readonly at: string | null;
   /** 記載の数 */
   readonly entries: number;
+  /** 開始から何日目（段K1。開始の記載があるときだけ。中止なら中止の日まで。数えるだけ） */
+  readonly days: MedicationDays;
 }
 
 export interface BackgroundPart {
@@ -148,6 +151,8 @@ export interface PatientState {
   /** 薬ごとの最後の記載。中止と書かれたものは別に */
   readonly medications: readonly MedicationLast[];
   readonly stoppedMedications: readonly MedicationLast[];
+  /** デバイスの入れてから何日目（段K1。できごとの挿入・抜去の字から） */
+  readonly devices: readonly DeviceLine[];
   readonly background: readonly BackgroundPart[];
 }
 
@@ -260,7 +265,7 @@ export function patientState(input: StateInput): PatientState {
   const medsLast: MedicationLast[] = lines.map((line) => {
     const dated = line.entries.filter((e) => e.at !== null);
     const e = dated.at(-1) ?? line.entries.at(-1);
-    return { name: line.name, action: e?.action ?? null, doseText: e?.doseText ?? null, at: e?.at ?? null, entries: line.entries.length };
+    return { name: line.name, action: e?.action ?? null, doseText: e?.doseText ?? null, at: e?.at ?? null, entries: line.entries.length, days: medicationDays(line.entries, asOf) };
   });
 
   // 問題（受診をまたぐ）
@@ -360,6 +365,7 @@ export function patientState(input: StateInput): PatientState {
     recent,
     medications: medsLast.filter((m) => m.action !== 'stop'),
     stoppedMedications: medsLast.filter((m) => m.action === 'stop'),
+    devices: deviceDays(input.events, asOf),
     background,
   };
 }
