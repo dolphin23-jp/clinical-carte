@@ -233,3 +233,18 @@ describe('単位の「同じ目盛り」（CA-051）', () => {
     expect(scaleLinkProblem({ name: 'WBC', unitA: '/μL', unitB: '/ μL' })).toBe('same');
   });
 });
+
+describe('同じ値の二重：バイタルは時刻で分ける（2026-11-22）', () => {
+  const o = (id: string, sourceId: string, at: string, name: string, value: number, kind: 'lab' | 'vital') => ({ id, sourceId, at, name, nameRaw: name, value, comparator: null, valueText: String(value), kind });
+  const sheet = (sourceId: string) => sourceId.startsWith('vital') || sourceId.startsWith('lab');
+  test('時刻が 60 分より離れたバイタルは、別の測定としてたたまない。近ければたたむ。検査値は同じ日ならたたむ', () => {
+    const list = [
+      o('a', 'vital1', '2026-11-16T18:00', '拡張期血圧', 54, 'vital'),
+      o('b', 'er', '2026-11-16T14:25', '拡張期血圧', 54, 'vital'),
+      o('c', 'er', '2026-11-16T17:40', '拡張期血圧', 54, 'vital'),
+      o('d', 'lab1', '2026-11-16T06:00', 'Cr', 1.48, 'lab'),
+      o('e', 'note', '2026-11-16T09:30', 'Cr', 1.48, 'lab'),
+    ];
+    expect([...foldedObservationIds(list, sheet)].sort()).toEqual(['c', 'e']);
+  });
+});

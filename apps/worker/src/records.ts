@@ -551,13 +551,15 @@ export interface PatientSummary {
 }
 
 export async function listPatients(db: Db): Promise<PatientSummary[]> {
-  const [patients, encounters, sourceRows, problemRows, threadRows] = await Promise.all([
+  const [patients, encounters, sourceRows, problemRows, threadRows, listRows] = await Promise.all([
     db.prepare('SELECT id, age, age_on, sex, created_on FROM patients ORDER BY id').all(),
     db.prepare('SELECT id, patient_id, kind, started, ended FROM encounters ORDER BY started, id').all(),
     // 文の中身は読まない（日時と、どの受診かだけ）
     db.prepare('SELECT patient_id, encounter_id, at, entered_at FROM sources ORDER BY id').all(),
     db.prepare(`SELECT patient_id, ${PROBLEM_COLUMNS} FROM problems ORDER BY source_id, span_start`).all(),
     db.prepare(`SELECT patient_id, ${THREAD_COLUMNS} FROM problem_threads ORDER BY id`).all(),
+    // AI のプロブレムリスト（CA-057）：回診リストの問題を、リストの番号と名前にする（2026-11-22）
+    db.prepare('SELECT patient_id, made_at, prompt_version, basis, items FROM problem_lists').all(),
   ]);
   const latest = new Map<string, Encounter>();
   for (const e of encounters.results.map(toEncounter).filter(present)) latest.set(e.patientId, e);
@@ -580,13 +582,19 @@ export async function listPatients(db: Db): Promise<PatientSummary[]> {
   });
   const problems = group(problemRows.results, toProblem);
   const threads = group(threadRows.results, toThread);
+  const lists = new Map<string, readonly ListItem[]>();
+  for (const row of listRows.results) {
+    const key = text(row, 'patient_id');
+    const list = problemListOf(row);
+    if (key !== null && list !== null) lists.set(key, list.items);
+  }
   return patients.results
     .map(toPatient)
     .filter(present)
     .map((patient) => {
       const own = sources.get(patient.id) ?? [];
       const encounter = latest.get(patient.id) ?? null;
-      const round = roundSummary({ encounter: { id: encounter?.id ?? '' }, sources: own, threads: threads.get(patient.id) ?? [], mentions: problems.get(patient.id) ?? [] });
+      const round = roundSummary({ encounter: { id: encounter?.id ?? '' }, sources: own, threads: threads.get(patient.id) ?? [], mentions: problems.get(patient.id) ?? [], list: lists.get(patient.id) ?? [] });
       return { patient, latest: encounter, sources: own.length, round };
     })
     // いちばん新しい受診の開始が新しい順（受け持ち中の患者が上に来る）

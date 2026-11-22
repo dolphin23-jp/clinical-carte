@@ -227,6 +227,18 @@ export function listBasis(sources: readonly { readonly id: string; readonly orga
   return `${String(sources.length)}:${String(done.length)}:${last}`;
 }
 
+/** リストの番号：外したものを除いた並びの #1…（問題のタブ・いま・1行の要約・回診リストが、同じ番号を使う。2026-11-22） */
+export function numberedList<T extends Pick<ListItem, 'hidden'>>(items: readonly T[]): { readonly item: T; readonly no: number }[] {
+  return items.filter((item) => !item.hidden).map((item, i) => ({ item, no: i + 1 }));
+}
+
+/** いまの問題の名前（リストの番号つき）：活動中の項目だけ。番号はリスト全体の番号のまま（解決などの項目を飛ばしても、番号を詰めない） */
+export function listCurrentNames(items: readonly Pick<ListItem, 'hidden' | 'activity' | 'name'>[]): string[] {
+  return numberedList(items)
+    .filter(({ item }) => item.activity === 'active')
+    .map(({ item, no }) => `#${String(no)} ${item.name}`);
+}
+
 /** 先生の直し（名前は、サーバーが選別を通してから） */
 export const ListPatch = z.union([
   z.strictObject({ key: z.string().min(1).max(40), name: z.string().min(1).max(LIST_NAME_MAX) }),
@@ -249,7 +261,10 @@ export function applyListPatch(items: readonly ListItem[], patch: ListPatch): Li
   else if ('activity' in patch) next[i] = { ...item, activity: patch.activity, self: mark('activity') };
   else if ('hidden' in patch) next[i] = { ...item, hidden: patch.hidden };
   else {
-    const j = patch.move === 'up' ? i - 1 : i + 1;
+    // 外した項目は番号を持たないので、飛ばして、見えている隣と入れ替える（↑↓を押して何も変わらない、をなくす）
+    const step = patch.move === 'up' ? -1 : 1;
+    let j = i + step;
+    while (next[j]?.hidden === true) j += step;
     const other = next[j];
     if (other === undefined) return next;
     next[j] = item;

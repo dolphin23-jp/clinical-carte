@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'vitest';
 
-import { oneLinerOf, patientState, recentGroups, type RecentItem, type StateInput, type ThreadMention } from '../src/index.ts';
+import { oneLinerOf, patientState, recentGroups, roundSummary, type RecentItem, type StateInput, type ThreadMention } from '../src/index.ts';
 
 const E = 'enc1';
 let n = 0;
@@ -43,6 +43,20 @@ describe('patientState：1行の要約と、いつの時点か', () => {
     expect(s.lastEntered).toBe('2026-11-20T10:12');
     expect(s.closed.map((t) => t.name)).toEqual(['#2 低K血症']);
     expect(s.ruledOut.map((t) => t.name)).toEqual(['肺塞栓']);
+  });
+
+  test('AI のプロブレムリストに活動中の項目があれば、1行の要約と回診リストの問題は、リストの番号と名前（2026-11-22）', () => {
+    const mentions = [mention({ threadId: 'T1', name: '#5 市中肺炎', at: '2026-11-20T09:00' })];
+    const item = (name: string, activity: 'active' | 'resolved', hidden = false) => ({ name, activity, hidden });
+    const list = [item('敗血症性ショック', 'active'), item('外した', 'active', true), item('低K血症', 'resolved'), item('市中肺炎', 'active')];
+    const s = patientState(base({ mentions, list }));
+    expect(s.oneLiner).toBe('72歳 男性。入院 2026-11-17〜（記録の上では 4病日まで）。いまの問題（AI の整理）：#1 敗血症性ショック、#3 市中肺炎。');
+    const r = roundSummary({ encounter: { id: E }, sources: base().sources, threads: base().threads, mentions, list });
+    expect([r.problems, r.listed]).toEqual([['#1 敗血症性ショック', '#3 市中肺炎'], true]);
+    // リストに活動中の項目がなければ、記録に書かれた名前のまま
+    const t = patientState(base({ mentions, list: [item('低K血症', 'resolved')] }));
+    expect(t.oneLiner).toBe('72歳 男性。入院 2026-11-17〜（記録の上では 4病日まで）。いまの問題：#5 市中肺炎。');
+    expect(roundSummary({ encounter: { id: E }, sources: base().sources, threads: base().threads, mentions }).listed).toBe(false);
   });
 
   test('問題がなければ「いまの問題の記載なし」。外来は病日を書かない', () => {

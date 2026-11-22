@@ -1,6 +1,6 @@
 // 「いまの状態」（段3b。CA-023・CA-026・CA-027）：患者の現在地を1画面に。作文しない：1行の要約は決定論のひな形、
 // ほかは整理した事実と、保存した文の区切りの字そのもの。「いま」は記録の上での最後の日時で、端末の時計ではない。判定しない。
-import { EVENT_KIND_NAMES, LIST_ACTIVITY_NAMES, LIST_CERTAINTY_NAMES, type ListItem, MEDICATION_ACTION_NAMES, PROBLEM_ACTIVITY_NAMES, PROBLEM_STATUS_NAMES, type PatientState, type RecentItem, recentGroups, SEGMENT_LABEL_NAMES } from '@clinical-carte/core';
+import { EVENT_KIND_NAMES, LIST_ACTIVITY_NAMES, LIST_CERTAINTY_NAMES, type ListItem, MEDICATION_ACTION_NAMES, numberedList, PROBLEM_ACTIVITY_NAMES, PROBLEM_STATUS_NAMES, type PatientState, type RecentItem, recentGroups, SEGMENT_LABEL_NAMES } from '@clinical-carte/core';
 import { useState } from 'react';
 
 import { showDateTime } from './format.ts';
@@ -153,9 +153,10 @@ export function StateView({
             {listBusy && <span className="note">（組み直しています）</span>}
           </h3>
           <ul className="threads compact">
-            {list
-              .filter((item) => item.activity === 'active')
-              .map((item, i) => {
+            {/* 番号は、問題のタブ・1行の要約と同じ（リスト全体の番号。解決などを飛ばしても詰めない） */}
+            {numberedList(list)
+              .filter(({ item }) => item.activity === 'active')
+              .map(({ item, no }) => {
                 const on = open.has(`plist-${item.key}`);
                 const linked = [...state.current, ...state.closed.map((thread) => ({ thread, notes: [], values: [], medications: [] }))].filter((e) => item.threadIds.includes(e.thread.id));
                 return (
@@ -172,7 +173,7 @@ export function StateView({
                         {on ? '▾' : '▸'}
                       </span>
                       <strong className="thread-name">
-                        #{String(i + 1)} {item.name}
+                        #{String(no)} {item.name}
                       </strong>
                       <span className="tag">{LIST_CERTAINTY_NAMES[item.certainty]}</span>
                       {item.since !== null && <span className="thread-when">{showDateTime(item.since)}〜</span>}
@@ -209,8 +210,10 @@ export function StateView({
         </section>
       )}
 
-      <section className="state-section" data-testid="state-problems">
-        <h3 className="sub-title">いまの問題（{String(state.current.length)}）</h3>
+      {(() => {
+        const writtenProblems = (
+          <>
+        {list.length === 0 && <h3 className="sub-title">いまの問題（{String(state.current.length)}）</h3>}
         {state.current.length === 0 ? (
           <p className="note">いまの問題として書かれたものはありません。</p>
         ) : (
@@ -322,7 +325,20 @@ export function StateView({
         <button type="button" className="button small" onClick={onProblems} data-testid="state-to-problems">
           問題のタブで、くわしく見る・直す
         </button>
-      </section>
+          </>
+        );
+        // AI のプロブレムリストがあれば、記録に書かれた名前の一覧は畳む（同じ問題が二重に並ばないように。CA-057）
+        return list.length > 0 ? (
+          <details className="state-section folded" data-testid="state-problems">
+            <summary className="sub-title">記録に書かれた名前で見る（{String(state.current.length)}）</summary>
+            {writtenProblems}
+          </details>
+        ) : (
+          <section className="state-section" data-testid="state-problems">
+            {writtenProblems}
+          </section>
+        );
+      })()}
       </div>
       <div className="state-col">
 

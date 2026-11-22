@@ -198,3 +198,13 @@ describe('残す形', () => {
     expect(DocumentNew.safeParse({ type: 'progress', day: '2026-11-19', sections: [{ key: 's', text: 'a', refs: [] }], origin: 'ai_edited', edited: false }).success).toBe(false);
   });
 });
+
+describe('AI のプロブレムリストは、いまの記載にだけ渡す（CA-057）', () => {
+  test('その日より後の記録があるとき（過去の日の記載）は渡さない', () => {
+    const list = [{ name: '市中肺炎', certainty: 'diagnosis', activity: 'active', since: null }];
+    const past = documentMaterial({ ...input('admission', '2026-11-17'), problemList: list });
+    expect(past.payload['problemList']).toEqual([]);
+    const now = documentMaterial({ ...input('discharge_summary', '2026-11-19'), problemList: list });
+    expect(now.payload['problemList']).toEqual([{ name: '市中肺炎', certainty: 'diagnosis', activity: 'active', since: null }]);
+  });
+});

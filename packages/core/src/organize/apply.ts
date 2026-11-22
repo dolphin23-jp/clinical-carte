@@ -452,7 +452,7 @@ export function applyOrganization(answer: OrganizeAnswer, ctx: OrganizeContext):
     const key = `${String(span.start)}:${summary}`;
     if (seenCourse.has(key)) continue;
     seenCourse.add(key);
-    const w = factWhen('course', c.when, span.start, c.whenHint);
+    const w = factWhen('course', c.when, span.start, c.whenHint ?? null);
     course.push({ ...span, category: c.category, summary, at: w.at, atApprox: w.approx });
   }
 
