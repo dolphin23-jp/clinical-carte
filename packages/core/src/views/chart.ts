@@ -350,6 +350,8 @@ export interface FoldObservation {
   readonly value: number | null;
   readonly comparator: string | null;
   readonly valueText: string;
+  /** バイタルは1日に何度も測るので、時刻が 60 分より離れていれば別の測定（2026-11-22） */
+  readonly kind?: 'lab' | 'vital' | null;
 }
 
 /**
@@ -364,15 +366,22 @@ export function foldedObservationIds(list: readonly FoldObservation[], fromValue
     const value = o.value !== null && Number.isFinite(o.value) ? String(o.value) : o.valueText.normalize('NFKC').replace(/\s+/g, '');
     return `${o.at.slice(0, 10)}|${name}|${o.comparator ?? ''}|${value}`;
   };
-  const sheet = new Set<string>();
+  // バイタルは、同じ日・同じ項目・同じ値でも、どちらにも時刻があって 60 分より離れていれば、別の測定（14:25 の BP 92/54 と、18:00 の BP 96/54 の 54 は別。2026-11-22）。
+  // 検査値は、朝の採血を回診の記載で挙げ直すので、これまでどおり同じ日なら同じ
+  const minutes = (at: string): number | null => (at.length >= 16 ? Number(at.slice(11, 13)) * 60 + Number(at.slice(14, 16)) : null);
+  const sheet = new Map<string, (number | null)[]>();
   for (const o of list) {
     const k = key(o);
-    if (k !== null && fromValueSheet(o.sourceId)) sheet.add(k);
+    if (k !== null && o.at !== null && fromValueSheet(o.sourceId)) sheet.set(k, [...(sheet.get(k) ?? []), minutes(o.at)]);
   }
   const out = new Set<string>();
   for (const o of list) {
     const k = key(o);
-    if (k !== null && !fromValueSheet(o.sourceId) && sheet.has(k)) out.add(o.id);
+    if (k === null || o.at === null || fromValueSheet(o.sourceId)) continue;
+    const times = sheet.get(k);
+    if (times === undefined) continue;
+    const mine = minutes(o.at);
+    if (o.kind !== 'vital' || mine === null || times.some((t) => t === null || Math.abs(t - mine) <= 60)) out.add(o.id);
   }
   return out;
 }

@@ -22,6 +22,26 @@ type Row = {
   readonly end: number;
 };
 
+/** 値の1行に並べる項目の数 */
+const VALUES_SHOWN = 8;
+
+/** 字の2字ずつの組（似ている要約をまとめるため） */
+const bigrams = (text: string): Set<string> => {
+  const t = text.replace(/[\s・、。,.（）()]/gu, '');
+  const out = new Set<string>();
+  for (let i = 0; i < t.length - 1; i += 1) out.add(t.slice(i, i + 2));
+  return out;
+};
+/** 別の記載に書かれた、同じ日・同じ種類の、ほとんど同じ出来事（救急記録と入院時記録の現病歴など）か */
+const similar = (a: string, b: string): boolean => {
+  const x = bigrams(a);
+  const y = bigrams(b);
+  if (x.size === 0 || y.size === 0) return false;
+  let both = 0;
+  for (const g of x) if (y.has(g)) both += 1;
+  return both / Math.min(x.size, y.size) >= 0.6;
+};
+
 const valueText = (o: Observation): string => `${o.nameRaw} ${o.comparator ?? ''}${o.valueText}${o.unit === null ? '' : ` ${o.unit}`}`;
 
 /** 同じ時刻・同じ記載の値を、1行にまとめる（バイタル・検査を分けて） */
@@ -51,7 +71,8 @@ function valueRows(observations: readonly Observation[]): Row[] {
       at: first.at,
       approx: first.atApprox ?? null,
       tag: first.kind === 'vital' ? 'バイタル' : first.kind === 'lab' ? '検査値' : '値',
-      text: shown.join('・'),
+      // 検査値の多い行は、はじめの 8 項目と残りの数（押すと元の字がすべて開く）
+      text: shown.length > VALUES_SHOWN ? `${shown.slice(0, VALUES_SHOWN).join('・')}・ほか ${String(shown.length - VALUES_SHOWN)} 項目` : shown.join('・'),
       ai: list.some((o) => o.readBy === 'ai'),
       unseen: list.some((o) => o.unseen === true),
       sourceId: first.sourceId,
@@ -80,10 +101,19 @@ export function CourseView({
   day: string | null;
 }) {
   const [open, setOpen] = useState<string | null>(null);
+  // 同じ文の同じ場所から作った行は、1つだけ出す（二重にしない。消してはいない）：
+  // 値の行と重なる経過の出来事（「来院時 BT 39.2…」）は値の行を、できごと・投薬と重なる経過の出来事は経過の出来事（要約）を出す
+  const overlaps = (a: { sourceId: string; start: number; end: number }, b: { sourceId: string; start: number; end: number }): boolean => a.sourceId === b.sourceId && a.start < b.end && b.start < a.end;
+  const valueRowList = valueRows(observations);
+  const courseShown = course
+    .filter((c) => !observations.some((o) => overlaps(c, o)))
+    // 別の記載に書かれた、同じ日・同じ種類のほとんど同じ出来事は、先に書かれた1つだけ（消してはいない。記録の各記載にある）
+    .filter((c, i, all) => !all.some((d, j) => j < i && d.sourceId !== c.sourceId && d.category === c.category && (d.at ?? '').slice(0, 10) === (c.at ?? '').slice(0, 10) && similar(d.summary, c.summary)));
+  const coveredByCourse = (f: { sourceId: string; start: number; end: number }): boolean => courseShown.some((c) => overlaps(c, f));
   const rows: Row[] = [
-    ...course.map((c) => ({ key: `c-${c.id}`, at: c.at, approx: c.atApprox, tag: COURSE_CATEGORY_NAMES[c.category], text: c.summary, ai: true, unseen: false, sourceId: c.sourceId, start: c.start, end: c.end })),
-    ...events.map((e) => ({ key: `e-${e.id}`, at: e.at, approx: e.atApprox ?? null, tag: EVENT_KIND_NAMES[e.kind], text: e.title, ai: false, unseen: false, sourceId: e.sourceId, start: e.start, end: e.end })),
-    ...medications.map((m) => ({
+    ...courseShown.map((c) => ({ key: `c-${c.id}`, at: c.at, approx: c.atApprox, tag: COURSE_CATEGORY_NAMES[c.category], text: c.summary, ai: true, unseen: false, sourceId: c.sourceId, start: c.start, end: c.end })),
+    ...events.filter((e) => !coveredByCourse(e)).map((e) => ({ key: `e-${e.id}`, at: e.at, approx: e.atApprox ?? null, tag: EVENT_KIND_NAMES[e.kind], text: e.title, ai: false, unseen: false, sourceId: e.sourceId, start: e.start, end: e.end })),
+    ...medications.filter((m) => !coveredByCourse(m)).map((m) => ({
       key: `m-${m.id}`,
       at: m.at,
       approx: m.atApprox ?? null,
@@ -95,7 +125,7 @@ export function CourseView({
       start: m.start,
       end: m.end,
     })),
-    ...valueRows(observations),
+    ...valueRowList,
   ].filter((r) => day === null || (r.at !== null && r.at.slice(0, 10) === day));
   // 時刻の順。同じ時刻は、病歴の出来事・できごと・投薬・値の順（書かれた並びに近く）
   const order = (r: Row): number => (r.key.startsWith('c-') ? 0 : r.key.startsWith('e-') ? 1 : r.key.startsWith('m-') ? 2 : 3);
