@@ -2543,3 +2543,97 @@ td.ref-low { color: var(--ref-low); background: var(--ref-low-bg); font-weight: 
   gap: 4px;
   margin-top: 8px;
 }
+
+/* ===== 段K5：AI の臨床支援（CA-059・CA-064）。照合の状態は、色だけに頼らず字（沿っている・差がある・分からない）と一緒に ===== */
+:root {
+  --support-ok: #1f6f6a;
+  --support-ok-bg: #e3efed;
+  --support-gap: #8a5a00;
+  --support-gap-bg: #fdf3dc;
+  --support-unclear: #5b6765;
+  --support-unclear-line: #c9d3d0;
+  --support-line: #c9d3d0;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --support-ok: #6fc3bb;
+    --support-ok-bg: #1f3331;
+    --support-gap: #f0c674;
+    --support-gap-bg: #3a2f14;
+    --support-unclear: #9aa8a5;
+    --support-unclear-line: #3a4846;
+    --support-line: #3a4846;
+  }
+}
+
+.support {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+.support-tag {
+  border-style: solid;
+  font-weight: 600;
+}
+.support-caution {
+  margin: 0;
+  font-size: 13.5px;
+  font-weight: 600;
+  border-left: 3px solid var(--support-line);
+  padding-left: 8px;
+}
+.support-problem {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 8px 10px;
+  min-width: 0;
+}
+.support-problem-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px;
+  cursor: pointer;
+}
+.support-body {
+  display: grid;
+  gap: 8px;
+  margin-top: 6px;
+  min-width: 0;
+}
+.support-part {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+.support-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 6px;
+}
+.support-list > li {
+  border-top: 1px solid var(--line);
+  padding-top: 6px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.support-text {
+  margin: 2px 0;
+  overflow-wrap: anywhere;
+}
+.support-points {
+  overflow-wrap: anywhere;
+}
+.support-status {
+  display: inline-block;
+  padding: 1px 8px;
+  border-radius: 999px;
+  font-size: 12.5px;
+  font-weight: 700;
+}
+.support-status.support-consistent { color: var(--support-ok); background: var(--support-ok-bg); }
+.support-status.support-gap { color: var(--support-gap); background: var(--support-gap-bg); }
+.support-status.support-unclear { color: var(--support-unclear); border: 1px dashed var(--support-unclear-line); }

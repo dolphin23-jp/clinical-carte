@@ -203,6 +203,7 @@ AI が返すのは、次の3つだけ（構造化した出力）。
 | `course_items` | 整理（段J。CA-056）のとき（その文の行を入れ替える）・文を消すとき・患者を消すとき。AI の短い要約と、引用の場所 |
 | `problem_lists` | AI がプロブレムリストを組んだとき・本人が直したとき（CA-057。患者ごとに1つ） |
 | `problem_list_edits` | 本人がプロブレムリストを直したとき（CA-057。名前の前後は選別を通した後の字） |
+| `clinical_support` | AI が臨床支援を組んだとき（段K5。CA-064。患者ごとに1つ。確かめた後の支援だけ）・患者を消すとき |
 | `devices` | 端末の登録・外すとき・その日はじめて使ったとき（1日に1回） |
 | `entrance_daily` | 合鍵を間違えたとき |
 | `usage_daily` | AI を呼んだとき |
@@ -211,7 +212,7 @@ AI が返すのは、次の3つだけ（構造化した出力）。
 
 - 打った原文・AI へ送った文・AI の答えそのものは、どの表にも書かない。ログにも出さない。
 - 表を足すときは、先にこの一覧を直す。
-- いまある表（段0〜段5）は `devices`・`entrance_daily`・`patients`・`encounters`・`sources`・`observations`・`usage_daily`・`schema_migrations`・`segments`・`medications`・`events`・`problems`・`problem_threads`・`history`・`fact_edits`・`user_edits`・`ap_notes`・`ap_history`・`scale_links`・`documents`・`document_history`・`course_items`・`problem_lists`・`problem_list_edits`。`apps/worker/test/writes.test.ts` が、migrations が作る表と、ソースの SQL が書く表を、この一覧と突き合わせる。
+- いまある表（段0〜段5）は `devices`・`entrance_daily`・`patients`・`encounters`・`sources`・`observations`・`usage_daily`・`schema_migrations`・`segments`・`medications`・`events`・`problems`・`problem_threads`・`history`・`fact_edits`・`user_edits`・`ap_notes`・`ap_history`・`scale_links`・`documents`・`document_history`・`course_items`・`problem_lists`・`problem_list_edits`・`clinical_support`。`apps/worker/test/writes.test.ts` が、migrations が作る表と、ソースの SQL が書く表を、この一覧と突き合わせる。
 
 ## 7. 段1 で作ったものと、案との違い
 
@@ -363,3 +364,13 @@ AI が返すのは、次の3つだけ（構造化した出力）。
 - `course_items` は、文から作る行（`FACT_TABLES`）：整理し直すと入れ替わり、文を消すと消える。
 - AI の答えそのもの（読んだ値の元の答え・要約の元の答え・プロブレムリストの元の答え）は、確かめた後の行と項目だけを残し、答えそのものは保存もログもしない。
 
+## 17. AI の臨床支援（段K5。CA-059・CA-064）
+
+作った表は、`apps/worker/migrations/0012_clinical_support.sql`。
+
+| 表 | 列 |
+|---|---|
+| `clinical_support` | patient_id（患者ごとに1つ）・made_at・prompt_version・basis（記録の印とプロブレムリストを組んだ日時）・body（確かめた後の支援の JSON：問題ごとの key・no・name・focus、疑う疾患〔名前・理由・根拠・合わない点・足りない情報・出典〕、検査の候補、照合〔文・状態・照らした記録・出典〕、基準の補い、補足。文には資料・出典に見つからない数の場所〔marks〕。根拠は資料の短い名前、出典は題・頁・URL。rejected〔理由ごとの出さなかった数〕・shapes・research〔書籍・ネットの数、ネットの検索ができなかったか〕・dropped〔長さで落とした資料の数〕） |
+
+- AI に送った資料・出典の抜き出し・AI の答えそのものは、保存もログもしない。書籍・ページの本文は入れない。
+- 患者を消すと消える（`PATIENT_TABLES`）。組み直すと入れ替わる。AI が失敗したら、前の支援を残す。

@@ -10,7 +10,7 @@ import type { Db, Statement } from '../src/db.ts';
 import { handle, type HandlerDeps } from '../src/handler.ts';
 import { MIGRATIONS as MIGRATION_LIST } from '../src/migrations.gen.ts';
 import { type Runtime, webRuntime } from '../src/runtime.ts';
-import type { DocumentResult, LinkerResult, Organizer, OrganizerResult, ProblemListResult, ResearchResult, ReviseResult } from '../src/organizer.ts';
+import type { DocumentResult, LinkerResult, Organizer, OrganizerResult, ProblemListResult, ResearchResult, ReviseResult, SupportResult } from '../src/organizer.ts';
 import type { OrganizePromptChoice } from '../src/prompt.ts';
 import type { Selector, SelectorResult } from '../src/selector.ts';
 
@@ -174,6 +174,8 @@ export interface FakeOrganizer extends Organizer {
   readonly revised: string[];
   /** プロブレムリストに渡された資料（JSON） */
   readonly listed: string[];
+  /** 臨床支援に渡された資料（JSON） */
+  readonly supported: string[];
 }
 
 export interface FakeDocAnswers {
@@ -181,6 +183,7 @@ export interface FakeDocAnswers {
   readonly document?: (message: string) => DocumentResult;
   readonly revise?: (message: string) => ReviseResult;
   readonly problemList?: (message: string) => ProblemListResult;
+  readonly support?: (message: string) => SupportResult;
 }
 
 /** AI の整理の代役：文を受け取り、決めた答えを返す（既定は、何も見つけない）。つなぎは、既定では何もつながない */
@@ -193,6 +196,7 @@ export function fakeOrganizer(
   const documented: string[] = [];
   const revised: string[] = [];
   const listed: string[] = [];
+  const supported: string[] = [];
   const seen: string[] = [];
   const prompts: OrganizePromptChoice[] = [];
   const linked: string[] = [];
@@ -204,6 +208,11 @@ export function fakeOrganizer(
     documented,
     revised,
     listed,
+    supported,
+    support: (message) => {
+      supported.push(message);
+      return Promise.resolve(docs.support?.(message) ?? { ok: true, answer: { problems: [] } });
+    },
     problemList: (message) => {
       listed.push(message);
       return Promise.resolve(docs.problemList?.(message) ?? { ok: true, answer: { items: [] } });

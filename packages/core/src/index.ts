@@ -28,3 +28,4 @@ export * from './views/window.ts';
 export * from './notes/document.ts';
 export * from './problems/list.ts';
 export * from './presets/index.ts';
+export * from './support/support.ts';

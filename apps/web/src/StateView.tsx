@@ -1,7 +1,7 @@
 // 「いまの状態」（段3b。CA-023・CA-026・CA-027）：患者の現在地を1画面に。作文しない：1行の要約は決定論のひな形、
 // ほかは整理した事実と、保存した文の区切りの字そのもの。「いま」は記録の上での最後の日時で、端末の時計ではない。判定しない。
 import { type DeviceLine, EVENT_KIND_NAMES, type MedicationDays, LIST_ACTIVITY_NAMES, LIST_CERTAINTY_NAMES, type ListItem, MEDICATION_ACTION_NAMES, numberedList, PROBLEM_ACTIVITY_NAMES, PROBLEM_STATUS_NAMES, type PatientState, type PresetRecordInput, type RecentItem, recentGroups, SEGMENT_LABEL_NAMES } from '@clinical-carte/core';
-import { useState } from 'react';
+import { type ReactNode, useState } from 'react';
 
 import { showDateTime } from './format.ts';
 import type { Source } from './net/api.ts';
@@ -137,6 +137,7 @@ export function StateView({
   listBusy = false,
   patient = null,
   scores = null,
+  support = null,
 }: {
   state: PatientState;
   sources: readonly Source[];
@@ -148,6 +149,8 @@ export function StateView({
   patient?: RefPatient | null;
   /** スコア・診断基準（段K4）の計算に使う記録（患者・受診・この受診の測定値・いまの問題の名前） */
   scores?: PresetRecordInput | null;
+  /** AI の臨床支援（段K5）の節。プロブレムリストの下に出す */
+  support?: ReactNode;
 }) {
   const textOf = (sourceId: string, start: number, end: number): string => sources.find((s) => s.id === sourceId)?.text.slice(start, end).trim() ?? '';
   // いまの問題は、名前の1行だけ。押すと、最後の A・P と、その問題の記載に書かれた値・薬が開く（段I。「いま」を1〜2画面に）。開いたものは画面のメモリだけ
@@ -235,6 +238,8 @@ export function StateView({
           )}
         </section>
       )}
+
+      {support}
 
       {(() => {
         const writtenProblems = (

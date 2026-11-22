@@ -135,5 +135,11 @@ export const MIGRATIONS: readonly Migration[] = [
       "CREATE TABLE IF NOT EXISTS problem_list_edits ( id TEXT PRIMARY KEY, patient_id TEXT NOT NULL REFERENCES patients (id) ON DELETE CASCADE, at TEXT NOT NULL CHECK (length(at) = 16), item_key TEXT NOT NULL, field TEXT NOT NULL CHECK (field IN ('name', 'certainty', 'activity', 'hidden', 'move')), before TEXT, after TEXT )",
       "CREATE INDEX IF NOT EXISTS problem_list_edits_by_patient ON problem_list_edits (patient_id, at)"
     ]
+  },
+  {
+    "name": "0012_clinical_support",
+    "statements": [
+      "CREATE TABLE IF NOT EXISTS clinical_support ( patient_id TEXT PRIMARY KEY REFERENCES patients (id) ON DELETE CASCADE, made_at TEXT NOT NULL CHECK (length(made_at) = 16), prompt_version TEXT NOT NULL, basis TEXT NOT NULL, body TEXT NOT NULL )"
+    ]
   }
 ];

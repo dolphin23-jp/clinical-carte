@@ -1,5 +1,5 @@
 // 整理を頼む先（AI）の形。本物は anthropic.ts、試験では、決まった答えを返す代役を渡す。
-import type { DocumentAnswer, LinkAnswer, OrganizeAnswer, ProblemListAnswer, ReviseAnswer } from '@clinical-carte/core';
+import type { DocumentAnswer, LinkAnswer, OrganizeAnswer, ProblemListAnswer, ReviseAnswer, SupportAnswer } from '@clinical-carte/core';
 
 import type { OrganizePromptChoice } from './prompt.ts';
 import type { WebHit } from './references.ts';
@@ -11,6 +11,7 @@ export type ResearchResult = { readonly ok: true; readonly hits: readonly WebHit
 export type DocumentResult = { readonly ok: true; readonly answer: DocumentAnswer } | { readonly ok: false; readonly reason: SelectorFailure };
 export type ProblemListResult = { readonly ok: true; readonly answer: ProblemListAnswer } | { readonly ok: false; readonly reason: SelectorFailure };
 export type ReviseResult = { readonly ok: true; readonly answer: ReviseAnswer } | { readonly ok: false; readonly reason: SelectorFailure };
+export type SupportResult = { readonly ok: true; readonly answer: SupportAnswer } | { readonly ok: false; readonly reason: SelectorFailure };
 export type LinkerResult = { readonly ok: true; readonly answer: LinkAnswer } | { readonly ok: false; readonly reason: SelectorFailure };
 
 export interface Organizer {
@@ -27,4 +28,6 @@ export interface Organizer {
   revise(message: string): Promise<ReviseResult>;
   /** プロブレムリスト（CA-057）：記録全体の資料（JSON。core の listMaterial が作る）から、#1… のリストと結びつけ。例外を投げない */
   problemList(message: string): Promise<ProblemListResult>;
+  /** AI の臨床支援（段K5。CA-064）：記録から作った資料と出典（JSON。core の supportMessage が作る）から、問題ごとの疑う疾患・検査の候補・照合。例外を投げない */
+  support(message: string): Promise<SupportResult>;
 }

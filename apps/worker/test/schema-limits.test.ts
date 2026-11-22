@@ -2,7 +2,7 @@
 // 超えると、API は 400 で断り、画面には「AI につながりませんでした」と出る（2026-11-22：organize-6 の形が 41 になり、整理がすべて断られた）。
 // 本物の呼び出しと同じ変換（SDK の zodOutputFormat）で作った形を数える。
 import { zodOutputFormat } from '@anthropic-ai/sdk/helpers/zod';
-import { DocumentAnswer, LinkAnswer, OrganizeAnswerWire, ProblemListAnswer, ReviseAnswer, SelectionAnswer } from '@clinical-carte/core';
+import { DocumentAnswer, LinkAnswer, OrganizeAnswerWire, ProblemListAnswer, ReviseAnswer, SelectionAnswer, SupportAnswer } from '@clinical-carte/core';
 import { describe, expect, test } from 'vitest';
 
 /** API の決まり（https://platform.claude.com/docs/en/build-with-claude/structured-outputs の Schema complexity limits。2026-11-22 に確認） */
@@ -33,7 +33,7 @@ function count(schema: unknown): { unions: number; optional: number } {
 }
 
 describe('AI の答えの形は、構造化出力の上限の中', () => {
-  const schemas = { OrganizeAnswerWire, SelectionAnswer, LinkAnswer, ProblemListAnswer, DocumentAnswer, ReviseAnswer } as const;
+  const schemas = { OrganizeAnswerWire, SelectionAnswer, LinkAnswer, ProblemListAnswer, DocumentAnswer, ReviseAnswer, SupportAnswer } as const;
   for (const [name, schema] of Object.entries(schemas)) {
     test(name, () => {
       const c = count(zodOutputFormat(schema).schema);
