@@ -654,6 +654,13 @@ select.input {
   --chart-axis: #898781;
   --chart-mark: #3d4b49;
   --chip-outline: #c9d3d0;
+  /* 段K2：できごと・経過の出来事・問題の帯の色の組 */
+  --tone-symptom: #eb6834;
+  --tone-treat: #6250d6;
+  --tone-test: #2a78d6;
+  --tone-visit: #1baf7a;
+  --tone-alert: #c8322b;
+  --tone-other: #898781;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -668,6 +675,12 @@ select.input {
     --chart-axis: #898781;
     --chart-mark: #c9d3d0;
     --chip-outline: #3a4846;
+    --tone-symptom: #d95926;
+    --tone-treat: #9085e9;
+    --tone-test: #3987e5;
+    --tone-visit: #199e70;
+    --tone-alert: #f0958c;
+    --tone-other: #898781;
   }
 }
 
@@ -2345,4 +2358,36 @@ select.input {
 
 .problems-written {
   margin-top: 8px;
+}
+
+/* ===== 段K2：治療と出来事のボード（経過表の帯） ===== */
+.mark-event.tone-symptom, .mark-course.tone-symptom { fill: var(--tone-symptom); }
+.mark-event.tone-treat, .mark-course.tone-treat { fill: var(--tone-treat); }
+.mark-event.tone-test, .mark-course.tone-test { fill: var(--tone-test); }
+.mark-event.tone-visit, .mark-course.tone-visit { fill: var(--tone-visit); }
+.mark-event.tone-alert, .mark-course.tone-alert { fill: var(--tone-alert); }
+.mark-event.tone-other, .mark-course.tone-other { fill: var(--tone-other); }
+.mark-course { stroke: var(--surface); stroke-width: 1.5; }
+.mark-course.approx { fill-opacity: 0.45; stroke-dasharray: 2 2; }
+.device-span {
+  stroke: var(--tone-treat);
+  stroke-width: 6;
+  stroke-opacity: 0.45;
+  stroke-linecap: round;
+}
+.device-span.open { stroke-dasharray: 6 4; }
+.problem-span {
+  stroke-width: 14;
+  stroke-opacity: 0.22;
+  stroke-linecap: round;
+}
+.problem-span.tone-p0 { stroke: var(--series-hr); }
+.problem-span.tone-p1 { stroke: var(--series-bt); }
+.problem-span.tone-p2 { stroke: var(--series-bp); }
+.problem-span.tone-p3 { stroke: var(--series-rr); }
+.problem-span.tone-p4 { stroke: var(--series-spo2); }
+.problem-span.tone-p5 { stroke: var(--chart-mark); }
+.problem-label {
+  fill: var(--ink);
+  font-size: 11.5px;
 }

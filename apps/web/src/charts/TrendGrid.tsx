@@ -153,7 +153,7 @@ export function TrendGrid({ trends, priority = new Set<string>() }: { trends: re
         </details>
       ))}
       {onlyTable.length > 0 && <p className="note">表だけの項目（不等号・定性など）：{onlyTable.map((t) => t.name).join('・')}</p>}
-      <p className="note">どの項目も、同じ時間の軸です。縦の目盛りは項目ごと（左の数は、その項目の目盛りの下と上）。正常範囲や色分けは付けていません。</p>
+      <p className="note">どの項目も、同じ時間の軸です。縦の目盛りは項目ごと（左の数は、その項目の目盛りの下と上）。基準範囲の印は、まだ付けていません（色は系列と種類の見分けだけ）。</p>
     </div>
   );
 }

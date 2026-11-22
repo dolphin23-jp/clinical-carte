@@ -181,6 +181,60 @@ describe('経過表', () => {
   });
 });
 
+describe('治療と出来事のボード（段K2）', () => {
+  test('問題の帯（AI のリストの番号）・デバイスの帯・できごとと経過の出来事の色の印が、同じ軸に出る。タップで中身', async () => {
+    await server.close();
+    server = await startDevServer({
+      dist: app.dir,
+      key: TEST_KEY,
+      selector: fakeSelector(),
+      organizer: fakeOrganizer(
+        () => next,
+        undefined,
+        { problemList: () => ({ ok: true, answer: { items: [{ name: '敗血症性ショック', certainty: 'diagnosis', activity: 'active', threads: ['T1'], course: ['C1'], basis: '発熱と血圧低下' }] } }) },
+      ),
+    });
+    const page = await openPatient('Desktop Chrome');
+    await vitals(page, '2026-11-17', '10:00', { BT: '38.9', HR: '118' });
+    next = {
+      ok: true,
+      answer: {
+        ...EMPTY_ORGANIZE,
+        problems: [{ name: '#1 敗血症性ショック', status: 'diagnosis', activity: null }],
+        medications: [{ name: 'メロペネム', dose: '1g 8時間毎', action: 'start', when: '11/17 11:00' }],
+        events: [
+          { kind: 'procedure', title: 'CV 挿入', when: '11/17 12:00' },
+          { kind: 'test', title: '血液培養を提出', when: '11/17 10:30' },
+        ],
+        course: [{ quote: '2日前から悪寒', summary: '悪寒が出現', category: 'onset', when: null, whenHint: { base: 'note', days: -2, hours: null, minutes: null, time: null, part: null, spanDays: null } }],
+      },
+    };
+    await page.getByTestId('kind-chip-admission_note').click();
+    await when(page, '2026-11-17', '13:00');
+    await page.getByTestId('text').fill('2日前から悪寒。#1 敗血症性ショック。11/17 10:30 血液培養を提出。11/17 11:00 メロペネム 1g 8時間毎 開始。11/17 12:00 CV 挿入。');
+    await sendAndWait(page);
+    next = { ok: true, answer: EMPTY_ORGANIZE };
+    await vitals(page, '2026-11-19', '06:00', { BT: '37.2', HR: '88' });
+
+    await page.getByTestId('tab-course').click();
+    await page.getByTestId('tab-overview').click();
+    await page.getByTestId('range-all').click();
+    const board = page.getByTestId('timeline');
+    await expect.poll(() => page.getByTestId('timeline-problem').count(), { timeout: 10_000 }).toBe(1);
+    expect(await page.getByTestId('timeline-problem').textContent()).toBe('#1 敗血症性ショック');
+    expect(await page.getByTestId('timeline-device').textContent()).toContain('CV　3 日目・抜去の記載なし');
+    expect(await page.getByTestId('timeline-medications').textContent()).toContain('開始から 3 日目');
+    expect(await page.getByTestId('timeline-course').locator('.mark-course.tone-symptom').count()).toBe(1);
+    expect(await page.getByTestId('timeline-events').locator('.mark-event.tone-test').count()).toBe(1);
+    expect(await board.textContent()).toContain('症状の出現・変化');
+    expect(await fits(page)).toBe(true);
+    if (SHOTS !== undefined) await page.screenshot({ path: `${SHOTS}/board-desktop.png`, fullPage: true });
+    await page.setViewportSize({ width: 393, height: 852 });
+    await expect.poll(() => fits(page)).toBe(true);
+    if (SHOTS !== undefined) await page.getByTestId('timeline').screenshot({ path: `${SHOTS}/board-iphone.png` });
+  });
+});
+
 describe('経過（段H。CA-053）', () => {
   test('日の帯で日を選ぶと、経過表はその日の0〜24時になり、記載もその日になる。範囲のボタン・前後・縮小図で範囲を動かせる', async () => {
     const page = await openPatient();

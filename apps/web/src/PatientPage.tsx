@@ -16,6 +16,7 @@ import {
   leftovers,
   QUOTED_SEGMENT_LABELS,
   medicationTimeline,
+  numberedList,
   patientState,
   READ_VALUES_KINDS,
   readLabText,
@@ -206,6 +207,27 @@ export function PatientPage({ patientId, onBack, onLeft }: { patientId: string; 
   const foldedEvents = foldedEventIds(events);
   const shownMeds = medications.filter((m) => !foldedMeds.has(m.id));
   const shownEvents = events.filter((e) => !foldedEvents.has(e.id));
+  // いまの状態（いま・経過表のボードが同じものを使う）
+  const state =
+    current === null
+      ? null
+      : patientState({
+          patient: record.patient,
+          encounter: current,
+          today: record.today,
+          sources: record.sources,
+          segments: record.segments,
+          threads: record.problemThreads,
+          mentions: record.problems,
+          medications: shownMeds,
+          events: shownEvents,
+          observations,
+          list: record.problemList?.items ?? [],
+        });
+  // ボード（段K2）の問題の帯：AI のプロブレムリストの活動中の項目（番号はリストの番号）
+  const boardProblems = numberedList(record.problemList?.items ?? [])
+    .filter(({ item }) => item.activity === 'active')
+    .map(({ item, no }) => ({ key: item.key, no, name: item.name, since: item.since }));
   const composerOpen = composing ?? sources.length === 0;
   const toComposer = () => {
     setComposing(true);
@@ -405,25 +427,13 @@ export function PatientPage({ patientId, onBack, onLeft }: { patientId: string; 
             </button>
           ))}
         </div>
-        {tab === 'state' && current !== null && (
+        {tab === 'state' && current !== null && state !== null && (
           <>
             <div className="state-latest">
               <LatestStrip panels={panels} />
             </div>
             <StateView
-              state={patientState({
-                patient: record.patient,
-                encounter: current,
-                today: record.today,
-                sources: record.sources,
-                segments: record.segments,
-                threads: record.problemThreads,
-                mentions: record.problems,
-                medications: shownMeds,
-                events: shownEvents,
-                observations,
-                list: record.problemList?.items ?? [],
-              })}
+              state={state}
               sources={record.sources}
               list={(record.problemList?.items ?? []).filter((i) => !i.hidden)}
               listBusy={listBuilder.busy}
@@ -465,6 +475,10 @@ export function PatientPage({ patientId, onBack, onLeft }: { patientId: string; 
                     inpatient={current.kind === 'inpatient'}
                     range={range}
                     onRange={setRange}
+                    problems={boardProblems}
+                    course={record.course.filter((c) => c.encounterId === current.id)}
+                    devices={state?.devices ?? []}
+                    asOf={state?.asOf ?? null}
                   />
                 )}
                 {view === 'values' && (
