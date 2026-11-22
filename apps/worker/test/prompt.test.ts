@@ -95,8 +95,8 @@ describe('整理の指示（段2）', () => {
     const digest = createHash('sha256').update(ORGANIZE_SYSTEM).digest('hex').slice(0, 16);
     expect({ version: ORGANIZE_PROMPT_VERSION, digest }).toMatchInlineSnapshot(`
       {
-        "digest": "014083f6d6717238",
-        "version": "organize-6",
+        "digest": "72b8110d99612ee3",
+        "version": "organize-7",
       }
     `);
   });
@@ -112,6 +112,8 @@ describe('整理の指示（段2）', () => {
 describe('整理の指示（organize-6 の足し分：AI による振り分け。CA-056）', () => {
   test('日時の手がかり・文章の中の値・推移・経過の出来事', () => {
     expect(ORGANIZE_SYSTEM).toContain('whenHint に基準とずれを入れます');
+    // 手がかりは null を使わず「なし」の形で返させる（構造化出力の、null になりうる欄の上限。schema-limits.test.ts）
+    expect(ORGANIZE_SYSTEM).toContain('手がかりがないときは「なし」の形**：base は none、days・hours・minutes・spanDays は 0、time は ""、part は none');
     for (const part of DAY_PARTS) expect(ORGANIZE_SYSTEM, part).toContain(`${part} `);
     expect(ORGANIZE_SYSTEM).toContain('文章の中の値（「熱は38.5℃まで上昇」');
     expect(ORGANIZE_SYSTEM).toContain('値ごとに1項目ずつ返します');

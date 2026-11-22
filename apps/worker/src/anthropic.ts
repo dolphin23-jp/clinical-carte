@@ -2,7 +2,7 @@
 // 答えは、決めた形（構造化した出力）で受け、確かめるのは core の applySelection。ここでは、保存もログもしない。
 import Anthropic from '@anthropic-ai/sdk';
 import { zodOutputFormat } from '@anthropic-ai/sdk/helpers/zod';
-import { DocumentAnswer, LinkAnswer, OrganizeAnswerWire, ProblemListAnswer, ReviseAnswer, SelectionAnswer } from '@clinical-carte/core';
+import { DocumentAnswer, LinkAnswer, OrganizeAnswerWire, organizeFromWire, ProblemListAnswer, ReviseAnswer, SelectionAnswer } from '@clinical-carte/core';
 
 import type { DocumentResult, LinkerResult, Organizer, OrganizerResult, ProblemListResult, ResearchResult, ReviseResult } from './organizer.ts';
 import { DOC_REVISE_SYSTEM, DOC_SYSTEM, LINK_SYSTEM, PLIST_SYSTEM, ORGANIZE_PROMPTS, type OrganizePromptChoice, RESEARCH_SYSTEM, SELECT_SYSTEM, WEB_DOMAINS } from './prompt.ts';
@@ -67,7 +67,7 @@ export function createAnthropicOrganizer(options: AnthropicOptions): Organizer {
         if (response.stop_reason === 'refusal') return { ok: false, reason: 'refused' };
         if (response.stop_reason !== 'end_turn') return { ok: false, reason: 'bad_answer' };
         const parsed = OrganizeAnswerWire.safeParse(response.parsed_output);
-        return parsed.success ? { ok: true, answer: parsed.data } : { ok: false, reason: 'bad_answer' };
+        return parsed.success ? { ok: true, answer: organizeFromWire(parsed.data) } : { ok: false, reason: 'bad_answer' };
       } catch (error) {
         if (error instanceof Anthropic.APIError) return { ok: false, reason: 'unavailable' };
         return { ok: false, reason: 'bad_answer' };
