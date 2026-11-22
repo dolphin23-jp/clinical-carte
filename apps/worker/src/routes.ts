@@ -29,6 +29,7 @@ import {
   searchQueryProblem,
   searchRecords,
   PendingPatch,
+  PlanPatch,
   FACT_KINDS,
   type FactKind,
   FactPatch,
@@ -61,6 +62,7 @@ import type { Organizer } from './organizer.ts';
 import type { BookSearcher } from './references.ts';
 import { type EditOutcome, type LinkOutcome, linkPatient, moveMention, patchThread, setTypedName } from './problems.ts';
 import { generatePending, markPending } from './pending.ts';
+import { generatePlans, markPlan } from './plans.ts';
 import { generateList, patchList } from './problemlist.ts';
 import { ORGANIZE_PROMPTS, SELECT_PROMPT_VERSION } from './prompt.ts';
 import {
@@ -81,6 +83,7 @@ import {
   type Patient,
   patchPatient,
   saveSource,
+  sourceBySendKey,
   setEncounterEnd,
   setEncounterKind,
   type Source,
@@ -254,6 +257,12 @@ export async function recordApi(request: Request, path: string, deps: RecordDeps
     if (body === null) return bad();
     const encounter = await getEncounter(db, encounterId);
     if (encounter === null) return missing();
+    // 送る鍵（段K9。CA-072）：同じ受診に同じ鍵の文がもう保存されていれば、保存し直さずに、その文を返す（答えが戻らずに送り直したとき。AI は呼ばない）
+    const sendKey = body.sendKey ?? null;
+    if (sendKey !== null) {
+      const saved = await sourceBySendKey(db, encounterId, sendKey);
+      if (saved !== null) return reply(200, { source: saved.source, observations: saved.observations, again: true });
+    }
     if (deps.selector === null) return reply(503, { error: 'no_ai' });
     if (deps.dailyAiLimit > 0 && (await callsOn(db, today)) >= deps.dailyAiLimit) return reply(429, { error: 'ai_limit' });
     await countCall(db, today);
@@ -281,7 +290,14 @@ export async function recordApi(request: Request, path: string, deps: RecordDeps
       nextDayFrom: body.nextDay === true ? (nextDayPoint(result.text)?.at ?? null) : null,
     };
     const observations: NewObservation[] = result.rows.map((row) => ({ id: newId(runtime), row }));
-    await saveSource(db, source, observations);
+    try {
+      await saveSource(db, source, observations, sendKey);
+    } catch (error) {
+      // 同じ鍵の送り直しが、先の要求と同時に届いた（鍵の重なりで保存できなかった）：先に保存した文を返す
+      const saved = sendKey === null ? null : await sourceBySendKey(db, encounterId, sendKey);
+      if (saved === null) throw error;
+      return reply(200, { source: saved.source, observations: saved.observations, again: true });
+    }
     return reply(200, { source, observations: observations.map((o) => observationOf(source, o)) });
   }
 
@@ -466,6 +482,28 @@ export async function recordApi(request: Request, path: string, deps: RecordDeps
     const body = await readBody(request, PendingPatch);
     if (body === null) return bad();
     return (await markPending(db, patientId, body, runtime)) ? reply(200, { ok: true }) : missing();
+  }
+
+  // 予定と実施（段K9。CA-071）：組み直す（AI の 1 回。予定の行がなければ、AI を呼ばずに空の一覧を残す）・先生の印（ボタンだけ）
+  const plans = /^\/api\/patients\/([^/]+)\/plans$/.exec(path);
+  if (plans && method === 'POST') {
+    const patientId = plans[1] ?? '';
+    if (!isUlid(patientId)) return bad();
+    if (deps.organizer === null) return reply(503, { error: 'no_ai' });
+    const r = await generatePlans(db, patientId, deps.organizer, gate, runtime);
+    if (!r.ok) {
+      if (r.reason === 'not_found') return missing();
+      if (r.reason === 'ai_limit') return reply(429, { error: 'ai_limit' });
+      return aiFailed(r.failure);
+    }
+    return reply(200, { plans: r.body });
+  }
+  if (plans && method === 'PATCH') {
+    const patientId = plans[1] ?? '';
+    if (!isUlid(patientId)) return bad();
+    const body = await readBody(request, PlanPatch);
+    if (body === null) return bad();
+    return (await markPlan(db, patientId, body, runtime)) ? reply(200, { ok: true }) : missing();
   }
 
   // 記録への質問（段K6。CA-066）：保存しない（問い・答えとも）。問いに識別情報の形があれば送らない（相談の頼みと同じ）。AI の 1 回

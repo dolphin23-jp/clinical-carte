@@ -52,6 +52,8 @@ import type {
   AskReply,
   PendingBody,
   PendingMark,
+  PlanBody,
+  PlanMark,
 } from '@clinical-carte/core';
 
 export interface DeviceView {
@@ -119,11 +121,17 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-async function call(method: 'GET' | 'POST' | 'PATCH' | 'PUT' | 'DELETE', path: string, body?: unknown): Promise<Result<Record<string, unknown>>> {
+async function call(method: 'GET' | 'POST' | 'PATCH' | 'PUT' | 'DELETE', path: string, body?: unknown, timeoutMs?: number): Promise<Result<Record<string, unknown>>> {
   let response: Response;
   let data: unknown;
+  // 待つ時間の上限（文を入れるときだけ。段K9）：電波の弱いところで、答えが戻らないまま待ち続けない。過ぎたら、つながらないのと同じ扱い（送り待ちになる）
+  const controller = timeoutMs === undefined ? null : new AbortController();
+  const timer = controller === null ? null : setTimeout(() => {
+    controller.abort();
+  }, timeoutMs);
   try {
     const init: RequestInit = { method, credentials: 'same-origin', cache: 'no-store', redirect: 'error' };
+    if (controller !== null) init.signal = controller.signal;
     if (body !== undefined) {
       init.headers = { 'content-type': 'application/json' };
       init.body = JSON.stringify(body);
@@ -132,6 +140,8 @@ async function call(method: 'GET' | 'POST' | 'PATCH' | 'PUT' | 'DELETE', path: s
     data = await response.json();
   } catch {
     return { ok: false, error: 'network' };
+  } finally {
+    if (timer !== null) clearTimeout(timer);
   }
   if (!isRecord(data)) return { ok: false, error: 'network' };
   if (response.ok) return { ok: true, value: data };
@@ -375,6 +385,14 @@ export interface PendingView {
   readonly body: PendingBody;
 }
 
+/** 予定と実施（段K9。CA-071） */
+export interface PlanView {
+  readonly madeAt: string;
+  readonly promptVersion: string;
+  readonly basis: string;
+  readonly body: PlanBody;
+}
+
 export interface PatientSummary {
   readonly patient: Patient;
   readonly latest: Encounter | null;
@@ -429,6 +447,8 @@ export interface PatientRecord {
   readonly support: SupportView | null;
   /** 結果待ち（段K6。まだなければ null） */
   readonly pending: PendingView | null;
+  /** 予定と実施（段K9。まだなければ null） */
+  readonly plans: PlanView | null;
   /** サーバーの、今日（日本の日） */
   readonly today: string;
 }
@@ -454,7 +474,7 @@ export async function createPatient(input: NewPatient): Promise<Result<Patient>>
 export async function getRecord(patientId: string): Promise<Result<PatientRecord>> {
   const result = await call('GET', `patients/${encodeURIComponent(patientId)}`);
   if (!result.ok) return result;
-  const { patient, encounters, sources, observations, segments, medications, events, problems, problemThreads, history, factEdits, userEdits, apNotes, scaleLinks, documents, handoffs, course, problemList, support, pending, today } = result.value;
+  const { patient, encounters, sources, observations, segments, medications, events, problems, problemThreads, history, factEdits, userEdits, apNotes, scaleLinks, documents, handoffs, course, problemList, support, pending, plans, today } = result.value;
   const lists = [encounters, sources, observations, segments, medications, events, problems, problemThreads, history, factEdits, userEdits, apNotes, scaleLinks, documents, handoffs, course];
   if (!isRecord(patient) || lists.some((l) => !Array.isArray(l)) || typeof today !== 'string') return { ok: false, error: 'network' };
   return {
@@ -480,6 +500,7 @@ export async function getRecord(patientId: string): Promise<Result<PatientRecord
       problemList: isRecord(problemList) ? (problemList as unknown as ProblemListView) : null,
       support: isRecord(support) && isRecord(support['body']) ? (support as unknown as SupportView) : null,
       pending: isRecord(pending) && isRecord(pending['body']) ? (pending as unknown as PendingView) : null,
+      plans: isRecord(plans) && isRecord(plans['body']) ? (plans as unknown as PlanView) : null,
       today,
     },
   };
@@ -507,9 +528,13 @@ export async function setEncounterEnd(encounterId: string, end: string | null): 
   return field<Encounter>(await call('PATCH', `encounters/${encodeURIComponent(encounterId)}`, { end }), 'encounter');
 }
 
-/** 文を入れる。サーバーで、AI の選別と置き換えを通ったものだけが保存され、保存された形が返る。 */
+/** 文を入れるときに待つ時間の上限（ミリ秒。サーバーの選別は、AI の待ちを含めて長くかかることがあるので長め）。過ぎたら、つながらない扱い（段K9） */
+export const ADD_SOURCE_TIMEOUT_MS = 120_000;
+
+/** 文を入れる。サーバーで、AI の選別と置き換えを通ったものだけが保存され、保存された形が返る。
+ *  送る鍵（sendKey）があれば、送り直しても、サーバーは同じ文を二重に保存しない（段K9） */
 export async function addSource(encounterId: string, input: NewSource): Promise<Result<{ source: Source; observations: readonly Observation[] }>> {
-  const result = await call('POST', `encounters/${encodeURIComponent(encounterId)}/sources`, input);
+  const result = await call('POST', `encounters/${encodeURIComponent(encounterId)}/sources`, input, ADD_SOURCE_TIMEOUT_MS);
   if (!result.ok) return result;
   const { source, observations } = result.value;
   return isRecord(source) && Array.isArray(observations) ? { ok: true, value: { source: source as unknown as Source, observations: observations as Observation[] } } : { ok: false, error: 'network' };
@@ -822,6 +847,18 @@ export async function generatePending(patientId: string): Promise<Result<null>> 
 /** 先生の印（結果を確かめた・外す・戻す）。ボタンだけ */
 export async function markPending(patientId: string, key: string, mark: PendingMark): Promise<Result<null>> {
   return done(await call('PATCH', `patients/${encodeURIComponent(patientId)}/pending`, { key, mark }));
+}
+
+// --- 予定と実施（段K9。CA-071）
+
+/** 記録から、予定と実施の一覧を組み直す（AI の 1 回。予定の行がなければ、AI を呼ばずに空の一覧） */
+export async function generatePlans(patientId: string): Promise<Result<null>> {
+  return done(await call('POST', `patients/${encodeURIComponent(patientId)}/plans`, {}));
+}
+
+/** 先生の印（実施を確かめた・中止・不要・外す・戻す）。ボタンだけ */
+export async function markPlan(patientId: string, key: string, mark: PlanMark): Promise<Result<null>> {
+  return done(await call('PATCH', `patients/${encodeURIComponent(patientId)}/plans`, { key, mark }));
 }
 
 // --- 記録への質問（段K6。CA-066）

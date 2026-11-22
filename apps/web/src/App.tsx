@@ -8,6 +8,7 @@ import { KeyMaker } from './KeyMaker.tsx';
 import { errorMessage } from './messages.ts';
 import { type ApiError, type DeviceView, getSession } from './net/api.ts';
 import { PatientPage } from './PatientPage.tsx';
+import { QueueBanner } from './QueueView.tsx';
 import { Patients } from './Patients.tsx';
 import { Register } from './Register.tsx';
 import { OrganizeCheck } from './OrganizeCheck.tsx';
@@ -59,6 +60,7 @@ export function App() {
       <header className="top">
         <span className="brand">carte</span>
         <Banner />
+        <QueueBanner />
       </header>
       {state.at === 'loading' && (
         <main className="page narrow">

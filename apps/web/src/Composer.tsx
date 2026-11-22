@@ -1,12 +1,15 @@
 // 文を入れる（docs/00 の 5）。先に患者と受診を選んである（CA-015）。どの患者に入るかを、送るボタンのすぐ上に出す。
 // 送った文は、サーバーで AI の選別と置き換えを通ったものだけが保存される。通らなければ、打った文は、この欄に残る。
 // 手軽にするための部品：種類・書いた人・日時のチップ、見出しのひな形、バイタル・検査値の入力欄（欄の値から文を作り、文の欄に入れる。送る文は、いつも文の欄の文）。
+// 電波のないとき（段K9。CA-072）：つながらずに送れなかった文は、画面のメモリの「送り待ち」に入れて、欄を空ける（続けて入れられる）。
+// 電波が戻ったら送り直す（outbox.ts）。サーバーが断った文は、いつもどおり誤りを出し、送り待ちの札から欄に戻して直せる。読み込み直す・閉じると、送り待ちは消える。
 import {
   AUTHOR_ROLE_LABELS,
   AUTHOR_ROLES,
   type AuthorRole,
   READ_VALUES_KINDS,
   readLabText,
+  shouldRetry,
   SOURCE_KIND_LABELS,
   SOURCE_KINDS,
   type SourceKind,
@@ -20,6 +23,8 @@ import { NextDayAsk, type NextDayAnswer, nextDayKey } from './NextDayAsk.tsx';
 import { errorMessage } from './messages.ts';
 import { addSource, type Observation, organizeSource, type Source } from './net/api.ts';
 import { organizeSummary } from './organizeText.ts';
+import { hasQueued, kick, newSendKey, queueSource, type QueuedSource } from './outbox.ts';
+import { QUEUE_NOTE, QueueCards } from './QueueView.tsx';
 import { QuickValues } from './QuickValues.tsx';
 import { COMMON_KINDS, insertAt, KIND_CHIP_LABELS, type Template, TEMPLATES } from './templates.ts';
 
@@ -36,6 +41,7 @@ export function Composer({
   target,
   problemHeadings = [],
   onSaved,
+  onQueued = () => undefined,
   onLeft,
 }: {
   encounterId: string;
@@ -43,6 +49,8 @@ export function Composer({
   /** いまの問題の見出し（保存した記載に書かれた名前。並びは問題のタブと同じ）。経過のひな形にする（決定論。AI を使わない） */
   problemHeadings?: readonly string[];
   onSaved: (source?: Source, observations?: readonly Observation[]) => void;
+  /** 送り待ちに入れたとき（段K9。入れる欄を開いたままにする。記録は、まだ変わっていない） */
+  onQueued?: () => void;
   onLeft: () => void;
 }) {
   const [kind, setKind] = useState<SourceKind>('progress_note');
@@ -109,17 +117,62 @@ export function Composer({
     send();
   };
 
+  /** 送ったあと・送り待ちに入れたあとに、欄を空ける（時刻も空に戻す） */
+  const clear = () => {
+    setText('');
+    setTime('');
+    setUnknownTime(false);
+    setNextAnswer(null);
+  };
+
+  /** 送り待ちの札から、断られた文を欄に戻す（直して送り直す） */
+  const takeBack = (item: QueuedSource) => {
+    const { input } = item;
+    setKind(input.kind);
+    setAuthorRole(input.authorRole);
+    if (input.at === null) setUnknownTime(true);
+    else {
+      setUnknownTime(false);
+      setDay(input.at.slice(0, 10));
+      setTime(input.at.length > 10 ? input.at.slice(11, 16) : '');
+    }
+    setText(input.text);
+    setNextAnswer(null);
+    setMessage(null);
+    setDone(null);
+  };
+
   const send = () => {
     if (busy || !ready) return;
-    setBusy(true);
     setMessage(null);
     setDone(null);
     setOrganizing(null);
     const nextDay = turnKey !== null && nextAnswer?.key === turnKey && nextAnswer.next;
-    void addSource(encounterId, { kind, authorRole, at: unknownTime ? null : joinDateTime(day, time), text, ...(nextDay ? { nextDay: true } : {}) }).then((result) => {
+    // 送る鍵は、押したときに1つ作る（送り待ちから送り直しても同じ鍵。サーバーは二重に保存しない）
+    const input = { kind, authorRole, at: unknownTime ? null : joinDateTime(day, time), text, ...(nextDay ? { nextDay: true } : {}), sendKey: newSendKey() };
+    // この受診に送り待ちがあれば、順を守るため、この文も送り待ちの後ろに入れる
+    if (hasQueued(encounterId)) {
+      queueSource({ encounterId, input });
+      clear();
+      setDone(`前の文が送り待ちなので、この文もその後ろに入れました（${QUEUE_NOTE}）。まだ保存していません。`);
+      // 入れる欄を開いたままにする（送り待ちの札は、この欄に出る）
+      onQueued();
+      kick();
+      return;
+    }
+    setBusy(true);
+    void addSource(encounterId, input).then((result) => {
       setBusy(false);
       if (!result.ok) {
-        // 打った文は、欄に残す（もう一度送れる）
+        // つながらない（サーバーまで届かない・答えが戻らない）：送り待ちに入れて、欄を空ける（電波が戻ったら送る）
+        if (shouldRetry(result.error)) {
+          queueSource({ encounterId, input });
+          clear();
+          setDone(`つながらないので、送り待ちに入れました（${QUEUE_NOTE}）。まだ保存していません。`);
+          onQueued();
+          return;
+        }
+        // サーバーが断った：打った文は、欄に残す（もう一度送れる）
         if (result.error === 'unregistered') onLeft();
         else setMessage(errorMessage(result.error));
         return;
@@ -133,10 +186,7 @@ export function Composer({
         parts.push(`読んだ値 ${String(observations.length)} 件${unread > 0 ? `、読めなかった部分 ${String(unread)} か所（文には残っています）` : ''}。`);
       }
       setDone(parts.join(''));
-      setText('');
-      setTime('');
-      setUnknownTime(false);
-      setNextAnswer(null);
+      clear();
       onSaved(source, observations);
       // 続けて整理する（段2）。整理に失敗しても、文は保存されている
       setOrganizing('整理しています…（30 秒ほどかかることがあります）');
@@ -330,6 +380,7 @@ export function Composer({
           {organizing}
         </p>
       )}
+      <QueueCards encounterId={encounterId} canTakeBack={text.trim() === ''} onTakeBack={takeBack} />
       <p className="target" data-testid="target">
         入れる先：<strong>{target}</strong>
       </p>

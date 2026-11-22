@@ -157,5 +157,20 @@ export const MIGRATIONS: readonly Migration[] = [
       "CREATE INDEX IF NOT EXISTS handoffs_by_encounter ON handoffs (encounter_id, day)",
       "CREATE INDEX IF NOT EXISTS handoffs_by_patient ON handoffs (patient_id, day)"
     ]
+  },
+  {
+    "name": "0015_plan_checks",
+    "statements": [
+      "CREATE TABLE IF NOT EXISTS plan_checks ( patient_id TEXT PRIMARY KEY REFERENCES patients (id) ON DELETE CASCADE, made_at TEXT NOT NULL CHECK (length(made_at) = 16), prompt_version TEXT NOT NULL, basis TEXT NOT NULL, body TEXT NOT NULL )",
+      "CREATE TABLE IF NOT EXISTS plan_check_edits ( id TEXT PRIMARY KEY, patient_id TEXT NOT NULL REFERENCES patients (id) ON DELETE CASCADE, at TEXT NOT NULL CHECK (length(at) = 16), item_key TEXT NOT NULL, before TEXT NOT NULL CHECK (before IN ('none', 'confirmed', 'cancelled', 'hidden')), after TEXT NOT NULL CHECK (after IN ('none', 'confirmed', 'cancelled', 'hidden')) )",
+      "CREATE INDEX IF NOT EXISTS plan_check_edits_by_patient ON plan_check_edits (patient_id, at)"
+    ]
+  },
+  {
+    "name": "0016_send_key",
+    "statements": [
+      "ALTER TABLE sources ADD COLUMN send_key TEXT CHECK (send_key IS NULL OR length(send_key) = 26)",
+      "CREATE UNIQUE INDEX IF NOT EXISTS sources_send_key ON sources (encounter_id, send_key)"
+    ]
   }
 ];

@@ -2,10 +2,10 @@
 // 答えは、決めた形（構造化した出力）で受け、確かめるのは core の applySelection。ここでは、保存もログもしない。
 import Anthropic from '@anthropic-ai/sdk';
 import { zodOutputFormat } from '@anthropic-ai/sdk/helpers/zod';
-import { AskAnswer, DocumentAnswer, LinkAnswer, OrganizeAnswerWire, organizeFromWire, PendingAnswer, ProblemListAnswer, ReviseAnswer, SelectionAnswer, SupportAnswer } from '@clinical-carte/core';
+import { AskAnswer, DocumentAnswer, LinkAnswer, OrganizeAnswerWire, organizeFromWire, PendingAnswer, PlanAnswer, ProblemListAnswer, ReviseAnswer, SelectionAnswer, SupportAnswer } from '@clinical-carte/core';
 
-import type { AskResult, DocumentResult, LinkerResult, Organizer, OrganizerResult, PendingResultAnswer, ProblemListResult, ResearchResult, ReviseResult, SupportResult } from './organizer.ts';
-import { ASK_SYSTEM, DOC_REVISE_SYSTEM, DOC_SYSTEM, LINK_SYSTEM, PENDING_SYSTEM, PLIST_SYSTEM, ORGANIZE_PROMPTS, type OrganizePromptChoice, RESEARCH_SYSTEM, SELECT_SYSTEM, SUPPORT_SYSTEM, WEB_DOMAINS } from './prompt.ts';
+import type { AskResult, DocumentResult, LinkerResult, Organizer, OrganizerResult, PendingResultAnswer, PlanResultAnswer, ProblemListResult, ResearchResult, ReviseResult, SupportResult } from './organizer.ts';
+import { ASK_SYSTEM, DOC_REVISE_SYSTEM, DOC_SYSTEM, LINK_SYSTEM, PENDING_SYSTEM, PLAN_SYSTEM, PLIST_SYSTEM, ORGANIZE_PROMPTS, type OrganizePromptChoice, RESEARCH_SYSTEM, SELECT_SYSTEM, SUPPORT_SYSTEM, WEB_DOMAINS } from './prompt.ts';
 import type { WebHit } from './references.ts';
 import type { Selector, SelectorResult } from './selector.ts';
 
@@ -248,6 +248,31 @@ export function createAnthropicOrganizer(options: AnthropicOptions): Organizer {
         if (response.stop_reason === 'refusal') return { ok: false, reason: 'refused' };
         if (response.stop_reason !== 'end_turn') return { ok: false, reason: 'bad_answer' };
         const parsed = PendingAnswer.safeParse(response.parsed_output);
+        return parsed.success ? { ok: true, answer: parsed.data } : { ok: false, reason: 'bad_answer' };
+      } catch (error) {
+        if (error instanceof Anthropic.APIError) return { ok: false, reason: 'unavailable' };
+        return { ok: false, reason: 'bad_answer' };
+      }
+    },
+    // 予定と実施（段K9。CA-071）。送るのは、記録から作った予定の行と事実だけ（core の planMaterial）。答えは記号と種類と手がかりの数だけで、確かめてから保存する
+    async plans(message: string): Promise<PlanResultAnswer> {
+      try {
+        const response = await client.beta.messages.parse(
+          {
+            model: options.model,
+            max_tokens: 16000,
+            betas: ['server-side-fallback-2026-07-01'],
+            fallbacks: 'default',
+            cache_control: { type: 'ephemeral' },
+            system: PLAN_SYSTEM,
+            output_config: { effort: 'medium', format: zodOutputFormat(PlanAnswer) },
+            messages: [{ role: 'user', content: message }],
+          },
+          { timeout: 300_000 },
+        );
+        if (response.stop_reason === 'refusal') return { ok: false, reason: 'refused' };
+        if (response.stop_reason !== 'end_turn') return { ok: false, reason: 'bad_answer' };
+        const parsed = PlanAnswer.safeParse(response.parsed_output);
         return parsed.success ? { ok: true, answer: parsed.data } : { ok: false, reason: 'bad_answer' };
       } catch (error) {
         if (error instanceof Anthropic.APIError) return { ok: false, reason: 'unavailable' };

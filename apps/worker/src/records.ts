@@ -1,6 +1,6 @@
 // 記録の読み書き（段1：患者・受診・取り込んだ文・測定値）。書く表は、docs/04 の 6 の一覧のとおり。
 // ここは、形を確かめた後の値だけを受け取る（形の確かめは handler.ts、文の選別は intake.ts）。
-import { COURSE_CATEGORIES, type CourseCategory, type SearchInput, DOC_ORIGINS, DOC_TYPES, type DocOrigin, type DocType, isDocOrigin, isHandoffSeverity, latestHandoff, type HandoffSeverity, type SavedHandoff, type ListItem, ListItemShape, roundSummary, type RoundSummary, type SavedDocument, PendingBody, SavedSection, SupportBody } from '@clinical-carte/core';
+import { COURSE_CATEGORIES, type CourseCategory, type SearchInput, DOC_ORIGINS, DOC_TYPES, type DocOrigin, type DocType, isDocOrigin, isHandoffSeverity, latestHandoff, type HandoffSeverity, type SavedHandoff, type ListItem, ListItemShape, roundSummary, type RoundSummary, type SavedDocument, PendingBody, PlanBody, SavedSection, SupportBody } from '@clinical-carte/core';
 import { z } from 'zod';
 import { ApRef, type ApOrigin, type ApPart, type FactField, type FactKind, type PlanKind, USER_EDIT_FIELDS, USER_EDIT_TARGETS, type UserEditField, type UserEditTarget } from '@clinical-carte/core';
 import type { AuthorRole, Comparator, EncounterKind, EventKind, HistoryAction, LabRow, MedicationAction, OrganizeReport, ProblemActivity, ProblemStatus, SegmentLabel, Sex, SourceKind } from '@clinical-carte/core';
@@ -201,6 +201,14 @@ export interface PendingRow {
   readonly body: PendingBody;
 }
 
+/** 予定と実施（段K9。CA-071。患者ごとに1つ） */
+export interface PlanRow {
+  readonly madeAt: string;
+  readonly promptVersion: string;
+  readonly basis: string;
+  readonly body: PlanBody;
+}
+
 /** AI の臨床支援（段K5。CA-064。患者ごとに1つ） */
 export interface SupportRow {
   readonly madeAt: string;
@@ -383,6 +391,20 @@ export function pendingOf(row: Row | null): PendingRow | null {
   if (row === null || madeAt === null || promptVersion === null || basis === null) return null;
   try {
     const parsed = PendingBody.safeParse(JSON.parse(text(row, 'body') ?? 'null'));
+    return parsed.success ? { madeAt, promptVersion, basis, body: parsed.data } : null;
+  } catch {
+    return null;
+  }
+}
+
+/** 予定と実施の行を読む（中身が読めなければ null：組み直すと、また作られる） */
+export function planOf(row: Row | null): PlanRow | null {
+  const madeAt = text(row, 'made_at');
+  const promptVersion = text(row, 'prompt_version');
+  const basis = text(row, 'basis');
+  if (row === null || madeAt === null || promptVersion === null || basis === null) return null;
+  try {
+    const parsed = PlanBody.safeParse(JSON.parse(text(row, 'body') ?? 'null'));
     return parsed.success ? { madeAt, promptVersion, basis, body: parsed.data } : null;
   } catch {
     return null;
@@ -791,6 +813,8 @@ export interface PatientRecord {
   readonly support: SupportRow | null;
   /** 結果待ち（段K6。CA-065。まだなければ null） */
   readonly pending: PendingRow | null;
+  /** 予定と実施（段K9。CA-071。まだなければ null） */
+  readonly plans: PlanRow | null;
 }
 
 export interface ScaleLinkRow {
@@ -822,7 +846,7 @@ export const PROBLEM_COLUMNS = 'id, source_id, encounter_id, name, status, activ
 export async function getRecord(db: Db, id: string): Promise<PatientRecord | null> {
   const patient = await getPatient(db, id);
   if (patient === null) return null;
-  const [encounters, sources, observations, segments, medications, events, problems, threads, history, factEdits, userEdits, apNotes, scaleLinks, documents, course, problemList, support, pending, handoffs] = await Promise.all([
+  const [encounters, sources, observations, segments, medications, events, problems, threads, history, factEdits, userEdits, apNotes, scaleLinks, documents, course, problemList, support, pending, handoffs, plans] = await Promise.all([
     db.prepare('SELECT id, patient_id, kind, started, ended FROM encounters WHERE patient_id = ? ORDER BY started, id').bind(id).all(),
     db.prepare('SELECT id, patient_id, encounter_id, kind, author_role, at, entered_at, text, replaced, organized, organized_version, organize_report, next_day_from FROM sources WHERE patient_id = ? ORDER BY id').bind(id).all(),
     db
@@ -845,6 +869,7 @@ export async function getRecord(db: Db, id: string): Promise<PatientRecord | nul
     db.prepare('SELECT made_at, prompt_version, basis, body FROM clinical_support WHERE patient_id = ?').bind(id).first(),
     db.prepare('SELECT made_at, prompt_version, basis, body FROM pending_results WHERE patient_id = ?').bind(id).first(),
     db.prepare(`SELECT ${HANDOFF_COLUMNS} FROM handoffs WHERE patient_id = ? ORDER BY day DESC, updated_at DESC, id DESC`).bind(id).all(),
+    db.prepare('SELECT made_at, prompt_version, basis, body FROM plan_checks WHERE patient_id = ?').bind(id).first(),
   ]);
   return {
     patient,
@@ -867,6 +892,7 @@ export async function getRecord(db: Db, id: string): Promise<PatientRecord | nul
     problemList: problemListOf(problemList),
     support: supportOf(support),
     pending: pendingOf(pending),
+    plans: planOf(plans),
   };
 }
 
@@ -912,7 +938,7 @@ export async function setEncounterEnd(db: Db, id: string, end: string | null): P
 export const FACT_TABLES = ['observations', 'segments', 'medications', 'events', 'problems', 'course_items'] as const;
 
 /** 患者に付く、文からではない行の表（患者を消すと、一緒に消える。文を消しても残る：筋は、記載がなくなると見えなくなるだけ） */
-export const PATIENT_TABLES = ['problem_threads', 'history', 'fact_edits', 'user_edits', 'ap_notes', 'ap_history', 'documents', 'document_history', 'handoffs', 'problem_lists', 'problem_list_edits', 'clinical_support', 'pending_results', 'pending_result_edits'] as const;
+export const PATIENT_TABLES = ['problem_threads', 'history', 'fact_edits', 'user_edits', 'ap_notes', 'ap_history', 'documents', 'document_history', 'handoffs', 'problem_lists', 'problem_list_edits', 'clinical_support', 'pending_results', 'pending_result_edits', 'plan_checks', 'plan_check_edits'] as const;
 
 /** 問題の行を、表から読む */
 export function problemOf(row: Record<string, unknown>): Problem | null {
@@ -931,11 +957,11 @@ export interface NewObservation {
 }
 
 /** 文と、そこから読んだ測定値を、一緒に保存する。 */
-export async function saveSource(db: Db, source: Source, observations: readonly NewObservation[]): Promise<void> {
+export async function saveSource(db: Db, source: Source, observations: readonly NewObservation[], sendKey: string | null = null): Promise<void> {
   await db.batch([
     db
-      .prepare('INSERT INTO sources (id, patient_id, encounter_id, kind, author_role, at, entered_at, text, replaced, next_day_from) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
-      .bind(source.id, source.patientId, source.encounterId, source.kind, source.authorRole, source.at, source.enteredAt, source.text, JSON.stringify(source.replaced), source.nextDayFrom),
+      .prepare('INSERT INTO sources (id, patient_id, encounter_id, kind, author_role, at, entered_at, text, replaced, next_day_from, send_key) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
+      .bind(source.id, source.patientId, source.encounterId, source.kind, source.authorRole, source.at, source.enteredAt, source.text, JSON.stringify(source.replaced), source.nextDayFrom, sendKey),
     ...observations.map(({ id, row }, index) =>
       db
         .prepare(
@@ -944,6 +970,22 @@ export async function saveSource(db: Db, source: Source, observations: readonly 
         .bind(id, source.patientId, source.encounterId, source.id, source.at, row.name, row.nameRaw, row.kind, row.value, row.comparator, row.valueText, row.unit, row.start, row.end, index),
     ),
   ]);
+}
+
+/** 送る鍵（段K9。CA-072）で、同じ受診にすでに保存した文と、その文から読んだ測定値を探す（送り直しで二重に保存しないため）。なければ null */
+export async function sourceBySendKey(db: Db, encounterId: string, sendKey: string): Promise<{ source: Source; observations: Observation[] } | null> {
+  const source = toSource(
+    await db
+      .prepare('SELECT id, patient_id, encounter_id, kind, author_role, at, entered_at, text, replaced, organized, organized_version, organize_report, next_day_from FROM sources WHERE encounter_id = ? AND send_key = ?')
+      .bind(encounterId, sendKey)
+      .first(),
+  );
+  if (source === null) return null;
+  const rows = await db
+    .prepare("SELECT id, source_id, encounter_id, at, name, name_raw, kind, value, comparator, value_text, unit, span_start, span_end, excluded, origin, at_approx, read_by, unseen FROM observations WHERE source_id = ? AND origin = 'parser' ORDER BY ord")
+    .bind(source.id)
+    .all();
+  return { source, observations: rows.results.map(toObservation).filter(present) };
 }
 
 export function observationOf(source: Source, { id, row }: NewObservation): Observation {

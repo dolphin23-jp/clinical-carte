@@ -2979,3 +2979,92 @@ td.ref-low { color: var(--ref-low); background: var(--ref-low-bg); font-weight: 
   border-radius: var(--radius);
   min-width: 0;
 }
+
+/* ===== 段K9：予定と実施（CA-071）・電波のないときの送り待ち（CA-072） ===== */
+/* 状態の札の色は、見分けのための印（字をいつも添える。良い・悪いの判定の色ではない） */
+:root {
+  --plan-done: #1f6f6a;
+  --plan-done-bg: #e3efed;
+  --plan-past: #8a5a00;
+  --plan-past-bg: #fdf3dc;
+  --plan-open: #5b6765;
+  --plan-open-line: #c9d3d0;
+  --queue-bg: #eef3fb;
+  --queue-line: #9db7df;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --plan-done: #7fc8bf;
+    --plan-done-bg: #1d3634;
+    --plan-past: #e7b765;
+    --plan-past-bg: #3a2e14;
+    --plan-open: #a8b3b1;
+    --plan-open-line: #4b5755;
+    --queue-bg: #1b2636;
+    --queue-line: #3f5a82;
+  }
+}
+.plan-head {
+  flex-wrap: wrap;
+}
+.plan-head .thread-name {
+  overflow-wrap: anywhere;
+  min-width: 0;
+}
+.plan-status {
+  display: inline-block;
+  padding: 1px 8px;
+  border-radius: 999px;
+  font-size: 12.5px;
+  font-weight: 700;
+  overflow-wrap: anywhere;
+  max-width: 100%;
+}
+.plan-status.plan-done { color: var(--plan-done); background: var(--plan-done-bg); }
+.plan-status.plan-past_due { color: var(--plan-past); background: var(--plan-past-bg); }
+.plan-status.plan-open,
+.plan-status.plan-unsorted { color: var(--plan-open); border: 1px dashed var(--plan-open-line); }
+
+/* 送り待ち：ヘッダーの小さな帯と、入れる欄の札（画面のメモリだけ。読み込み直す・閉じると消える） */
+/* ヘッダー（いつも上に出る）の中の1行。帯（Banner）の下に、幅いっぱいで */
+.queue-banner {
+  flex: 1 1 100%;
+  min-width: 0;
+  margin: 0;
+  padding: 4px 10px;
+  border-radius: 8px;
+  background: var(--queue-bg);
+  color: var(--ink);
+  border: 1px solid var(--queue-line);
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+.queue-banner .button.link {
+  color: var(--accent);
+}
+.queue {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+.queue-card {
+  display: grid;
+  gap: 4px;
+  padding: 8px 10px;
+  border: 1px solid var(--queue-line);
+  border-radius: var(--radius);
+  background: var(--queue-bg);
+  min-width: 0;
+}
+.queue-card .source-text {
+  margin: 0;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+  max-height: 6.5em;
+  overflow: hidden;
+}
+.queue-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}

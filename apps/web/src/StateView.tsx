@@ -139,6 +139,7 @@ export function StateView({
   scores = null,
   support = null,
   pending = null,
+  plans = null,
   ask = null,
 }: {
   state: PatientState;
@@ -155,6 +156,8 @@ export function StateView({
   support?: ReactNode;
   /** 結果待ち（段K6）の節。臨床支援の下に出す */
   pending?: ReactNode;
+  /** 予定と実施（段K9）の節。結果待ちの下に出す */
+  plans?: ReactNode;
   /** 記録に聞く（段K6）の節。右の列の先頭に出す（電話の幅では、左の列の下） */
   ask?: ReactNode;
 }) {
@@ -248,6 +251,8 @@ export function StateView({
       {support}
 
       {pending}
+
+      {plans}
 
       {(() => {
         const writtenProblems = (

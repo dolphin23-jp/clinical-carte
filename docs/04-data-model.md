@@ -207,6 +207,9 @@ AI が返すのは、次の3つだけ（構造化した出力）。
 | `clinical_support` | AI が臨床支援を組んだとき（段K5。CA-064。患者ごとに1つ。確かめた後の支援だけ）・患者を消すとき |
 | `pending_results` | 結果待ちを組んだとき（段K6。CA-065。患者ごとに1つ。確かめた後の一覧だけ。候補がなければ AI を呼ばずに空の一覧）・本人が印を付けたとき・患者を消すとき |
 | `pending_result_edits` | 本人が結果待ちに印を付けたとき（段K6。印の前後だけ。**文は入らない**）・患者を消すとき |
+| `plan_checks` | 予定と実施を組んだとき（段K9。CA-071。患者ごとに1つ。確かめた後の一覧だけ。予定の行がなければ AI を呼ばずに空の一覧）・本人が印を付けたとき・患者を消すとき |
+| `plan_check_edits` | 本人が予定と実施に印を付けたとき（段K9。印の前後だけ。**文は入らない**）・患者を消すとき |
+| `sources` の `send_key` | 本人の入力（段K9。CA-072。送るボタンを押したときに画面が作る ULID。同じ受診に同じ鍵の文があれば、保存し直さない） |
 | `devices` | 端末の登録・外すとき・その日はじめて使ったとき（1日に1回） |
 | `entrance_daily` | 合鍵を間違えたとき |
 | `usage_daily` | AI を呼んだとき |
@@ -215,7 +218,7 @@ AI が返すのは、次の3つだけ（構造化した出力）。
 
 - 打った原文・AI へ送った文・AI の答えそのものは、どの表にも書かない。ログにも出さない。
 - 表を足すときは、先にこの一覧を直す。
-- いまある表（段0〜段5）は `devices`・`entrance_daily`・`patients`・`encounters`・`sources`・`observations`・`usage_daily`・`schema_migrations`・`segments`・`medications`・`events`・`problems`・`problem_threads`・`history`・`fact_edits`・`user_edits`・`ap_notes`・`ap_history`・`scale_links`・`documents`・`document_history`・`handoffs`・`course_items`・`problem_lists`・`problem_list_edits`・`clinical_support`・`pending_results`・`pending_result_edits`。記録への質問（段K6。CA-066）と、前の記載との違い（段K7。CA-068）と、水分の出入りの集計・受け持ちを横断する検索（段K8。CA-069・CA-070）は、どの表にも書かない。`apps/worker/test/writes.test.ts` が、migrations が作る表と、ソースの SQL が書く表を、この一覧と突き合わせる。
+- いまある表（段0〜段5）は `devices`・`entrance_daily`・`patients`・`encounters`・`sources`・`observations`・`usage_daily`・`schema_migrations`・`segments`・`medications`・`events`・`problems`・`problem_threads`・`history`・`fact_edits`・`user_edits`・`ap_notes`・`ap_history`・`scale_links`・`documents`・`document_history`・`handoffs`・`course_items`・`problem_lists`・`problem_list_edits`・`clinical_support`・`pending_results`・`pending_result_edits`・`plan_checks`・`plan_check_edits`。記録への質問（段K6。CA-066）と、前の記載との違い（段K7。CA-068）と、水分の出入りの集計・受け持ちを横断する検索（段K8。CA-069・CA-070）は、どの表にも書かない。`apps/worker/test/writes.test.ts` が、migrations が作る表と、ソースの SQL が書く表を、この一覧と突き合わせる。
 
 ## 7. 段1 で作ったものと、案との違い
 
@@ -409,3 +412,17 @@ AI が返すのは、次の3つだけ（構造化した出力）。
 - 表は足さない。どちらも、保存したものから、その場で計算する（決定論。AI を使わない）。
 - 水分の出入り（`fluidDays`）：`observations` の値（外した値・同じ値の二重を除いたもの）から、日ごとに。書かれた単位のまま足し、換算しない。結果は保存しない。名前の表に足したのは、名前・別名・単位の書き方だけ（`labs/extra-names.ts`）で、すでに保存した値は書き換えない（新しい名前は、これから読む値に効く）。
 - 受け持ちを横断する検索（`POST /api/search`）：`patients`・`encounters`・`sources`（保存した文）・`medications`・`events`・`course_items`・`observations`・`problems`・`problem_threads`・`problem_lists` を読むだけ。**問いは、どの表にも書かない・ログに出さない**（`apps/worker/test/search.test.ts`）。答えは画面のメモリだけ。
+
+## 21. 予定と実施と、電波のないときの入力（段K9。CA-071・CA-072）
+
+作った表と列は、`apps/worker/migrations/0015_plan_checks.sql` と `0016_send_key.sql`。
+
+| 表 | 列 |
+|---|---|
+| `plan_checks` | patient_id（患者ごとに1つ）・made_at・prompt_version・basis（記録の印。`listBasis` と同じ）・body（確かめた後の一覧の JSON：予定の行ごとの key〔文の id・字の始まり〕・sourceId・start・end・text〔記録に書かれた予定の行の字〕・problem〔同じ記載の #問題の見出しの1行。なければ ""〕・at〔その記載の日時〕・kind〔検査・処置・投薬・相談・説明・観察・その他。振り分けられなかったときは null〕・due・dueApprox〔予定の日。AI の手がかりから決定論で計算。書かれていなければ null〕・state〔done・open・unsorted〕・done〔実施の記載の場所と短い名前と日時〕・mark〔none・confirmed・cancelled・hidden〕。notPlan〔予定ではないと整理した行の数〕・rejected〔理由ごとの数〕・dropped〔数・長さの上限で落とした数〕） |
+| `plan_check_edits` | id・patient_id・at・item_key・before・after（印だけ：none・confirmed・cancelled・hidden） |
+| `sources` の `send_key` | 送る鍵（26 字の ULID。患者の情報ではない）。`(encounter_id, send_key)` に一意の索引。鍵のない文（これまでの文・鍵を送らない要求）は NULL |
+
+- 予定と実施：AI に送った資料・AI の答えそのものは、保存もログもしない。予定の字は、保存した文の字（識別情報を置き換えた後）のまま。患者を消すと消える（`PATIENT_TABLES`）。組み直すと入れ替わり、印は同じ鍵の項目へ引き継ぐ。AI が失敗したら、前の一覧を残す。ToDo の表は作らない（CA-026 の改訂。記録から作る見方）。
+- 電波のないときの入力：送り待ちは、**画面のメモリだけ**で、どの表にも、端末の保存先にも書かない（読み込み直す・閉じると消える）。サーバーに文が入るのは、いつもの取り込み（選別 → 置き換え → 形の検査）を通ったときだけで、送り待ちのあいだは何も保存されていない。`send_key` は、送り直し（答えが戻らずに、同じ文をもう一度送ったとき）で二重に保存しないための印で、同じ鍵の文が保存済みなら、サーバーは AI を呼ばずに（回数に数えずに）その文を返す。同じ鍵の要求が同時に届いて一意の索引で保存できなかったときも、先に保存した文を返す。文を消すと、鍵も消える。
+

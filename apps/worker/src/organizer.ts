@@ -1,5 +1,5 @@
 // 整理を頼む先（AI）の形。本物は anthropic.ts、試験では、決まった答えを返す代役を渡す。
-import type { AskAnswer, DocumentAnswer, LinkAnswer, OrganizeAnswer, PendingAnswer, ProblemListAnswer, ReviseAnswer, SupportAnswer } from '@clinical-carte/core';
+import type { AskAnswer, DocumentAnswer, LinkAnswer, OrganizeAnswer, PendingAnswer, PlanAnswer, ProblemListAnswer, ReviseAnswer, SupportAnswer } from '@clinical-carte/core';
 
 import type { OrganizePromptChoice } from './prompt.ts';
 import type { WebHit } from './references.ts';
@@ -13,6 +13,7 @@ export type ProblemListResult = { readonly ok: true; readonly answer: ProblemLis
 export type ReviseResult = { readonly ok: true; readonly answer: ReviseAnswer } | { readonly ok: false; readonly reason: SelectorFailure };
 export type SupportResult = { readonly ok: true; readonly answer: SupportAnswer } | { readonly ok: false; readonly reason: SelectorFailure };
 export type PendingResultAnswer = { readonly ok: true; readonly answer: PendingAnswer } | { readonly ok: false; readonly reason: SelectorFailure };
+export type PlanResultAnswer = { readonly ok: true; readonly answer: PlanAnswer } | { readonly ok: false; readonly reason: SelectorFailure };
 export type AskResult = { readonly ok: true; readonly answer: AskAnswer } | { readonly ok: false; readonly reason: SelectorFailure };
 export type LinkerResult = { readonly ok: true; readonly answer: LinkAnswer } | { readonly ok: false; readonly reason: SelectorFailure };
 
@@ -34,6 +35,8 @@ export interface Organizer {
   support(message: string): Promise<SupportResult>;
   /** 結果待ち（段K6。CA-065）：提出の候補と記録の事実（JSON。core の pendingMaterial が作る）から、候補ごとの状態と結果の記号だけ。文を書かない。例外を投げない */
   pending(message: string): Promise<PendingResultAnswer>;
+  /** 予定と実施（段K9。CA-071）：予定の行と記録の事実（JSON。core の planMaterial が作る）から、行ごとの種類・予定の日の手がかり・実施の記号だけ。文を書かない。例外を投げない */
+  plans(message: string): Promise<PlanResultAnswer>;
   /** 記録への質問（段K6。CA-066）：資料と先生の問い（JSON。core の askMessage が作る）から、根拠の記号つきの答え。保存しない。例外を投げない */
   ask(message: string): Promise<AskResult>;
 }

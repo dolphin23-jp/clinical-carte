@@ -76,6 +76,8 @@ import { StateView } from './StateView.tsx';
 import { SupportPanel, useSupport } from './SupportView.tsx';
 import { AskPanel } from './AskView.tsx';
 import { PendingPanel, usePending } from './PendingView.tsx';
+import { PlansPanel, usePlans } from './PlansView.tsx';
+import { useOutbox } from './outbox.ts';
 import { nextDayLabel } from './NextDayAsk.tsx';
 import { FluidLine, FluidView } from './FluidView.tsx';
 import { type OpenFocus, Snippet } from './SearchView.tsx';
@@ -163,6 +165,14 @@ export function PatientPage({ patientId, focus = null, onBack, onLeft }: { patie
     });
   }, [patientId, onLeft, onBack]);
   useEffect(load, [load]);
+  // 送り待ち（段K9）の文が送れた・整理が済んだら、記録を読み直す
+  const outbox = useOutbox();
+  const seenVersion = useRef(outbox.version);
+  useEffect(() => {
+    if (outbox.version === seenVersion.current) return;
+    seenVersion.current = outbox.version;
+    load();
+  }, [outbox.version, load]);
   // 探した当たりの記載へ、読み込んだあと1回だけ動く（画面の位置だけ。何も残さない）
   const scrolled = useRef(false);
   useEffect(() => {
@@ -178,6 +188,8 @@ export function PatientPage({ patientId, focus = null, onBack, onLeft }: { patie
   const supportBuilder = useSupport(patientId, record, listBuilder.busy, load, onLeft);
   // 結果待ち（段K6）：記録が増えたら、自動で組み直す（いまのタブ）
   const pendingBuilder = usePending(patientId, record, load, onLeft);
+  // 予定と実施（段K9）：記録が増えたら、自動で組み直す（いまのタブ）
+  const planBuilder = usePlans(patientId, record, load, onLeft);
 
   if (record === null) {
     return (
@@ -497,6 +509,7 @@ export function PatientPage({ patientId, focus = null, onBack, onLeft }: { patie
               scores={scoreInput}
               support={record.problemList === null ? null : <SupportPanel record={record} builder={supportBuilder} />}
               pending={<PendingPanel patientId={patientId} record={record} builder={pendingBuilder} asOf={state.asOf} onChanged={load} onLeft={onLeft} />}
+              plans={<PlansPanel patientId={patientId} record={record} builder={planBuilder} asOf={state.asOf} onChanged={load} onLeft={onLeft} />}
               ask={<AskPanel patientId={patientId} record={record} onLeft={onLeft} />}
               onProblems={() => {
                 setTab('problems');
@@ -749,6 +762,9 @@ export function PatientPage({ patientId, focus = null, onBack, onLeft }: { patie
               setComposing(true);
               if (source !== undefined) setTab('notes');
               load();
+            }}
+            onQueued={() => {
+              setComposing(true);
             }}
             onLeft={onLeft}
           />

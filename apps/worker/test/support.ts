@@ -10,7 +10,7 @@ import type { Db, Statement } from '../src/db.ts';
 import { handle, type HandlerDeps } from '../src/handler.ts';
 import { MIGRATIONS as MIGRATION_LIST } from '../src/migrations.gen.ts';
 import { type Runtime, webRuntime } from '../src/runtime.ts';
-import type { AskResult, DocumentResult, LinkerResult, Organizer, OrganizerResult, PendingResultAnswer, ProblemListResult, ResearchResult, ReviseResult, SupportResult } from '../src/organizer.ts';
+import type { AskResult, DocumentResult, LinkerResult, Organizer, OrganizerResult, PendingResultAnswer, PlanResultAnswer, ProblemListResult, ResearchResult, ReviseResult, SupportResult } from '../src/organizer.ts';
 import type { OrganizePromptChoice } from '../src/prompt.ts';
 import type { Selector, SelectorResult } from '../src/selector.ts';
 
@@ -179,6 +179,8 @@ export interface FakeOrganizer extends Organizer {
   /** 結果待ち・記録への質問に渡された資料（JSON） */
   readonly pended: string[];
   readonly asked: string[];
+  /** 予定と実施に渡された資料（JSON） */
+  readonly planned: string[];
 }
 
 export interface FakeDocAnswers {
@@ -188,6 +190,7 @@ export interface FakeDocAnswers {
   readonly problemList?: (message: string) => ProblemListResult;
   readonly support?: (message: string) => SupportResult;
   readonly pending?: (message: string) => PendingResultAnswer;
+  readonly plans?: (message: string) => PlanResultAnswer;
   readonly ask?: (message: string) => AskResult;
 }
 
@@ -204,6 +207,7 @@ export function fakeOrganizer(
   const supported: string[] = [];
   const pended: string[] = [];
   const asked: string[] = [];
+  const planned: string[] = [];
   const seen: string[] = [];
   const prompts: OrganizePromptChoice[] = [];
   const linked: string[] = [];
@@ -218,6 +222,11 @@ export function fakeOrganizer(
     supported,
     pended,
     asked,
+    planned,
+    plans: (message) => {
+      planned.push(message);
+      return Promise.resolve(docs.plans?.(message) ?? { ok: true, answer: { items: [] } });
+    },
     pending: (message) => {
       pended.push(message);
       return Promise.resolve(docs.pending?.(message) ?? { ok: true, answer: { items: [] } });
