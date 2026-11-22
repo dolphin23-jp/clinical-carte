@@ -209,8 +209,10 @@ export function StateView({
         </section>
       )}
 
-      <section className="state-section" data-testid="state-problems">
-        <h3 className="sub-title">いまの問題（{String(state.current.length)}）</h3>
+      {(() => {
+        const writtenProblems = (
+          <>
+        {list.length === 0 && <h3 className="sub-title">いまの問題（{String(state.current.length)}）</h3>}
         {state.current.length === 0 ? (
           <p className="note">いまの問題として書かれたものはありません。</p>
         ) : (
@@ -322,7 +324,20 @@ export function StateView({
         <button type="button" className="button small" onClick={onProblems} data-testid="state-to-problems">
           問題のタブで、くわしく見る・直す
         </button>
-      </section>
+          </>
+        );
+        // AI のプロブレムリストがあれば、記録に書かれた名前の一覧は畳む（同じ問題が二重に並ばないように。CA-057）
+        return list.length > 0 ? (
+          <details className="state-section folded" data-testid="state-problems">
+            <summary className="sub-title">記録に書かれた名前で見る（{String(state.current.length)}）</summary>
+            {writtenProblems}
+          </details>
+        ) : (
+          <section className="state-section" data-testid="state-problems">
+            {writtenProblems}
+          </section>
+        );
+      })()}
       </div>
       <div className="state-col">
 

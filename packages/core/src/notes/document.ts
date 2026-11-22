@@ -359,7 +359,9 @@ export function documentMaterial(input: DocumentInput): DocMaterial {
     .filter((c) => encounterIds.has(c.encounterId) && (c.at === null || c.at.slice(0, 10) <= scope.to))
     .sort((a, b) => compareDateTime(a.at, b.at))
     .map((c) => `${showAt(c.at)}${c.atApprox === null ? '' : `（${c.atApprox}）`} ${c.summary}`);
-  const problemList = (input.problemList ?? []).map((p) => ({ name: p.name, certainty: p.certainty, activity: p.activity, since: p.since }));
+  // AI のプロブレムリストは「いま」の整理なので、その日より後の記録がある（過去の日の記載を書く）ときは渡さない（後日の事実を、その日の記載に混ぜない）
+  const laterRecords = input.sources.some((src) => encounterIds.has(src.encounterId) && src.at !== null && src.at.slice(0, 10) > input.day);
+  const problemList = laterRecords ? [] : (input.problemList ?? []).map((p) => ({ name: p.name, certainty: p.certainty, activity: p.activity, since: p.since }));
 
   const age = ageNow(input.patient.age, input.patient.ageOn, input.day);
   const payload: Record<string, unknown> = {
