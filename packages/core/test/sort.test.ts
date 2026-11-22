@@ -2,7 +2,7 @@
 import fc from 'fast-check';
 import { describe, expect, test } from 'vitest';
 
-import { applyOrganization, numbersSeen, type OrganizeAnswer, type OrganizeContext, resolveHint, type WhenHint } from '../src/index.ts';
+import { applyOrganization, numbersSeen, type OrganizeAnswer, type OrganizeContext, organizeFromWire, resolveHint, type WhenHint } from '../src/index.ts';
 
 const HPI = [
   '【現病歴】',
@@ -120,5 +120,26 @@ describe('経過の出来事（CA-056）', () => {
   test('numbersSeen：全角・末尾の 0 をそろえて比べる', () => {
     expect(numbersSeen('CRP 6.80', 'CRP ６.８')).toBe(true);
     expect(numbersSeen('7日間', '3日前')).toBe(false);
+  });
+});
+
+describe('AI の答え（wire）を中の形に直す（2026-11-22）', () => {
+  test('「なし」の手がかり・空の単位と不等号は null に。手がかりはそのまま', () => {
+    const none = { base: 'none' as const, days: 0, hours: 0, minutes: 0, time: '', part: 'none' as const, spanDays: 0 };
+    const a = organizeFromWire({
+      kind: null,
+      when: null,
+      segments: [],
+      medications: [{ name: 'X', dose: null, action: null, when: null, whenHint: none }],
+      events: [],
+      problems: [],
+      measurements: [{ quote: '熱は38.5℃', when: null, whenHint: { ...none, base: 'note', days: -3, part: 'evening' }, specimen: null, values: [{ name: '体温', value: '38.5', unit: '', comparator: '' }] }],
+      course: [{ quote: 'q', summary: 's', category: 'onset', when: null, whenHint: { ...none, base: 'note' } }],
+    });
+    expect(a.medications[0]?.whenHint).toBeNull();
+    expect(a.measurements[0]?.whenHint).toEqual({ base: 'note', days: -3, hours: null, minutes: null, time: null, part: 'evening', spanDays: null });
+    expect(a.measurements[0]?.values).toEqual([{ name: '体温', value: '38.5', unit: null, comparator: null }]);
+    // base だけで、ずれが何もない手がかりは「なし」
+    expect(a.course?.[0]?.whenHint).toBeNull();
   });
 });

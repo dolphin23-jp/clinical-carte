@@ -152,6 +152,37 @@ export const AiValue = z.object({
 });
 export type AiValue = z.infer<typeof AiValue>;
 
+// ---------------------------------------------------------------------------
+// AI に求める形（wire）。構造化出力は、null になりうる欄（anyOf）が 16 までという上限がある（API の決まり。2026-11-22：
+// organize-6 で 41 になり、整理がすべて 400 で断られた）。CA-056 で足した欄は null を使わず、「なし」の値で返させ、ここで中の形に直す。
+
+/** 時刻の手がかり（wire）：手がかりがなければ base は none。数は 0・time は ""・part は none・spanDays は 0 が「なし」 */
+export const WhenHintWire = z.object({
+  base: z.enum(['none', 'note', 'arrival']),
+  days: z.number(),
+  hours: z.number(),
+  minutes: z.number(),
+  time: z.string(),
+  part: z.enum([...DAY_PARTS, 'none']),
+  spanDays: z.number(),
+});
+export type WhenHintWire = z.infer<typeof WhenHintWire>;
+
+/** AI が読んだ値（wire）：単位・不等号がなければ "" */
+export const AiValueWire = z.object({ name: z.string(), value: z.string(), unit: z.string(), comparator: z.enum(['', '<', '>', '<=', '>=']) });
+export type AiValueWire = z.infer<typeof AiValueWire>;
+
+/** wire の手がかりを、中の形にする（なしは null） */
+export function hintFromWire(w: WhenHintWire): WhenHint {
+  if (w.base === 'none') return null;
+  const n = (x: number): number | null => (x === 0 ? null : x);
+  const hint = { base: w.base, days: n(w.days), hours: n(w.hours), minutes: n(w.minutes), time: w.time.trim() === '' ? null : w.time.trim(), part: w.part === 'none' ? null : w.part, spanDays: n(w.spanDays) };
+  return hint.days === null && hint.hours === null && hint.minutes === null && hint.time === null && hint.part === null && hint.spanDays === null ? null : hint;
+}
+
+/** wire の値を、中の形にする */
+export const valueFromWire = (v: AiValueWire): AiValue => ({ name: v.name, value: v.value, unit: v.unit.trim() === '' ? null : v.unit, comparator: v.comparator === '' ? null : v.comparator });
+
 /** AI の答えの形（構造化した出力の型）。長さ・場所などの検査は apply.ts がする */
 export const OrganizeAnswerWire = z.object({
   /** 記載の種類（文から分かれば）。種類が「未分類」の文だけに使う */
@@ -170,11 +201,11 @@ export const OrganizeAnswerWire = z.object({
       action: z.enum(MEDICATION_ACTIONS).nullable(),
       /** その動きの日時が書かれた場所（引用。なければ null＝記載の日時） */
       when: z.string().nullable(),
-      /** 引用を規則で読めない日時の言い方の手がかり（CA-056） */
-      whenHint: WhenHint,
+      /** 引用を規則で読めない日時の言い方の手がかり（CA-056。wire の形） */
+      whenHint: WhenHintWire,
     }),
   ),
-  events: z.array(z.object({ kind: z.enum(EVENT_KINDS), title: z.string(), when: z.string().nullable(), whenHint: WhenHint })),
+  events: z.array(z.object({ kind: z.enum(EVENT_KINDS), title: z.string(), when: z.string().nullable(), whenHint: WhenHintWire })),
   problems: z.array(z.object({ name: z.string(), status: z.enum(PROBLEM_STATUSES), activity: z.enum(PROBLEM_ACTIVITIES).nullable() })),
   /** 測定値が書かれた場所（引用。「Na 128」「BT 38.5」など。数は、ここから決定論で読む）。
    *  specimen は、尿の検査の引用なら urine（尿の項目の名前で読む。CD-023 の答え：2026-11-21 の本人の決定）。ほかは null */
@@ -182,29 +213,40 @@ export const OrganizeAnswerWire = z.object({
     z.object({
       quote: z.string(),
       when: z.string().nullable(),
-      whenHint: WhenHint,
+      whenHint: WhenHintWire,
       specimen: z.enum(MEASUREMENT_SPECIMENS).nullable(),
       /** AI が読んだ項目と値（CA-056）。引用を決定論で読めないとき（「熱は38.5℃まで上昇」）に使う */
-      values: z.array(AiValue),
+      values: z.array(AiValueWire),
     }),
   ),
   /**
    * 経過の出来事（CA-056）：病歴・経過の文に書かれた「いつ・何があったか」（症状の出現と変化・内服・受診・検査・処置・所見）。
    * quote は、その出来事が書かれた部分の引用、summary は AI の短い要約（80 字まで。数は引用にあるものだけ）
    */
-  course: z.array(z.object({ quote: z.string(), summary: z.string(), category: z.enum(COURSE_CATEGORIES), when: z.string().nullable(), whenHint: WhenHint })),
+  course: z.array(z.object({ quote: z.string(), summary: z.string(), category: z.enum(COURSE_CATEGORIES), when: z.string().nullable(), whenHint: WhenHintWire })),
 });
 export type OrganizeAnswerWire = z.infer<typeof OrganizeAnswerWire>;
 
 type Wire = OrganizeAnswerWire;
 type Hinted<T> = Omit<T, 'whenHint'> & { readonly whenHint?: WhenHint };
 /**
- * 整理の答え（中で使う形）。AI に求める形（OrganizeAnswerWire）は、すべての欄が必ずあるが、CA-056 で足した欄（日時の手がかり・AI の値・経過の出来事）は、
+ * 整理の答え（中で使う形）。AI に求める形（OrganizeAnswerWire）から organizeFromWire で直したもの。CA-056 で足した欄（日時の手がかり・AI の値・経過の出来事）は、
  * 前の版の答え・試験の答えにはないので、ここでは省いてよい（省いたものは、ないものとして扱う）
  */
 export type OrganizeAnswer = Omit<Wire, 'medications' | 'events' | 'measurements' | 'course'> & {
   readonly medications: readonly Hinted<Wire['medications'][number]>[];
   readonly events: readonly Hinted<Wire['events'][number]>[];
   readonly measurements: readonly (Hinted<Omit<Wire['measurements'][number], 'values'>> & { readonly values?: readonly AiValue[] })[];
-  readonly course?: Wire['course'];
+  readonly course?: readonly Hinted<Wire['course'][number]>[];
 };
+
+/** AI の答え（wire）を、中の形にする */
+export function organizeFromWire(w: OrganizeAnswerWire): OrganizeAnswer {
+  return {
+    ...w,
+    medications: w.medications.map((m) => ({ ...m, whenHint: hintFromWire(m.whenHint) })),
+    events: w.events.map((e) => ({ ...e, whenHint: hintFromWire(e.whenHint) })),
+    measurements: w.measurements.map((m) => ({ ...m, whenHint: hintFromWire(m.whenHint), values: m.values.map(valueFromWire) })),
+    course: w.course.map((c) => ({ ...c, whenHint: hintFromWire(c.whenHint) })),
+  };
+}
