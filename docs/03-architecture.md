@@ -288,6 +288,15 @@
 - サーバー：`NewSource` の `sendKey`（任意。ULID）。同じ受診に同じ鍵の文があれば、選別せず・回数に数えず、その文と、そこから読んだ値を返す（`again: true`）。保存は `sources.send_key`（`(encounter_id, send_key)` に一意の索引）。同じ鍵の要求が同時に届いて保存できなかったときは、先に保存した文を返す。
 - 試験：core の `outbox.test.ts`、`apps/worker/test/records.test.ts`（送る鍵）、`apps/web/e2e/k9.e2e.ts`（オフラインで送り待ち → 電波が戻ると送られて記録に入る・断られたら止めて欄に戻す・読み込み直すと消え、端末の保存先に何も残らない）。`apps/web/test/boundary.test.ts`（保存先を使わない・通信は `net/api.ts` だけ）は、そのまま通る。
 
+### Casebook へ送る（段K10。CA-073。`packages/core/src/casebook/`・`apps/worker/src/casebook.ts`・`apps/web/src/CasebookPanel.tsx`）
+
+- 契約の写し（`scripts/sync-casebook-contract.mjs <Casebook の作業ツリー>`。一覧と SHA-256 は `casebook-copies.json`）：Casebook の `packages/core/src/` の `handoff/codec.ts`・`handoff/packet.ts`・`ids/case-code.ts`・`ids/ulid.ts`・`schema/primitives.ts`・`lint/anonymize.ts`・`text/normalize.ts` を、同じ並びのまま `packages/core/src/casebook/` の下へ（import の書き換えなし）。契約の文書 `docs/casebook-contract/handoff-packet.md` と、固定のテスト用パケット3つ（`fixtures/casebook-handoff/`。`synthetic: true`）も写す。**写しは直さない**（`scripts/casebook-copies.test.mjs` が SHA-256 を見張る。直すときは Casebook で直して写し直す）。写したファイルのうち、`index.ts` から出すのは `decodePacket`・`encodePacket`・`DECODE_MESSAGES`・`MAX_ITEMS`・`MAX_ITEM_TEXT`・`CASE_CODE_PATTERN` だけ（carte の `ulid` などと名前が重なるため）。
+- 項目（core の `send.ts`。純関数）：`casebookScope`（受診と、入院なら直前の救急）・`casebookCandidates`（問題の筋・診断・AI のプロブレムリスト・残したカルテ記載の見出し・記録の文〔`sourceFields`：#問題の見出しで分ける〕・投薬の開始／変更／中止・デバイス〔`deviceDays`〕）。日は `casebookDay`（病日。前は 1 − N）、経過分は `casebookAfterMin`。500 字に分ける `casebookPieces`（行の終わり・「。」の後。切り捨てない）。止める網 `casebookLint`（写したリンタ。暦日は error、生年月日とみなす年は今年まで。加えて「月/日」）を、分ける前の全体と断片の両方に掛け、1つでも error なら欄のどの断片も止める。送った中身の印（`h`。8 字の英字）・状態（`casebookState`：new・sent・changed）・改訂（`casebookRev`）・上限（`casebookLimits`）・初めの選び（`casebookDefaultKeys`：送れる・まだ送っていない・AI の印なし・初めは選ばない印なし・知らせる規則なし。100 まで）。
+- パケット：`planPacket`（確かめと、ID を計算する項目の一覧。新しい症例は年齢と実症例／架空症例の選びが要る〔既定なし〕。追加は症例コードが要る。100 項目まで・送れない・送信済み・直したのに新しい項目として選んでいない、は作らない）→ 画面が `itemIdInput`（`carte|種|鍵|改訂`）を WebCrypto の SHA-256 にかけ、`itemIdFromDigest`（先頭 128 ビットを ULID の形）→ `buildPacket`（問題 → 診断 → ほかの順。新しい症例は `patient`・`hospitalDay`〔送る日の病日〕・架空なら `synthetic: true`。作った後、写した `decodePacket` で読み戻し、形の違う項目・知らない種類が 0 件で数が同じことを確かめる）。
+- サーバー：`casebook_links`（受診ごとに1行：種・症例コード・送信済みの印の JSON・取り込んだパケットの数）。`POST /api/encounters/:id/casebook`（なければ新しい種で作る。外来は 400）・`PATCH`（`CasebookPatch`：`{ code }`・`{ taken }`・`{ reset: true }`）。記録の答えの `casebook`。患者を消すと消える。Casebook へは何も送らない。
+- 画面：受診の欄の「Casebook へ送る」。ID は先に計算しておき、押した操作の中でクリップボードに書く（`navigator.clipboard.writeText`。書けなければ、書けなかったと出す）。コピーの後に「Casebook が取り込みました」（取り込まなかった項目は外せる）で印を付ける。クリップボードに書くのはこの画面のパケットだけ（ほかは鍵を作る画面だけ）で、読むことはしない（`apps/web/test/boundary.test.ts`）。
+- 試験：core の `casebook.test.ts`（`CASEBOOK_DIR` に Casebook の作業ツリーを渡すと、Casebook 自身の `decodePacket` と匿名化リンタにも通し、写しが Casebook のいまのファイルと同じかも確かめる）、`scripts/casebook-copies.test.mjs`、`apps/worker/test/casebook.test.ts`・`writes.test.ts`・`schema.test.ts`、`apps/web/e2e/k10.e2e.ts`。
+
 ### 架空症例の通しの試し（段J。2026-11-22）
 
 架空症例（78歳女性・閉塞性腎盂腎炎、救急〜入院6日目の15件）で、整理・つなぎ・プロブレムリスト・カルテ記載の AI の役を、指示と答えの型だけを渡した別の AI（新しい文脈）に答えさせ、本物のサーバーの確かめに通した（本番の鍵は使っていない）。15件とも整理でき、確かめで落ちたのは測定値1件。経過の出来事は74件（来院前の「3日前の頻尿・排尿時痛」「前日の発熱と左背部痛」を含む）、AI が読んだ値は5件（「入院時48.0kg」など。字に見つからない数は0）、プロブレムリストは9項目（活動中6・解決3）、カルテ記載3種は記録・出典に見つからない数が0だった。見えた誤りを直した：
@@ -368,7 +377,7 @@
 | K7 | **申し送り**（CA-067。I-PASS の形。カルテ記載の種類に足し、AI は要約・やること・起こりうることと対応だけを書く。重症度は先生が選ぶ。回診リストに「受け持ち全員の申し送り」）と、**前の記載との違い**（CA-068。同じ種類の前の記載と、見出しごとに行で比べる。決定論）。**実装した** | 勤務の交代で渡すことが1画面にまとまる。写し続けた記載と、変わったところが分かる |
 | K8 | **水分の出入りと体重**（CA-069。日ごとに、書かれた量を同じ単位だけ足す。書かれた分の差・体重と前回からの差。決定論）と、**受け持ちを横断する検索**（CA-070。保存した文と整理した事実から字で探す。問いは保存しない。決定論）。**実装した** | 水分の出入りが日ごとに見える。受け持ちの記録を字で引ける |
 | K9 | **予定と実施**（CA-071。CA-026 の改訂。A/P に書いた予定の行ごとに、その後の記録に行ったことの記載があるか。AI は記号だけ。表ではなく記録から作る見方）と、**電波のないときの入力**（CA-072。つながらない文は、ページを開いているあいだのメモリの送り待ち。電波が戻ったら送る。端末の保存先は使わない）。**実装した** | 書いた予定が、その後に行われた記載があるかを一覧で見られる。電波の弱い病棟でも、入れ続けられる |
-| K10〜 | CA-058 の残り：Casebook へ送る | |
+| K10 | **Casebook へ送る**（CA-073。CA-058 の B1）：入院・救急の受診の記録から、Casebook の受け渡しパケット CBH1 を作り、クリップボードにコピーするだけ（通信しない・送る向きだけ）。日は病日、暦日のある文は送れない。契約の符号化と匿名化リンタは Casebook の写し。実症例か架空症例かは先生が選ぶ。送信済みの印は「取り込みました」を押したときだけ。**実装した** | 退院した症例を、写し直さずに Casebook に残せる |
 
 - 段1 と同じ段で、**選別の評価の道具**を作った（3）。
 - 各段の終わりに、「いま作らないもの」を docs/11 に足す。

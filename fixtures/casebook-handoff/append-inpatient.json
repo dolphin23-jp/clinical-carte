@@ -1,0 +1,46 @@
+{
+  "synthetic": true,
+  "description": "既存の症例（症例コード 23456A）への追加（架空）。日のない項目は、パケットの病日を使う",
+  "packet": "CBH1:eyJtYWdpYyI6IkNCSDEiLCJzY2hlbWFWZXJzaW9uIjoxLCJwYWNrZXRJZCI6IjAxTUNDNVJNMEMwMDAwMDAwMDAwMDAwMDBDIiwidGFyZ2V0Ijp7Im1vZGUiOiJhcHBlbmQiLCJjYXNlQ29kZSI6IjIzNDU2QSJ9LCJob3NwaXRhbERheSI6NSwiaXRlbXMiOlt7Iml0ZW1JZCI6IjAxTUNDNVJNMEQwMDAwMDAwMDAwMDAwMDBEIiwic291cmNlIjoicnVsZSIsImJvZHkiOnsia2luZCI6InZpdGFsIiwibmFtZSI6IuWPjue4ruacn-ihgOWcpyIsInZhbHVlIjoxNTIsInVuaXQiOiJtbUhnIn19LHsiaXRlbUlkIjoiMDFNQ0M1Uk0wRTAwMDAwMDAwMDAwMDAwMEUiLCJkYXkiOjUsInNvdXJjZSI6InJ1bGUiLCJib2R5Ijp7ImtpbmQiOiJ0cmVhdG1lbnQiLCJ0ZXh0Ijoi44Ki44Og44Ot44K444OU44Oz44KS5YaN6ZaLIiwiY2hhbmdlIjoic3RhcnQifX0seyJpdGVtSWQiOiIwMU1DQzVSTTBGMDAwMDAwMDAwMDAwMDAwRiIsImRheSI6NSwic291cmNlIjoidXNlciIsImJvZHkiOnsia2luZCI6Im5vdGUiLCJ0ZXh0Ijoi6KGA5Zyn44GM5LiK44GM44Gj44Gm44GN44GfIn19XX0.df0edaf4",
+  "json": {
+    "magic": "CBH1",
+    "schemaVersion": 1,
+    "packetId": "01MCC5RM0C000000000000000C",
+    "target": {
+      "mode": "append",
+      "caseCode": "23456A"
+    },
+    "hospitalDay": 5,
+    "items": [
+      {
+        "itemId": "01MCC5RM0D000000000000000D",
+        "source": "rule",
+        "body": {
+          "kind": "vital",
+          "name": "収縮期血圧",
+          "value": 152,
+          "unit": "mmHg"
+        }
+      },
+      {
+        "itemId": "01MCC5RM0E000000000000000E",
+        "day": 5,
+        "source": "rule",
+        "body": {
+          "kind": "treatment",
+          "text": "アムロジピンを再開",
+          "change": "start"
+        }
+      },
+      {
+        "itemId": "01MCC5RM0F000000000000000F",
+        "day": 5,
+        "source": "user",
+        "body": {
+          "kind": "note",
+          "text": "血圧が上がってきた"
+        }
+      }
+    ]
+  }
+}

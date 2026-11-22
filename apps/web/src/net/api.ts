@@ -54,6 +54,8 @@ import type {
   PendingMark,
   PlanBody,
   PlanMark,
+  CasebookLink,
+  CasebookPatch,
 } from '@clinical-carte/core';
 
 export interface DeviceView {
@@ -377,6 +379,11 @@ export interface SupportView {
   readonly body: SupportBody;
 }
 
+/** Casebook へ送る印（段K10。CA-073） */
+export interface CasebookLinkView extends CasebookLink {
+  readonly encounterId: string;
+}
+
 /** 結果待ち（段K6。CA-065） */
 export interface PendingView {
   readonly madeAt: string;
@@ -449,6 +456,8 @@ export interface PatientRecord {
   readonly pending: PendingView | null;
   /** 予定と実施（段K9。まだなければ null） */
   readonly plans: PlanView | null;
+  /** Casebook へ送る印（段K10。受診ごと。種・症例コード・取り込んだ項目の印だけ） */
+  readonly casebook: readonly CasebookLinkView[];
   /** サーバーの、今日（日本の日） */
   readonly today: string;
 }
@@ -474,7 +483,7 @@ export async function createPatient(input: NewPatient): Promise<Result<Patient>>
 export async function getRecord(patientId: string): Promise<Result<PatientRecord>> {
   const result = await call('GET', `patients/${encodeURIComponent(patientId)}`);
   if (!result.ok) return result;
-  const { patient, encounters, sources, observations, segments, medications, events, problems, problemThreads, history, factEdits, userEdits, apNotes, scaleLinks, documents, handoffs, course, problemList, support, pending, plans, today } = result.value;
+  const { patient, encounters, sources, observations, segments, medications, events, problems, problemThreads, history, factEdits, userEdits, apNotes, scaleLinks, documents, handoffs, course, problemList, support, pending, plans, casebook, today } = result.value;
   const lists = [encounters, sources, observations, segments, medications, events, problems, problemThreads, history, factEdits, userEdits, apNotes, scaleLinks, documents, handoffs, course];
   if (!isRecord(patient) || lists.some((l) => !Array.isArray(l)) || typeof today !== 'string') return { ok: false, error: 'network' };
   return {
@@ -501,6 +510,7 @@ export async function getRecord(patientId: string): Promise<Result<PatientRecord
       support: isRecord(support) && isRecord(support['body']) ? (support as unknown as SupportView) : null,
       pending: isRecord(pending) && isRecord(pending['body']) ? (pending as unknown as PendingView) : null,
       plans: isRecord(plans) && isRecord(plans['body']) ? (plans as unknown as PlanView) : null,
+      casebook: Array.isArray(casebook) ? (casebook as CasebookLinkView[]) : [],
       today,
     },
   };
@@ -881,4 +891,14 @@ export async function searchAll(q: string): Promise<Result<SearchReply>> {
   if (!result.ok) return result;
   const { total, shown, patients } = result.value;
   return typeof total === 'number' && typeof shown === 'number' && Array.isArray(patients) ? { ok: true, value: { total, shown, patients: patients as SearchReply['patients'] } } : { ok: false, error: 'network' };
+}
+
+/** Casebook へ送る印を用意する（段K10。なければ新しい種で作る。Casebook へは何も送らない） */
+export async function ensureCasebookLink(encounterId: string): Promise<Result<CasebookLinkView>> {
+  return field<CasebookLinkView>(await call('POST', `encounters/${encodeURIComponent(encounterId)}/casebook`, {}), 'casebook');
+}
+
+/** 症例コード・Casebook が取り込んだ項目の印・最初からやり直す（段K10） */
+export async function patchCasebookLink(encounterId: string, patch: CasebookPatch): Promise<Result<CasebookLinkView>> {
+  return field<CasebookLinkView>(await call('PATCH', `encounters/${encodeURIComponent(encounterId)}/casebook`, patch), 'casebook');
 }

@@ -5,6 +5,7 @@ import { z } from 'zod';
 import { ApRef, type ApOrigin, type ApPart, type FactField, type FactKind, type PlanKind, USER_EDIT_FIELDS, USER_EDIT_TARGETS, type UserEditField, type UserEditTarget } from '@clinical-carte/core';
 import type { AuthorRole, Comparator, EncounterKind, EventKind, HistoryAction, LabRow, MedicationAction, OrganizeReport, ProblemActivity, ProblemStatus, SegmentLabel, Sex, SourceKind } from '@clinical-carte/core';
 
+import { type CasebookLinkRow, casebookLinks } from './casebook.ts';
 import { type Db, int, real, type Statement, text } from './db.ts';
 
 export interface Patient {
@@ -815,6 +816,8 @@ export interface PatientRecord {
   readonly pending: PendingRow | null;
   /** 予定と実施（段K9。CA-071。まだなければ null） */
   readonly plans: PlanRow | null;
+  /** Casebook へ送る印（段K10。CA-073。受診ごと。種・症例コード・取り込んだ項目の印だけ） */
+  readonly casebook: CasebookLinkRow[];
 }
 
 export interface ScaleLinkRow {
@@ -846,7 +849,7 @@ export const PROBLEM_COLUMNS = 'id, source_id, encounter_id, name, status, activ
 export async function getRecord(db: Db, id: string): Promise<PatientRecord | null> {
   const patient = await getPatient(db, id);
   if (patient === null) return null;
-  const [encounters, sources, observations, segments, medications, events, problems, threads, history, factEdits, userEdits, apNotes, scaleLinks, documents, course, problemList, support, pending, handoffs, plans] = await Promise.all([
+  const [encounters, sources, observations, segments, medications, events, problems, threads, history, factEdits, userEdits, apNotes, scaleLinks, documents, course, problemList, support, pending, handoffs, plans, casebook] = await Promise.all([
     db.prepare('SELECT id, patient_id, kind, started, ended FROM encounters WHERE patient_id = ? ORDER BY started, id').bind(id).all(),
     db.prepare('SELECT id, patient_id, encounter_id, kind, author_role, at, entered_at, text, replaced, organized, organized_version, organize_report, next_day_from FROM sources WHERE patient_id = ? ORDER BY id').bind(id).all(),
     db
@@ -870,6 +873,7 @@ export async function getRecord(db: Db, id: string): Promise<PatientRecord | nul
     db.prepare('SELECT made_at, prompt_version, basis, body FROM pending_results WHERE patient_id = ?').bind(id).first(),
     db.prepare(`SELECT ${HANDOFF_COLUMNS} FROM handoffs WHERE patient_id = ? ORDER BY day DESC, updated_at DESC, id DESC`).bind(id).all(),
     db.prepare('SELECT made_at, prompt_version, basis, body FROM plan_checks WHERE patient_id = ?').bind(id).first(),
+    casebookLinks(db, id),
   ]);
   return {
     patient,
@@ -893,6 +897,7 @@ export async function getRecord(db: Db, id: string): Promise<PatientRecord | nul
     support: supportOf(support),
     pending: pendingOf(pending),
     plans: planOf(plans),
+    casebook,
   };
 }
 
@@ -938,7 +943,7 @@ export async function setEncounterEnd(db: Db, id: string, end: string | null): P
 export const FACT_TABLES = ['observations', 'segments', 'medications', 'events', 'problems', 'course_items'] as const;
 
 /** 患者に付く、文からではない行の表（患者を消すと、一緒に消える。文を消しても残る：筋は、記載がなくなると見えなくなるだけ） */
-export const PATIENT_TABLES = ['problem_threads', 'history', 'fact_edits', 'user_edits', 'ap_notes', 'ap_history', 'documents', 'document_history', 'handoffs', 'problem_lists', 'problem_list_edits', 'clinical_support', 'pending_results', 'pending_result_edits', 'plan_checks', 'plan_check_edits'] as const;
+export const PATIENT_TABLES = ['problem_threads', 'history', 'fact_edits', 'user_edits', 'ap_notes', 'ap_history', 'documents', 'document_history', 'handoffs', 'problem_lists', 'problem_list_edits', 'clinical_support', 'pending_results', 'pending_result_edits', 'plan_checks', 'plan_check_edits', 'casebook_links'] as const;
 
 /** 問題の行を、表から読む */
 export function problemOf(row: Record<string, unknown>): Problem | null {

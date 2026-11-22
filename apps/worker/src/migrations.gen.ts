@@ -172,5 +172,12 @@ export const MIGRATIONS: readonly Migration[] = [
       "ALTER TABLE sources ADD COLUMN send_key TEXT CHECK (send_key IS NULL OR length(send_key) = 26)",
       "CREATE UNIQUE INDEX IF NOT EXISTS sources_send_key ON sources (encounter_id, send_key)"
     ]
+  },
+  {
+    "name": "0017_casebook_links",
+    "statements": [
+      "CREATE TABLE IF NOT EXISTS casebook_links ( encounter_id TEXT PRIMARY KEY REFERENCES encounters (id) ON DELETE CASCADE, patient_id TEXT NOT NULL REFERENCES patients (id) ON DELETE CASCADE, seed TEXT NOT NULL CHECK (length(seed) = 10), case_code TEXT CHECK (case_code IS NULL OR length(case_code) = 6), sent TEXT NOT NULL, packets INTEGER NOT NULL CHECK (packets >= 0) )",
+      "CREATE INDEX IF NOT EXISTS casebook_links_by_patient ON casebook_links (patient_id)"
+    ]
   }
 ];

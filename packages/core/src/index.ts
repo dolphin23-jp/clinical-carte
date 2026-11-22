@@ -37,3 +37,4 @@ export * from './views/fluid.ts';
 export * from './search/search.ts';
 export * from './plans/plans.ts';
 export * from './outbox/outbox.ts';
+export * from './casebook/send.ts';

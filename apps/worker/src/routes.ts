@@ -1,6 +1,8 @@
 // 記録の API（段1：患者・受診・取り込み）。ここに来るのは、入口（印の照合）を通った要求だけ（handler.ts）。
 // 形の確かめは、core の型（zod）。誤りの答えは、名前だけ（何が起きたかの文・打った文を返さない）。
 import {
+  CasebookPatch,
+  casebookSetting,
   compareDateTime,
   AddFact,
   ApNotePatch,
@@ -52,6 +54,7 @@ import type { z } from 'zod';
 import type { Db } from './db.ts';
 import { addApNotes, type ApOutcome, deleteApNote, patchApNote } from './ap.ts';
 import { askRecord } from './ask.ts';
+import { ensureCasebookLink, patchCasebookLink } from './casebook.ts';
 import { generateSupport } from './clinicalsupport.ts';
 import { addDocument, addHandoff, type CallGate, deleteDocument, deleteHandoff, documentMaterialFor, patchHandoff, gatherReferences, generateDocument, patchDocument, reviseDocument, type SaveOutcome, talkHasShapes } from './documents.ts';
 import { addFact, appendSource, patchSegment, patchSource, retypeSource } from './edits.ts';
@@ -247,6 +250,26 @@ export async function recordApi(request: Request, path: string, deps: RecordDeps
     if (body.end !== null && compareDateTime(body.end.slice(0, 10), encounter.start.slice(0, 10)) < 0) return bad();
     await setEncounterEnd(db, id, body.end);
     return reply(200, { encounter: { ...encounter, end: body.end } });
+  }
+
+  // Casebook へ送る（段K10。CA-073）：受診ごとの印（種・症例コード・取り込んだ項目の印）を用意する・直す。パケットは画面が作ってクリップボードに載せるだけで、
+  // サーバーは Casebook へ何も送らない。外来の受診は送れない（Casebook では外来の受診日が要るため）
+  const encounterCasebook = /^\/api\/encounters\/([^/]+)\/casebook$/.exec(path);
+  if (encounterCasebook && (method === 'POST' || method === 'PATCH')) {
+    const encounterId = encounterCasebook[1] ?? '';
+    if (!isUlid(encounterId)) return bad();
+    const encounter = await getEncounter(db, encounterId);
+    if (encounter === null) return missing();
+    if (casebookSetting(encounter.kind) === null) return bad();
+    if (method === 'POST') {
+      const link = await ensureCasebookLink(db, encounter, runtime);
+      return link === null ? reply(500, { error: 'server' }) : reply(200, { casebook: link });
+    }
+    const body = await readBody(request, CasebookPatch);
+    if (body === null) return bad();
+    const r = await patchCasebookLink(db, encounterId, body, runtime);
+    if (!r.ok) return r.reason === 'not_found' ? missing() : bad();
+    return reply(200, { casebook: r.link });
   }
 
   const encounterSources = /^\/api\/encounters\/([^/]+)\/sources$/.exec(path);

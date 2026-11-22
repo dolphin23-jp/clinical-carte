@@ -36,6 +36,7 @@ import { Fragment, type SyntheticEvent, useCallback, useEffect, useRef, useState
 import { DEFAULT_TIMELINE_RANGE, Timeline, type TimelineRange } from './charts/Timeline.tsx';
 import { TrendGrid } from './charts/TrendGrid.tsx';
 
+import { CasebookPanel } from './CasebookPanel.tsx';
 import { Composer } from './Composer.tsx';
 import { DayStrip } from './DayStrip.tsx';
 import { joinDateTime, nowLocal, replacedSummary, showDateTime } from './format.ts';
@@ -152,7 +153,7 @@ export function PatientPage({ patientId, focus = null, onBack, onLeft }: { patie
   const [reorganizing, setReorganizing] = useState<{ done: number; total: number; failed: number } | null>(null);
   const [opened, setOpened] = useState<ReadonlyMap<string, boolean>>(focus?.kind === 'source' ? new Map([[focus.sourceId, true]]) : new Map());
   const composerRef = useRef<HTMLElement>(null);
-  const [panel, setPanel] = useState<'none' | 'encounter' | 'end' | 'kind' | 'delete'>('none');
+  const [panel, setPanel] = useState<'none' | 'encounter' | 'end' | 'kind' | 'delete' | 'casebook'>('none');
 
   const load = useCallback(() => {
     void getRecord(patientId).then((result) => {
@@ -372,6 +373,18 @@ export function PatientPage({ patientId, focus = null, onBack, onLeft }: { patie
                   {current.kind === 'inpatient' ? '種類を変える' : '入院にする・種類を変える'}
                 </button>
               )}
+              {current !== null && current.kind !== 'outpatient' && (
+                <button
+                  className="button small"
+                  type="button"
+                  onClick={() => {
+                    setPanel(panel === 'casebook' ? 'none' : 'casebook');
+                  }}
+                  data-testid="open-casebook"
+                >
+                  Casebook へ送る
+                </button>
+              )}
             </div>
           </div>
           {panel === 'encounter' && (
@@ -395,6 +408,7 @@ export function PatientPage({ patientId, focus = null, onBack, onLeft }: { patie
               onLeft={onLeft}
             />
           )}
+          {panel === 'casebook' && current !== null && current.kind !== 'outpatient' && <CasebookPanel key={current.id} record={record} encounter={current} onChanged={load} onLeft={onLeft} />}
           {panel === 'end' && current !== null && (
             <EndForm
               encounter={current}
