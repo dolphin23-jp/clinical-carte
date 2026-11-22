@@ -13,6 +13,8 @@ import {
   hospitalDay,
   relatedFacts,
   labTrends,
+  leftovers,
+  QUOTED_SEGMENT_LABELS,
   medicationTimeline,
   patientState,
   READ_VALUES_KINDS,
@@ -41,6 +43,7 @@ import { ProblemListView, useProblemList } from './ProblemListView.tsx';
 import { EventView, MedicationView } from './Facts.tsx';
 import {
   type ClinicalEvent,
+  type CourseItem,
   createEncounter,
   deletePatient,
   deleteSource,
@@ -51,6 +54,7 @@ import {
   type Observation,
   organizeSource,
   type PatientRecord,
+  type Problem,
   type Segment,
   setEncounterEnd,
   setEncounterKind,
@@ -616,6 +620,8 @@ export function PatientPage({ patientId, onBack, onLeft }: { patientId: string; 
                       medications: record.medications.filter((m) => m.sourceId === s.id),
                       events: record.events.filter((e) => e.sourceId === s.id),
                       observations: record.observations.filter((o) => o.sourceId === s.id),
+                      problems: record.problems.filter((p) => p.sourceId === s.id),
+                      course: record.course.filter((c) => c.sourceId === s.id),
                     }}
                     edits={record.factEdits}
                     userEdits={record.userEdits}
@@ -690,7 +696,7 @@ function SourceCard({
 }: {
   source: Source;
   segments: readonly Segment[];
-  facts: { medications: readonly Medication[]; events: readonly ClinicalEvent[]; observations: readonly Observation[] };
+  facts: { medications: readonly Medication[]; events: readonly ClinicalEvent[]; observations: readonly Observation[]; problems: readonly Problem[]; course: readonly CourseItem[] };
   edits: readonly FactEdit[];
   userEdits: readonly UserEdit[];
   encounter: Encounter | null;
@@ -726,6 +732,18 @@ function SourceCard({
   // 読めなかった部分は、保存した文から、同じ決まりで読み直して出す（保存していない）
   const unread = READ_VALUES_KINDS.includes(source.kind) ? readLabText(source.text).unread : [];
 
+  // 振り分けられなかった字（段K1。A1）：どの事実にも、引用で出す区切り（背景・A・P）にも入らなかった字。整理が終わった記載だけ
+  const left =
+    source.organized === 'done'
+      ? leftovers(source.text, [
+          ...facts.medications,
+          ...facts.events,
+          ...facts.observations,
+          ...facts.problems,
+          ...facts.course,
+          ...segments.filter((g) => QUOTED_SEGMENT_LABELS.includes(g.label)),
+        ])
+      : [];
   const firstLine = source.text.split(/\r?\n/u).find((l) => l.trim() !== '')?.trim() ?? '';
   const head = (
     <button type="button" className="source-head source-toggle" aria-expanded={open} onClick={onToggle} data-testid="source-summary">
@@ -741,6 +759,7 @@ function SourceCard({
         {CARTE_ONLY_KINDS.includes(source.kind) && <span className="tag">carte だけの記録</span>}
         {source.organized === null && <span className="tag">未整理</span>}
         {source.organized === 'failed' && <span className="tag">整理できず</span>}
+        {left.length > 0 && <span className="tag" data-testid="leftover-count">振り分けられなかった字 {String(left.length)}</span>}
       </span>
       {!open && <span className="source-first">{firstLine}</span>}
     </button>
@@ -759,6 +778,17 @@ function SourceCard({
       <SourceFacts medications={facts.medications} events={facts.events} observations={facts.observations} edits={edits} userEdits={userEdits} onChanged={onChanged} onLeft={onLeft} />
       <SourceAppend key={source.text} source={source} onChanged={onChanged} onLeft={onLeft} />
       <SourceEdit source={source} segments={segments} edits={userEdits} onChanged={onChanged} onLeft={onLeft} />
+      {left.length > 0 && (
+        <details className="unread" data-testid="leftovers">
+          <summary className="unread-title">振り分けられなかった部分（{String(left.length)} か所。どの見方にも出ていません。文には残っています）</summary>
+          <ul>
+            {left.map((u) => (
+              <li key={`${String(u.start)}-${String(u.end)}`}>「{source.text.slice(u.start, u.end)}」</li>
+            ))}
+          </ul>
+          <p className="note">「整理し直す」で、もう一度 AI に振り分けさせられます。</p>
+        </details>
+      )}
       {unread.length > 0 && (
         <div className="unread" data-testid="unread">
           <span className="unread-title">値として読めなかった部分（文には残っています）</span>

@@ -19,6 +19,8 @@ export * from './views/chart.ts';
 export * from './time/day.ts';
 export * from './problems/threads.ts';
 export * from './views/state.ts';
+export * from './views/days.ts';
+export * from './views/leftover.ts';
 export * from './record/edits.ts';
 export * from './notes/ap.ts';
 export * from './views/window.ts';

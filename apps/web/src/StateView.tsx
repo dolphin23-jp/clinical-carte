@@ -1,6 +1,6 @@
 // 「いまの状態」（段3b。CA-023・CA-026・CA-027）：患者の現在地を1画面に。作文しない：1行の要約は決定論のひな形、
 // ほかは整理した事実と、保存した文の区切りの字そのもの。「いま」は記録の上での最後の日時で、端末の時計ではない。判定しない。
-import { EVENT_KIND_NAMES, LIST_ACTIVITY_NAMES, LIST_CERTAINTY_NAMES, type ListItem, MEDICATION_ACTION_NAMES, numberedList, PROBLEM_ACTIVITY_NAMES, PROBLEM_STATUS_NAMES, type PatientState, type RecentItem, recentGroups, SEGMENT_LABEL_NAMES } from '@clinical-carte/core';
+import { type DeviceLine, EVENT_KIND_NAMES, type MedicationDays, LIST_ACTIVITY_NAMES, LIST_CERTAINTY_NAMES, type ListItem, MEDICATION_ACTION_NAMES, numberedList, PROBLEM_ACTIVITY_NAMES, PROBLEM_STATUS_NAMES, type PatientState, type RecentItem, recentGroups, SEGMENT_LABEL_NAMES } from '@clinical-carte/core';
 import { useState } from 'react';
 
 import { showDateTime } from './format.ts';
@@ -19,6 +19,18 @@ function recentText(item: RecentItem): { tag: string; text: string } {
     case 'lab':
       return { tag: '検査', text: `${item.name} ${item.comparator ?? ''}${item.valueText}${item.unit === null ? '' : ` ${item.unit}`}` };
   }
+}
+
+/** 開始から何日目（段K1。数えるだけ。開始の記載がなければ出さない） */
+function dayTag(days: MedicationDays): string | null {
+  if (days.day === null) return null;
+  return days.stoppedAt === null ? `開始から ${String(days.day)} 日目` : `${String(days.day)} 日間（中止まで）`;
+}
+
+/** デバイスの1行（段K1） */
+function deviceText(d: DeviceLine): string {
+  const day = d.day === null ? '' : d.removedAt === null ? `${String(d.day)} 日目` : `${String(d.day)} 日間`;
+  return `${d.name}${d.replaced ? '（入れ替え）' : ''}${day === '' ? '' : `・${day}`}`;
 }
 
 const labText = (item: Extract<RecentItem, { type: 'lab' }>): string => `${item.name} ${item.comparator ?? ''}${item.valueText}${item.unit === null ? '' : ` ${item.unit}`}`;
@@ -368,12 +380,41 @@ export function StateView({
                   {m.name}
                   <span className="tag">{m.action === null ? '動きの記載なし' : MEDICATION_ACTION_NAMES[m.action]}</span>
                   {m.doseText !== null && <span className="fact-dose">{m.doseText}</span>}
+                  {dayTag(m.days) !== null && (
+                    <span className="tag" data-testid="state-med-day">
+                      {dayTag(m.days)}
+                    </span>
+                  )}
                 </span>
               </li>
             ))}
           </ul>
-          {state.stoppedMedications.length > 0 && <p className="thread-sub">中止と書かれたもの：{state.stoppedMedications.map((m) => `${m.name}（${showDateTime(m.at)}）`).join('、')}</p>}
+          {state.stoppedMedications.length > 0 && (
+            <p className="thread-sub">
+              中止と書かれたもの：{state.stoppedMedications.map((m) => `${m.name}（${showDateTime(m.at)}${dayTag(m.days) === null ? '' : `・${dayTag(m.days) ?? ''}`}）`).join('、')}
+            </p>
+          )}
           <p className="note">いま続いているかは、書かれていないので補っていません。</p>
+        </details>
+      )}
+
+      {state.devices.length > 0 && (
+        <details className="state-section folded" data-testid="state-devices">
+          <summary className="sub-title">
+            デバイス（入れてから何日目。{state.devices.filter((d) => d.removedAt === null).map(deviceText).join('、') || '入っていると書かれたものなし'}）
+          </summary>
+          <ul className="fact-list">
+            {state.devices.map((d) => (
+              <li key={`${d.name}-${d.placedAt}`} className="fact-row" data-testid="state-device">
+                <span className="fact-when">{showDateTime(d.placedAt)}〜{d.removedAt === null ? '' : showDateTime(d.removedAt)}</span>
+                <span className="fact-main">
+                  {deviceText(d)}
+                  <span className="tag">{d.removedAt === null ? '抜去の記載なし' : '抜去'}</span>
+                </span>
+              </li>
+            ))}
+          </ul>
+          <p className="note">できごとの「挿入・留置・確保・入れ替え・抜去・抜管」の字から数えています。抜去の記載がなければ、記録の上で最後の日まで数えています（入っているかは補っていません）。</p>
         </details>
       )}
 

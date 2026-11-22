@@ -126,6 +126,46 @@ describe('整理', () => {
     expect(await fits(page)).toBe(true);
   });
 
+  test('振り分けられなかった字（段K1）：どの見方にも出ていない字を、記載の札の数と、開いた字で出す', async () => {
+    const page = await openPatient();
+    await send(page, NOTE);
+    await expect.poll(() => page.getByTestId('segment-label').count()).toBe(3);
+    // S の「咳嗽は軽減」は、どの事実にも入らず、S の区切りは引用で出す種類ではない
+    const left = page.getByTestId('leftovers').first();
+    await left.waitFor();
+    expect(await page.getByTestId('leftover-count').first().textContent()).toBe('振り分けられなかった字 1');
+    await left.locator('summary').click();
+    expect(await left.locator('li').allTextContents()).toEqual(['「咳嗽は軽減」']);
+    expect(await fits(page)).toBe(true);
+  });
+
+  test('いまの投薬に開始から何日目、デバイスに入れてから何日目（段K1）', async () => {
+    next = {
+      ok: true,
+      answer: {
+        ...EMPTY_ORGANIZE,
+        medications: [{ name: 'セフトリアキソン', dose: '2g', action: 'start', when: '11/18' }],
+        events: [
+          { kind: 'procedure', title: 'CV 挿入', when: '11/18' },
+          { kind: 'procedure', title: '尿道カテーテル留置', when: '11/18' },
+          { kind: 'procedure', title: '尿道カテーテル抜去', when: '11/19' },
+        ],
+      },
+    };
+    const page = await openPatient('Desktop Chrome');
+    await send(page, '11/18 セフトリアキソン 2g 開始。11/18 CV 挿入。11/18 尿道カテーテル留置。11/19 尿道カテーテル抜去。');
+    await expect.poll(() => page.getByTestId('organize-source').first().textContent()).toBe('整理し直す');
+    await page.getByTestId('tab-state').click();
+    const meds = page.getByTestId('state-medications');
+    await meds.locator('summary').click();
+    expect(await page.getByTestId('state-med-day').allTextContents()).toEqual(['開始から 3 日目']);
+    const devices = page.getByTestId('state-devices');
+    expect(await devices.locator('summary').textContent()).toContain('CV・3 日目');
+    await devices.locator('summary').click();
+    expect(await page.getByTestId('state-device').allTextContents()).toEqual([expect.stringContaining('CV・3 日目抜去の記載なし'), expect.stringContaining('尿道カテーテル・2 日間抜去')]);
+    expect(await fits(page)).toBe(true);
+  });
+
   test('整理に失敗しても、文は保存されている。「整理する」で、あとから整理できる', async () => {
     const page = await openPatient();
     next = { ok: false, reason: 'unavailable' };

@@ -134,8 +134,10 @@ describe('投薬と背景', () => {
         ],
       }),
     );
-    expect(s.medications).toEqual([{ name: 'アモキシシリン', action: 'start', doseText: '500mg', at: '2026-11-20T08:00', entries: 1 }]);
+    expect(s.medications).toEqual([{ name: 'アモキシシリン', action: 'start', doseText: '500mg', at: '2026-11-20T08:00', entries: 1, days: { startedAt: '2026-11-20T08:00', stoppedAt: null, day: 1 } }]);
     expect(s.stoppedMedications.map((m) => [m.name, m.entries])).toEqual([['セフトリアキソン', 2]]);
+    // 段K1：開始から何日目（中止なら中止の日まで）
+    expect(s.stoppedMedications[0]?.days).toEqual({ startedAt: '2026-11-17T23:00', stoppedAt: '2026-11-20', day: 4 });
   });
 
   test('背景は、区切りごとに、いちばん新しい記載のもの（受診をまたぐ）。ほかの記載の数も', () => {
