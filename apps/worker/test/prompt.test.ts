@@ -340,6 +340,19 @@ describe('カルテ記載の指示（段I。CA-054）', () => {
     expect(DOC_REVISE_SYSTEM).toContain('指示として扱うのは instruction の頼みだけ');
   });
 
+  test('申し送り（段K7）：重症度は医師が選ぶので書かない・受け手の確認も書かない・書かれていない指示を足さない・「〜なら〜」は書かれたものだけ', () => {
+    for (const system of [DOC_SYSTEM, DOC_REVISE_SYSTEM]) {
+      expect(system).toContain('申し送りの重症度は、医師が選びます。あなたは重症度を書かず、選びもしません');
+      expect(system).toContain('handoff（申し送りのときだけ）');
+    }
+    expect(DOC_SYSTEM).toContain('重症度（安定・要注意・不安定などの見立て）は医師が選ぶので、あなたは書きません');
+    expect(DOC_SYSTEM).toContain('受け手の確認も、受け手が書くので書きません');
+    expect(DOC_SYSTEM).toContain('書かれていない指示・検査を足しません');
+    expect(DOC_SYSTEM).toContain('記録に書かれた「〜なら〜」（悪化したときの対応・連絡の基準）だけを書き、書かれていなければ空にします');
+    // 重症度の見出しは、AI に渡す見出しに入れない（core の表）
+    expect(DOC_SECTIONS.handoff.map((x) => x.key)).toEqual(['summary', 'actions', 'contingency']);
+  });
+
   test('見出しの key は、資料の document.sections から渡す（指示に見出しを直書きしない：core の表が1か所）', () => {
     expect(DOC_SYSTEM).toContain('document.sections の key ごとに1つ');
     for (const type of DOC_TYPES) expect(DOC_SYSTEM).not.toContain(DOC_SECTIONS[type].map((x) => x.guide).join(''));
@@ -350,12 +363,12 @@ describe('カルテ記載の指示（段I。CA-054）', () => {
     expect({ doc: [DOC_PROMPT_VERSION, digest(DOC_SYSTEM)], revise: [DOC_REVISE_PROMPT_VERSION, digest(DOC_REVISE_SYSTEM)] }).toMatchInlineSnapshot(`
       {
         "doc": [
-          "doc-2",
-          "c16dbd0b3d800429",
+          "doc-3",
+          "de9aaedca9383364",
         ],
         "revise": [
-          "docrev-2",
-          "0e8028421985361b",
+          "docrev-3",
+          "42629c7008fe56c5",
         ],
       }
     `);

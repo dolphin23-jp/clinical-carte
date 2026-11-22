@@ -149,5 +149,13 @@ export const MIGRATIONS: readonly Migration[] = [
       "CREATE TABLE IF NOT EXISTS pending_result_edits ( id TEXT PRIMARY KEY, patient_id TEXT NOT NULL REFERENCES patients (id) ON DELETE CASCADE, at TEXT NOT NULL CHECK (length(at) = 16), item_key TEXT NOT NULL, before TEXT NOT NULL CHECK (before IN ('none', 'checked', 'hidden')), after TEXT NOT NULL CHECK (after IN ('none', 'checked', 'hidden')) )",
       "CREATE INDEX IF NOT EXISTS pending_result_edits_by_patient ON pending_result_edits (patient_id, at)"
     ]
+  },
+  {
+    "name": "0014_handoffs",
+    "statements": [
+      "CREATE TABLE IF NOT EXISTS handoffs ( id TEXT PRIMARY KEY, patient_id TEXT NOT NULL REFERENCES patients (id) ON DELETE CASCADE, encounter_id TEXT NOT NULL REFERENCES encounters (id) ON DELETE CASCADE, day TEXT NOT NULL CHECK (length(day) = 10), severity TEXT NOT NULL CHECK (severity IN ('stable', 'watcher', 'unstable')), sections TEXT NOT NULL, origin TEXT NOT NULL CHECK (origin IN ('self', 'ai', 'ai_edited')), entered_at TEXT NOT NULL CHECK (length(entered_at) = 16), updated_at TEXT NOT NULL CHECK (length(updated_at) = 16) )",
+      "CREATE INDEX IF NOT EXISTS handoffs_by_encounter ON handoffs (encounter_id, day)",
+      "CREATE INDEX IF NOT EXISTS handoffs_by_patient ON handoffs (patient_id, day)"
+    ]
   }
 ];

@@ -26,6 +26,8 @@ export * from './record/edits.ts';
 export * from './notes/ap.ts';
 export * from './views/window.ts';
 export * from './notes/document.ts';
+export * from './notes/handoff.ts';
+export * from './notes/diff.ts';
 export * from './problems/list.ts';
 export * from './presets/index.ts';
 export * from './support/support.ts';

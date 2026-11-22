@@ -1,6 +1,6 @@
 // 記録の読み書き（段1：患者・受診・取り込んだ文・測定値）。書く表は、docs/04 の 6 の一覧のとおり。
 // ここは、形を確かめた後の値だけを受け取る（形の確かめは handler.ts、文の選別は intake.ts）。
-import { COURSE_CATEGORIES, type CourseCategory, DOC_ORIGINS, DOC_TYPES, type DocOrigin, type DocType, type ListItem, ListItemShape, roundSummary, type RoundSummary, type SavedDocument, PendingBody, SavedSection, SupportBody } from '@clinical-carte/core';
+import { COURSE_CATEGORIES, type CourseCategory, DOC_ORIGINS, DOC_TYPES, type DocOrigin, type DocType, isDocOrigin, isHandoffSeverity, latestHandoff, type HandoffSeverity, type SavedHandoff, type ListItem, ListItemShape, roundSummary, type RoundSummary, type SavedDocument, PendingBody, SavedSection, SupportBody } from '@clinical-carte/core';
 import { z } from 'zod';
 import { ApRef, type ApOrigin, type ApPart, type FactField, type FactKind, type PlanKind, USER_EDIT_FIELDS, USER_EDIT_TARGETS, type UserEditField, type UserEditTarget } from '@clinical-carte/core';
 import type { AuthorRole, Comparator, EncounterKind, EventKind, HistoryAction, LabRow, MedicationAction, OrganizeReport, ProblemActivity, ProblemStatus, SegmentLabel, Sex, SourceKind } from '@clinical-carte/core';
@@ -537,6 +537,28 @@ export function documentOf(row: Row): SavedDocument | null {
   return toDocument(row);
 }
 
+/** 残した申し送りの列（読み出し。段K7） */
+export const HANDOFF_COLUMNS = 'id, encounter_id, day, severity, sections, origin, entered_at, updated_at';
+
+export function handoffOf(row: Row | null): SavedHandoff | null {
+  const id = text(row, 'id');
+  const encounterId = text(row, 'encounter_id');
+  const day = text(row, 'day');
+  const severity = text(row, 'severity');
+  const origin = text(row, 'origin');
+  const enteredAt = text(row, 'entered_at');
+  const updatedAt = text(row, 'updated_at');
+  if (row === null || id === null || encounterId === null || day === null || enteredAt === null || updatedAt === null || !isHandoffSeverity(severity) || !isDocOrigin(origin)) return null;
+  let sections: z.infer<typeof SavedSection>[] = [];
+  try {
+    const parsed = z.array(SavedSection).safeParse(JSON.parse(text(row, 'sections') ?? '[]'));
+    if (parsed.success) sections = parsed.data;
+  } catch {
+    // 読めない中身は、空として扱う
+  }
+  return { id, encounterId, day, severity, sections, origin, enteredAt, updatedAt };
+}
+
 /** A/P の列（読み出し） */
 export const AP_COLUMNS = 'id, encounter_id, thread_id, day, part, plan_kind, text, origin, refs, entered_at, updated_at';
 
@@ -592,10 +614,12 @@ export interface PatientSummary {
   readonly sources: number;
   /** 回診リストの材料（段3d）：記録の上で最後の日時・いまの問題の名前など。数と名前だけ（文は送らない） */
   readonly round: RoundSummary;
+  /** いちばん新しい受診の、いちばん新しい申し送り（段K7）の日と、先生が選んだ重症度だけ（文は送らない。なければ null） */
+  readonly handoff: { readonly id: string; readonly day: string; readonly severity: HandoffSeverity } | null;
 }
 
 export async function listPatients(db: Db): Promise<PatientSummary[]> {
-  const [patients, encounters, sourceRows, problemRows, threadRows, listRows] = await Promise.all([
+  const [patients, encounters, sourceRows, problemRows, threadRows, listRows, handoffRows] = await Promise.all([
     db.prepare('SELECT id, age, age_on, sex, created_on FROM patients ORDER BY id').all(),
     db.prepare('SELECT id, patient_id, kind, started, ended FROM encounters ORDER BY started, id').all(),
     // 文の中身は読まない（日時と、どの受診かだけ）
@@ -604,6 +628,8 @@ export async function listPatients(db: Db): Promise<PatientSummary[]> {
     db.prepare(`SELECT patient_id, ${THREAD_COLUMNS} FROM problem_threads ORDER BY id`).all(),
     // AI のプロブレムリスト（CA-057）：回診リストの問題を、リストの番号と名前にする（2026-11-22）
     db.prepare('SELECT patient_id, made_at, prompt_version, basis, items FROM problem_lists').all(),
+    // 申し送り（段K7）：日と重症度だけ（文は読まない）
+    db.prepare('SELECT id, patient_id, encounter_id, day, severity, updated_at FROM handoffs').all(),
   ]);
   const latest = new Map<string, Encounter>();
   for (const e of encounters.results.map(toEncounter).filter(present)) latest.set(e.patientId, e);
@@ -626,6 +652,14 @@ export async function listPatients(db: Db): Promise<PatientSummary[]> {
   });
   const problems = group(problemRows.results, toProblem);
   const threads = group(threadRows.results, toThread);
+  const handoffs = group(handoffRows.results, (row) => {
+    const id = text(row, 'id');
+    const encounterId = text(row, 'encounter_id');
+    const day = text(row, 'day');
+    const severity = text(row, 'severity');
+    const updatedAt = text(row, 'updated_at');
+    return id === null || encounterId === null || day === null || updatedAt === null || !isHandoffSeverity(severity) ? null : { id, encounterId, day, severity, updatedAt };
+  });
   const lists = new Map<string, readonly ListItem[]>();
   for (const row of listRows.results) {
     const key = text(row, 'patient_id');
@@ -639,10 +673,32 @@ export async function listPatients(db: Db): Promise<PatientSummary[]> {
       const own = sources.get(patient.id) ?? [];
       const encounter = latest.get(patient.id) ?? null;
       const round = roundSummary({ encounter: { id: encounter?.id ?? '' }, sources: own, threads: threads.get(patient.id) ?? [], mentions: problems.get(patient.id) ?? [], list: lists.get(patient.id) ?? [] });
-      return { patient, latest: encounter, sources: own.length, round };
+      const last = latestHandoff((handoffs.get(patient.id) ?? []).filter((h) => h.encounterId === encounter?.id));
+      return { patient, latest: encounter, sources: own.length, round, handoff: last === null ? null : { id: last.id, day: last.day, severity: last.severity } };
     })
     // いちばん新しい受診の開始が新しい順（受け持ち中の患者が上に来る）
     .sort((a, b) => (b.latest?.start ?? '').localeCompare(a.latest?.start ?? '') || b.patient.id.localeCompare(a.patient.id));
+}
+
+/** 受け持ち全員の申し送り（段K7）：患者ごとに、いちばん新しい受診の、いちばん新しい申し送り（残したものだけ。AI は呼ばない） */
+export async function latestHandoffs(db: Db): Promise<{ readonly patientId: string; readonly handoff: SavedHandoff }[]> {
+  const [encounters, rows] = await Promise.all([
+    db.prepare('SELECT id, patient_id, kind, started, ended FROM encounters ORDER BY started, id').all(),
+    db.prepare(`SELECT patient_id, ${HANDOFF_COLUMNS} FROM handoffs`).all(),
+  ]);
+  const latest = new Map<string, string>();
+  for (const e of encounters.results.map(toEncounter).filter(present)) latest.set(e.patientId, e.id);
+  const by = new Map<string, SavedHandoff[]>();
+  for (const row of rows.results) {
+    const patientId = text(row, 'patient_id');
+    const h = handoffOf(row);
+    if (patientId === null || h === null || latest.get(patientId) !== h.encounterId) continue;
+    by.set(patientId, [...(by.get(patientId) ?? []), h]);
+  }
+  return [...by.entries()].flatMap(([patientId, list]) => {
+    const h = latestHandoff(list);
+    return h === null ? [] : [{ patientId, handoff: h }];
+  });
 }
 
 export interface PatientRecord {
@@ -667,6 +723,8 @@ export interface PatientRecord {
   readonly scaleLinks: ScaleLinkRow[];
   /** 残したカルテ記載（段I。CA-054） */
   readonly documents: SavedDocument[];
+  /** 残した申し送り（段K7。CA-067。新しい順） */
+  readonly handoffs: SavedHandoff[];
   /** 経過の出来事（CA-056） */
   readonly course: CourseItem[];
   /** AI のプロブレムリスト（CA-057。まだなければ null） */
@@ -706,7 +764,7 @@ export const PROBLEM_COLUMNS = 'id, source_id, encounter_id, name, status, activ
 export async function getRecord(db: Db, id: string): Promise<PatientRecord | null> {
   const patient = await getPatient(db, id);
   if (patient === null) return null;
-  const [encounters, sources, observations, segments, medications, events, problems, threads, history, factEdits, userEdits, apNotes, scaleLinks, documents, course, problemList, support, pending] = await Promise.all([
+  const [encounters, sources, observations, segments, medications, events, problems, threads, history, factEdits, userEdits, apNotes, scaleLinks, documents, course, problemList, support, pending, handoffs] = await Promise.all([
     db.prepare('SELECT id, patient_id, kind, started, ended FROM encounters WHERE patient_id = ? ORDER BY started, id').bind(id).all(),
     db.prepare('SELECT id, patient_id, encounter_id, kind, author_role, at, entered_at, text, replaced, organized, organized_version, organize_report, next_day_from FROM sources WHERE patient_id = ? ORDER BY id').bind(id).all(),
     db
@@ -728,6 +786,7 @@ export async function getRecord(db: Db, id: string): Promise<PatientRecord | nul
     db.prepare('SELECT made_at, prompt_version, basis, items FROM problem_lists WHERE patient_id = ?').bind(id).first(),
     db.prepare('SELECT made_at, prompt_version, basis, body FROM clinical_support WHERE patient_id = ?').bind(id).first(),
     db.prepare('SELECT made_at, prompt_version, basis, body FROM pending_results WHERE patient_id = ?').bind(id).first(),
+    db.prepare(`SELECT ${HANDOFF_COLUMNS} FROM handoffs WHERE patient_id = ? ORDER BY day DESC, updated_at DESC, id DESC`).bind(id).all(),
   ]);
   return {
     patient,
@@ -745,6 +804,7 @@ export async function getRecord(db: Db, id: string): Promise<PatientRecord | nul
     apNotes: apNotes.results.map(toApNote).filter(present),
     scaleLinks,
     documents: documents.results.map(toDocument).filter(present),
+    handoffs: handoffs.results.map(handoffOf).filter(present),
     course: course.results.map(toCourse).filter(present),
     problemList: problemListOf(problemList),
     support: supportOf(support),
@@ -794,7 +854,7 @@ export async function setEncounterEnd(db: Db, id: string, end: string | null): P
 export const FACT_TABLES = ['observations', 'segments', 'medications', 'events', 'problems', 'course_items'] as const;
 
 /** 患者に付く、文からではない行の表（患者を消すと、一緒に消える。文を消しても残る：筋は、記載がなくなると見えなくなるだけ） */
-export const PATIENT_TABLES = ['problem_threads', 'history', 'fact_edits', 'user_edits', 'ap_notes', 'ap_history', 'documents', 'document_history', 'problem_lists', 'problem_list_edits', 'clinical_support', 'pending_results', 'pending_result_edits'] as const;
+export const PATIENT_TABLES = ['problem_threads', 'history', 'fact_edits', 'user_edits', 'ap_notes', 'ap_history', 'documents', 'document_history', 'handoffs', 'problem_lists', 'problem_list_edits', 'clinical_support', 'pending_results', 'pending_result_edits'] as const;
 
 /** 問題の行を、表から読む */
 export function problemOf(row: Record<string, unknown>): Problem | null {

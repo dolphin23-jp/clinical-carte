@@ -24,7 +24,9 @@ import type {
   ListItem,
   ListPatch,
   DocType,
+  HandoffSeverity,
   SavedDocument,
+  SavedHandoff,
   SavedSection,
   PlanKind,
   SegmentPatch,
@@ -376,6 +378,8 @@ export interface PatientSummary {
   readonly sources: number;
   /** 回診リストの材料（段3d） */
   readonly round: RoundSummary;
+  /** いちばん新しい受診の、いちばん新しい申し送り（段K7）の日と、先生が選んだ重症度だけ（なければ null） */
+  readonly handoff: { readonly id: string; readonly day: string; readonly severity: HandoffSeverity } | null;
 }
 
 /** 残した A/P（段5）。参照は場所・題・頁・URL だけ（本文なし） */
@@ -412,6 +416,8 @@ export interface PatientRecord {
   readonly scaleLinks: readonly ScaleLinkView[];
   /** 残したカルテ記載（段I。CA-054） */
   readonly documents: readonly SavedDocument[];
+  /** 残した申し送り（段K7。CA-067。新しい順） */
+  readonly handoffs: readonly SavedHandoff[];
   /** 経過の出来事（CA-056） */
   readonly course: readonly CourseItem[];
   /** AI のプロブレムリスト（CA-057。まだなければ null） */
@@ -445,8 +451,8 @@ export async function createPatient(input: NewPatient): Promise<Result<Patient>>
 export async function getRecord(patientId: string): Promise<Result<PatientRecord>> {
   const result = await call('GET', `patients/${encodeURIComponent(patientId)}`);
   if (!result.ok) return result;
-  const { patient, encounters, sources, observations, segments, medications, events, problems, problemThreads, history, factEdits, userEdits, apNotes, scaleLinks, documents, course, problemList, support, pending, today } = result.value;
-  const lists = [encounters, sources, observations, segments, medications, events, problems, problemThreads, history, factEdits, userEdits, apNotes, scaleLinks, documents, course];
+  const { patient, encounters, sources, observations, segments, medications, events, problems, problemThreads, history, factEdits, userEdits, apNotes, scaleLinks, documents, handoffs, course, problemList, support, pending, today } = result.value;
+  const lists = [encounters, sources, observations, segments, medications, events, problems, problemThreads, history, factEdits, userEdits, apNotes, scaleLinks, documents, handoffs, course];
   if (!isRecord(patient) || lists.some((l) => !Array.isArray(l)) || typeof today !== 'string') return { ok: false, error: 'network' };
   return {
     ok: true,
@@ -466,6 +472,7 @@ export async function getRecord(patientId: string): Promise<Result<PatientRecord
       apNotes: apNotes as ApNote[],
       scaleLinks: scaleLinks as ScaleLinkView[],
       documents: documents as SavedDocument[],
+      handoffs: handoffs as SavedHandoff[],
       course: course as CourseItem[],
       problemList: isRecord(problemList) ? (problemList as unknown as ProblemListView) : null,
       support: isRecord(support) && isRecord(support['body']) ? (support as unknown as SupportView) : null,
@@ -746,6 +753,28 @@ export async function patchDocument(id: string, sections: readonly SavedSection[
 
 export async function deleteDocument(id: string): Promise<Result<null>> {
   return done(await call('DELETE', `documents/${encodeURIComponent(id)}`));
+}
+
+/** 申し送りを残す（段K7。重症度は先生が選んだもの。文はサーバーで選別を通す） */
+export async function saveHandoff(encounterId: string, body: { day: string; severity: HandoffSeverity; sections: readonly SavedSection[]; origin: 'ai' | 'self'; edited: boolean }): Promise<Result<string>> {
+  return field<string>(await call('POST', `encounters/${encodeURIComponent(encounterId)}/handoffs`, body), 'id');
+}
+
+/** 残した申し送りを直す（重症度の選び直しも。選別を通す） */
+export async function patchHandoff(id: string, body: { severity: HandoffSeverity; sections: readonly SavedSection[] }): Promise<Result<null>> {
+  return done(await call('PATCH', `handoffs/${encodeURIComponent(id)}`, body));
+}
+
+export async function deleteHandoff(id: string): Promise<Result<null>> {
+  return done(await call('DELETE', `handoffs/${encodeURIComponent(id)}`));
+}
+
+/** 受け持ち全員の申し送り（段K7）：患者ごとに、いちばん新しい受診の、いちばん新しい残した申し送り（読むだけ） */
+export async function listHandoffs(): Promise<Result<readonly { readonly patientId: string; readonly handoff: SavedHandoff }[]>> {
+  const result = await call('GET', 'handoffs');
+  if (!result.ok) return result;
+  const list = result.value['handoffs'];
+  return Array.isArray(list) ? { ok: true, value: list as { patientId: string; handoff: SavedHandoff }[] } : { ok: false, error: 'network' };
 }
 
 /** 書籍の参照元（clinical-RAG）のつながり：設定なし・つながっている・鍵が違う・つながらない */

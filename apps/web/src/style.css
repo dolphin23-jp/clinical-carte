@@ -2685,3 +2685,98 @@ td.ref-low { color: var(--ref-low); background: var(--ref-low-bg); font-weight: 
 .pending .tl-quote {
   margin-left: 0;
 }
+
+/* ===== 段K7：申し送り（I-PASS）と、前の記載との違い ===== */
+/* 重症度の色は、先生が選んだ値の印（名前と一緒に出す。色だけに頼らない） */
+:root {
+  --sev-stable: #1b7a52;
+  --sev-stable-bg: #e5f4ec;
+  --sev-watcher: #8a5a00;
+  --sev-watcher-bg: #fbf0d9;
+  --sev-unstable: #b42318;
+  --sev-unstable-bg: #fdecea;
+  --diff-added-bg: #fff6d6;
+  --diff-removed: #8a5a00;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --sev-stable: #7fd3a8;
+    --sev-stable-bg: #17322a;
+    --sev-watcher: #f0c46b;
+    --sev-watcher-bg: #3a2e14;
+    --sev-unstable: #f3a29a;
+    --sev-unstable-bg: #3a1f1c;
+    --diff-added-bg: #3a3214;
+    --diff-removed: #f0c46b;
+  }
+}
+.tag.sev-stable,
+.chip.on.sev-stable { color: var(--sev-stable); background: var(--sev-stable-bg); border-color: var(--sev-stable); }
+.tag.sev-watcher,
+.chip.on.sev-watcher { color: var(--sev-watcher); background: var(--sev-watcher-bg); border-color: var(--sev-watcher); }
+.tag.sev-unstable,
+.chip.on.sev-unstable { color: var(--sev-unstable); background: var(--sev-unstable-bg); border-color: var(--sev-unstable); }
+.handoff-severity .chips,
+.handoff-synthesis .check {
+  margin: 4px 0;
+}
+
+.handoff-all {
+  display: grid;
+  gap: 10px;
+  margin-top: 8px;
+  min-width: 0;
+}
+.handoff-card {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 10px 12px;
+  background: var(--surface);
+  min-width: 0;
+}
+.handoff-card-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+.handoff-card .doc-text {
+  margin: 2px 0 6px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.handoff-oneliner {
+  margin: 4px 0;
+  overflow-wrap: anywhere;
+}
+
+/* 前の記載との違い：足した行に薄い地の色（「＋」の字と一緒に）。前にあってこの記載にない行は「−」の字 */
+.tag.diff-same {
+  color: var(--diff-removed);
+  background: var(--diff-added-bg);
+}
+.note-diff {
+  margin: 6px 0;
+  padding: 8px 10px;
+  border: 1px dashed var(--line);
+  border-radius: var(--radius);
+  min-width: 0;
+}
+.note-diff ul {
+  margin: 2px 0 6px;
+  padding-left: 0;
+  list-style: none;
+}
+.note-diff li {
+  overflow-wrap: anywhere;
+}
+.diff-added {
+  background: var(--diff-added-bg);
+}
+.diff-removed {
+  color: var(--diff-removed);
+}
+.diff-section-name {
+  font-weight: 600;
+  font-size: 13.5px;
+}

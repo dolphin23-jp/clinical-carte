@@ -18,7 +18,10 @@ import {
   QUOTED_SEGMENT_LABELS,
   medicationTimeline,
   numberedList,
+  type NoteDiff,
+  noteDiff,
   patientState,
+  previousNote,
   READ_VALUES_KINDS,
   readLabText,
   SOURCE_KIND_LABELS,
@@ -657,6 +660,13 @@ export function PatientPage({ patientId, onBack, onLeft }: { patientId: string; 
                   )}
                   <SourceCard
                     source={s}
+                    previous={(() => {
+                      // 前の記載との違い（段K7。CA-068。決定論）：同じ受診・同じ種類の、前の記載
+                      const prevNote = previousNote(record.sources, s);
+                      if (prevNote === null) return null;
+                      const segOf = (id: string) => record.segments.filter((g) => g.sourceId === id);
+                      return { source: prevNote.source, sameRole: prevNote.sameRole, diff: noteDiff({ text: prevNote.source.text, segments: segOf(prevNote.source.id) }, { text: s.text, segments: segOf(s.id) }) };
+                    })()}
                     segments={record.segments.filter((g) => g.sourceId === s.id)}
                     facts={{
                       medications: record.medications.filter((m) => m.sourceId === s.id),
@@ -724,8 +734,59 @@ export function PatientPage({ patientId, onBack, onLeft }: { patientId: string; 
   );
 }
 
+/** 前の記載との違い（段K7。CA-068）：変わった行・足した行だけ。同じ見出しは畳んで数だけ。前にあってこの記載にない行は別に */
+function NoteDiffView({ previous, encounter }: { previous: { source: Source; sameRole: boolean; diff: NoteDiff }; encounter: Encounter | null }) {
+  const { diff, source } = previous;
+  const day = source.at !== null && encounter?.kind === 'inpatient' ? hospitalDay(encounter.start, source.at) : null;
+  return (
+    <section className="note-diff" data-testid="note-diff" aria-label="前の記載との違い">
+      <p className="note">
+        前の記載（{showDateTime(source.at)}
+        {day !== null && `・第${String(day)}病日`}・{SOURCE_KIND_LABELS[source.kind]}・{AUTHOR_ROLE_LABELS[source.authorRole]}）と、行で比べました（AI は使いません。比べるときだけ、全角・半角と空白をそろえています）。
+        {!previous.sameRole && '同じ書き手の前の記載がないので、ほかの書き手の記載と比べています。'}
+      </p>
+      <p className="row-sub" data-testid="note-diff-count">
+        この記載 {String(diff.lines)} 行のうち、前の記載と同じ行 {String(diff.unchanged)}・変わった・足した行 {String(diff.added)}・前の記載にあって、この記載にない行 {String(diff.removed.length)}
+      </p>
+      {diff.sections.map((x) =>
+        x.added.length === 0 ? (
+          <p key={x.key} className="row-sub" data-testid="note-diff-same">
+            <span className="diff-section-name">{x.name}</span>：前の記載と同じ（{String(x.unchanged)} 行）
+          </p>
+        ) : (
+          <div key={x.key} data-testid="note-diff-section">
+            <span className="diff-section-name">{x.name}</span>
+            {x.unchanged > 0 && <span className="row-sub">（ほかに、前の記載と同じ行 {String(x.unchanged)}）</span>}
+            <ul>
+              {x.added.map((line, i) => (
+                <li key={i} className="diff-added" data-testid="note-diff-added">
+                  ＋ {line}
+                </li>
+              ))}
+            </ul>
+          </div>
+        ),
+      )}
+      {diff.removed.length > 0 && (
+        <details data-testid="note-diff-removed">
+          <summary>前の記載にあって、この記載にない行（{String(diff.removed.length)}）</summary>
+          <ul>
+            {diff.removed.map((r, i) => (
+              <li key={i} className="diff-removed">
+                − {r.line}
+                <span className="row-sub">（{r.section}）</span>
+              </li>
+            ))}
+          </ul>
+        </details>
+      )}
+    </section>
+  );
+}
+
 function SourceCard({
   source,
+  previous,
   segments,
   facts,
   edits,
@@ -737,6 +798,8 @@ function SourceCard({
   onLeft,
 }: {
   source: Source;
+  /** 前の記載との違い（段K7。同じ受診・同じ種類の前の記載がなければ null） */
+  previous: { source: Source; sameRole: boolean; diff: NoteDiff } | null;
   segments: readonly Segment[];
   facts: { medications: readonly Medication[]; events: readonly ClinicalEvent[]; observations: readonly Observation[]; problems: readonly Problem[]; course: readonly CourseItem[] };
   edits: readonly FactEdit[];
@@ -751,6 +814,7 @@ function SourceCard({
   const [asking, setAsking] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [organizing, setOrganizing] = useState(false);
+  const [showDiff, setShowDiff] = useState(false);
   const report = source.organized === 'done' ? reportText(source.organizeReport) : null;
   const nextDay = nextDayLabel(source.text, source.nextDayFrom);
 
@@ -802,6 +866,16 @@ function SourceCard({
         {source.organized === null && <span className="tag">未整理</span>}
         {source.organized === 'failed' && <span className="tag">整理できず</span>}
         {left.length > 0 && <span className="tag" data-testid="leftover-count">振り分けられなかった字 {String(left.length)}</span>}
+        {previous !== null && (
+          <span className="tag" data-testid="diff-count">
+            前回から変わった行 {String(previous.diff.added)}
+          </span>
+        )}
+        {previous?.diff.nearlySame === true && (
+          <span className="tag diff-same" data-testid="diff-nearly-same">
+            ほぼ前回と同じ
+          </span>
+        )}
       </span>
       {!open && <span className="source-first">{firstLine}</span>}
     </button>
@@ -816,6 +890,22 @@ function SourceCard({
   return (
     <li className="source" data-testid="source">
       {head}
+      {previous !== null && (
+        <div className="row-actions">
+          <button
+            type="button"
+            className={showDiff ? 'chip small on' : 'chip small'}
+            aria-pressed={showDiff}
+            onClick={() => {
+              setShowDiff(!showDiff);
+            }}
+            data-testid="diff-toggle"
+          >
+            前の記載との違い
+          </button>
+        </div>
+      )}
+      {previous !== null && showDiff && <NoteDiffView previous={previous} encounter={encounter} />}
       <SourceText text={source.text} segments={segments} />
       <SourceFacts medications={facts.medications} events={facts.events} observations={facts.observations} edits={edits} userEdits={userEdits} onChanged={onChanged} onLeft={onLeft} />
       <SourceAppend key={source.text} source={source} onChanged={onChanged} onLeft={onLeft} />

@@ -199,7 +199,8 @@ AI が返すのは、次の3つだけ（構造化した出力）。
 | `ap_notes` | 本人が A/P を残す・直す・消すとき（段5。本人が書いたもの・AI の案から本人が選んだもの。文は選別を通した後の字） |
 | `ap_history` | 本人が A/P を残す・直す・種類を選び直す・消すとき（段5。**文は入らない**） |
 | `documents` | 本人がカルテ記載を「保存する」・直す・消すとき（段I。CA-054。文は選別を通した後の字） |
-| `document_history` | 本人がカルテ記載を残す・直す・消すとき（段I。**文は入らない**） |
+| `document_history` | 本人がカルテ記載・申し送りを残す・直す・消すとき（段I・段K7。**文は入らない**） |
+| `handoffs` | 本人が申し送りを「保存する」・直す（重症度の選び直しを含む）・消すとき（段K7。CA-067。重症度は先生が選んだもの。文は選別を通した後の字）・患者を消すとき |
 | `course_items` | 整理（段J。CA-056）のとき（その文の行を入れ替える）・文を消すとき・患者を消すとき。AI の短い要約と、引用の場所 |
 | `problem_lists` | AI がプロブレムリストを組んだとき・本人が直したとき（CA-057。患者ごとに1つ） |
 | `problem_list_edits` | 本人がプロブレムリストを直したとき（CA-057。名前の前後は選別を通した後の字） |
@@ -214,7 +215,7 @@ AI が返すのは、次の3つだけ（構造化した出力）。
 
 - 打った原文・AI へ送った文・AI の答えそのものは、どの表にも書かない。ログにも出さない。
 - 表を足すときは、先にこの一覧を直す。
-- いまある表（段0〜段5）は `devices`・`entrance_daily`・`patients`・`encounters`・`sources`・`observations`・`usage_daily`・`schema_migrations`・`segments`・`medications`・`events`・`problems`・`problem_threads`・`history`・`fact_edits`・`user_edits`・`ap_notes`・`ap_history`・`scale_links`・`documents`・`document_history`・`course_items`・`problem_lists`・`problem_list_edits`・`clinical_support`・`pending_results`・`pending_result_edits`。記録への質問（段K6。CA-066）は、どの表にも書かない。`apps/worker/test/writes.test.ts` が、migrations が作る表と、ソースの SQL が書く表を、この一覧と突き合わせる。
+- いまある表（段0〜段5）は `devices`・`entrance_daily`・`patients`・`encounters`・`sources`・`observations`・`usage_daily`・`schema_migrations`・`segments`・`medications`・`events`・`problems`・`problem_threads`・`history`・`fact_edits`・`user_edits`・`ap_notes`・`ap_history`・`scale_links`・`documents`・`document_history`・`handoffs`・`course_items`・`problem_lists`・`problem_list_edits`・`clinical_support`・`pending_results`・`pending_result_edits`。記録への質問（段K6。CA-066）と、前の記載との違い（段K7。CA-068）は、どの表にも書かない。`apps/worker/test/writes.test.ts` が、migrations が作る表と、ソースの SQL が書く表を、この一覧と突き合わせる。
 
 ## 7. 段1 で作ったものと、案との違い
 
@@ -388,3 +389,17 @@ AI が返すのは、次の3つだけ（構造化した出力）。
 
 - AI に送った資料・AI の答えそのものは、保存もログもしない。患者を消すと消える（`PATIENT_TABLES`）。組み直すと入れ替わり、印は同じ鍵の項目へ引き継ぐ。AI が失敗したら、前の一覧を残す。
 - 記録への質問は、表を作らない。問い・答え・資料を、どの表にも書かず、ログに出さない（画面のメモリだけ）。数えるのは `usage_daily` の回数だけ。
+
+## 19. 申し送りと、前の記載との違い（段K7。CA-067・CA-068）
+
+作った表は、`apps/worker/migrations/0014_handoffs.sql`。
+
+| 表 | 列 |
+|---|---|
+| `handoffs` | id・patient_id・encounter_id・day・severity（先生が選んだ重症度：stable・watcher・unstable〔安定・要注意・不安定〕。既定の値はない。AI は書かない）・sections（見出しごとの文：summary〔患者の要約〕・actions〔やること〕・contingency〔起こりうることと対応〕。選別 C-1 を通した後の字と、根拠の参照〔場所・題・頁・URL。本文なし〕）・origin（self・ai・ai_edited）・entered_at・updated_at |
+
+- 申し送りを残した・直した・消した記録は、カルテ記載と同じ `document_history`（document_id に申し送りの id。文は入らない）。重症度だけを選び直したときは、誰の文か（origin）を変えない。
+- 受け手の確認（I-PASS の2つ目の S）は、画面のメモリだけで、どの表にも書かない。出した申し送り・相談のやりとりも、保存しない（カルテ記載と同じ）。
+- カルテ記載の `documents` の type には入れない（`documents` の CHECK を変えるには表を作り直す必要があり、表を消す文を書かない決まりのため、表を分けた）。患者を消すと消える（`PATIENT_TABLES`）。
+- 回診リスト（`GET /api/patients`）に渡すのは、いちばん新しい受診の、いちばん新しい申し送りの id・日・重症度だけ（文は渡さない）。受け持ち全員の申し送り（`GET /api/handoffs`）は、患者ごとに、そのいちばん新しいものを、文ごと返す（読むだけ。AI を呼ばない）。
+- 前の記載との違い（CA-068）は、表を作らない。画面が、保存した文と区切りから、決定論で作る（core の `noteDiff`）。

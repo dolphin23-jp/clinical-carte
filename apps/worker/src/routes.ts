@@ -9,6 +9,8 @@ import {
   DocumentPatch,
   DocumentBackingRequest,
   DocumentRequest,
+  HandoffNew,
+  HandoffPatch,
   EncounterPatch,
   ReviseRequest,
   ListPatch,
@@ -46,7 +48,7 @@ import type { Db } from './db.ts';
 import { addApNotes, type ApOutcome, deleteApNote, patchApNote } from './ap.ts';
 import { askRecord } from './ask.ts';
 import { generateSupport } from './clinicalsupport.ts';
-import { addDocument, type CallGate, deleteDocument, documentMaterialFor, gatherReferences, generateDocument, patchDocument, reviseDocument, type SaveOutcome, talkHasShapes } from './documents.ts';
+import { addDocument, addHandoff, type CallGate, deleteDocument, deleteHandoff, documentMaterialFor, patchHandoff, gatherReferences, generateDocument, patchDocument, reviseDocument, type SaveOutcome, talkHasShapes } from './documents.ts';
 import { addFact, appendSource, patchSegment, patchSource, retypeSource } from './edits.ts';
 import { patchFact } from './facts.ts';
 import { intake } from './intake.ts';
@@ -66,6 +68,7 @@ import {
   getEncounter,
   getPatient,
   getRecord,
+  latestHandoffs,
   listPatients,
   listScaleLinks,
   type NewObservation,
@@ -167,6 +170,9 @@ export async function recordApi(request: Request, path: string, deps: RecordDeps
     }
     return null;
   }
+
+  // 受け持ち全員の申し送り（段K7）：患者ごとに、いちばん新しい受診の、いちばん新しい残した申し送り（読むだけ。AI は呼ばない）
+  if (path === '/api/handoffs' && method === 'GET') return reply(200, { handoffs: await latestHandoffs(db) });
 
   const onePatient = /^\/api\/patients\/([^/]+)$/.exec(path);
   if (onePatient) {
@@ -494,6 +500,33 @@ export async function recordApi(request: Request, path: string, deps: RecordDeps
     const id = oneDoc[1] ?? '';
     if (!isUlid(id)) return bad();
     return (await deleteDocument(db, id, runtime)) ? reply(200, { removed: id }) : missing();
+  }
+
+  // 申し送りを残す・直す・消す（段K7。CA-067）：重症度は先生が選んだもの。文は選別（C-1）を通す（1回の選別）
+  const handoffNew = /^\/api\/encounters\/([^/]+)\/handoffs$/.exec(path);
+  if (handoffNew && method === 'POST') {
+    const encounterId = handoffNew[1] ?? '';
+    if (!isUlid(encounterId)) return bad();
+    const body = await readBody(request, HandoffNew);
+    if (body === null) return bad();
+    if (deps.selector === null) return reply(503, { error: 'no_ai' });
+    if (!(await gate.take())) return reply(429, { error: 'ai_limit' });
+    return docReply(await addHandoff(db, encounterId, body, deps.selector, runtime));
+  }
+  const oneHandoff = /^\/api\/handoffs\/([^/]+)$/.exec(path);
+  if (oneHandoff && method === 'PATCH') {
+    const id = oneHandoff[1] ?? '';
+    if (!isUlid(id)) return bad();
+    const body = await readBody(request, HandoffPatch);
+    if (body === null) return bad();
+    if (deps.selector === null) return reply(503, { error: 'no_ai' });
+    if (!(await gate.take())) return reply(429, { error: 'ai_limit' });
+    return docReply(await patchHandoff(db, id, body, deps.selector, runtime));
+  }
+  if (oneHandoff && method === 'DELETE') {
+    const id = oneHandoff[1] ?? '';
+    if (!isUlid(id)) return bad();
+    return (await deleteHandoff(db, id, runtime)) ? reply(200, { removed: id }) : missing();
   }
 
   // 問題以外の事実を直す（段3e）：外す・戻す、投薬の動き・できごとの種類・日時を選び直す
