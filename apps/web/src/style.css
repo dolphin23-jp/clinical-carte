@@ -2637,3 +2637,51 @@ td.ref-low { color: var(--ref-low); background: var(--ref-low-bg); font-weight: 
 .support-status.support-consistent { color: var(--support-ok); background: var(--support-ok-bg); }
 .support-status.support-gap { color: var(--support-gap); background: var(--support-gap-bg); }
 .support-status.support-unclear { color: var(--support-unclear); border: 1px dashed var(--support-unclear-line); }
+
+/* ===== 段K6：結果待ち・記録に聞く（CA-065・CA-066）。どちらも警告ではなく、記録の状態と、記録からの答え ===== */
+.pending,
+.ask {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+.pending-results {
+  display: grid;
+  gap: 4px;
+  margin: 4px 0;
+  min-width: 0;
+}
+.pending .chip,
+.ask .chip {
+  max-width: 100%;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  text-align: left;
+}
+.ask-label {
+  font-size: 13.5px;
+  color: var(--muted);
+}
+.ask textarea {
+  width: 100%;
+  font: inherit;
+  box-sizing: border-box;
+}
+.ask-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.ask-answer {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+.ask-refs {
+  margin-top: 2px;
+}
+.ask .tl-quote,
+.pending .tl-quote {
+  margin-left: 0;
+}

@@ -2,10 +2,10 @@
 // 答えは、決めた形（構造化した出力）で受け、確かめるのは core の applySelection。ここでは、保存もログもしない。
 import Anthropic from '@anthropic-ai/sdk';
 import { zodOutputFormat } from '@anthropic-ai/sdk/helpers/zod';
-import { DocumentAnswer, LinkAnswer, OrganizeAnswerWire, organizeFromWire, ProblemListAnswer, ReviseAnswer, SelectionAnswer, SupportAnswer } from '@clinical-carte/core';
+import { AskAnswer, DocumentAnswer, LinkAnswer, OrganizeAnswerWire, organizeFromWire, PendingAnswer, ProblemListAnswer, ReviseAnswer, SelectionAnswer, SupportAnswer } from '@clinical-carte/core';
 
-import type { DocumentResult, LinkerResult, Organizer, OrganizerResult, ProblemListResult, ResearchResult, ReviseResult, SupportResult } from './organizer.ts';
-import { DOC_REVISE_SYSTEM, DOC_SYSTEM, LINK_SYSTEM, PLIST_SYSTEM, ORGANIZE_PROMPTS, type OrganizePromptChoice, RESEARCH_SYSTEM, SELECT_SYSTEM, SUPPORT_SYSTEM, WEB_DOMAINS } from './prompt.ts';
+import type { AskResult, DocumentResult, LinkerResult, Organizer, OrganizerResult, PendingResultAnswer, ProblemListResult, ResearchResult, ReviseResult, SupportResult } from './organizer.ts';
+import { ASK_SYSTEM, DOC_REVISE_SYSTEM, DOC_SYSTEM, LINK_SYSTEM, PENDING_SYSTEM, PLIST_SYSTEM, ORGANIZE_PROMPTS, type OrganizePromptChoice, RESEARCH_SYSTEM, SELECT_SYSTEM, SUPPORT_SYSTEM, WEB_DOMAINS } from './prompt.ts';
 import type { WebHit } from './references.ts';
 import type { Selector, SelectorResult } from './selector.ts';
 
@@ -223,6 +223,56 @@ export function createAnthropicOrganizer(options: AnthropicOptions): Organizer {
         if (response.stop_reason === 'refusal') return { ok: false, reason: 'refused' };
         if (response.stop_reason !== 'end_turn') return { ok: false, reason: 'bad_answer' };
         const parsed = SupportAnswer.safeParse(response.parsed_output);
+        return parsed.success ? { ok: true, answer: parsed.data } : { ok: false, reason: 'bad_answer' };
+      } catch (error) {
+        if (error instanceof Anthropic.APIError) return { ok: false, reason: 'unavailable' };
+        return { ok: false, reason: 'bad_answer' };
+      }
+    },
+    // 結果待ち（段K6。CA-065）。送るのは、記録から作った提出の候補と事実だけ（core の pendingMaterial）。答えは記号と状態だけで、確かめてから保存する
+    async pending(message: string): Promise<PendingResultAnswer> {
+      try {
+        const response = await client.beta.messages.parse(
+          {
+            model: options.model,
+            max_tokens: 16000,
+            betas: ['server-side-fallback-2026-07-01'],
+            fallbacks: 'default',
+            cache_control: { type: 'ephemeral' },
+            system: PENDING_SYSTEM,
+            output_config: { effort: 'medium', format: zodOutputFormat(PendingAnswer) },
+            messages: [{ role: 'user', content: message }],
+          },
+          { timeout: 300_000 },
+        );
+        if (response.stop_reason === 'refusal') return { ok: false, reason: 'refused' };
+        if (response.stop_reason !== 'end_turn') return { ok: false, reason: 'bad_answer' };
+        const parsed = PendingAnswer.safeParse(response.parsed_output);
+        return parsed.success ? { ok: true, answer: parsed.data } : { ok: false, reason: 'bad_answer' };
+      } catch (error) {
+        if (error instanceof Anthropic.APIError) return { ok: false, reason: 'unavailable' };
+        return { ok: false, reason: 'bad_answer' };
+      }
+    },
+    // 記録への質問（段K6。CA-066）。送るのは、記録から作った資料と、先生の問いだけ（core の askMessage）。問いも答えも、保存もログもしない
+    async ask(message: string): Promise<AskResult> {
+      try {
+        const response = await client.beta.messages.parse(
+          {
+            model: options.model,
+            max_tokens: 16000,
+            betas: ['server-side-fallback-2026-07-01'],
+            fallbacks: 'default',
+            cache_control: { type: 'ephemeral' },
+            system: ASK_SYSTEM,
+            output_config: { effort: 'high', format: zodOutputFormat(AskAnswer) },
+            messages: [{ role: 'user', content: message }],
+          },
+          { timeout: 300_000 },
+        );
+        if (response.stop_reason === 'refusal') return { ok: false, reason: 'refused' };
+        if (response.stop_reason !== 'end_turn') return { ok: false, reason: 'bad_answer' };
+        const parsed = AskAnswer.safeParse(response.parsed_output);
         return parsed.success ? { ok: true, answer: parsed.data } : { ok: false, reason: 'bad_answer' };
       } catch (error) {
         if (error instanceof Anthropic.APIError) return { ok: false, reason: 'unavailable' };

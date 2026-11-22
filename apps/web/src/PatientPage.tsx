@@ -71,6 +71,8 @@ import { SourceFacts } from './SourceFacts.tsx';
 import { SourceText } from './SourceText.tsx';
 import { StateView } from './StateView.tsx';
 import { SupportPanel, useSupport } from './SupportView.tsx';
+import { AskPanel } from './AskView.tsx';
+import { PendingPanel, usePending } from './PendingView.tsx';
 import { nextDayLabel } from './NextDayAsk.tsx';
 import { DocumentView } from './DocumentView.tsx';
 
@@ -157,6 +159,8 @@ export function PatientPage({ patientId, onBack, onLeft }: { patientId: string; 
   const listBuilder = useProblemList(patientId, record, load, onLeft);
   // AI の臨床支援（段K5）：プロブレムリストが組み直されたら、自動で組み直す（いまのタブ）
   const supportBuilder = useSupport(patientId, record, listBuilder.busy, load, onLeft);
+  // 結果待ち（段K6）：記録が増えたら、自動で組み直す（いまのタブ）
+  const pendingBuilder = usePending(patientId, record, load, onLeft);
 
   if (record === null) {
     return (
@@ -459,6 +463,8 @@ export function PatientPage({ patientId, onBack, onLeft }: { patientId: string; 
               patient={refPatient}
               scores={scoreInput}
               support={record.problemList === null ? null : <SupportPanel record={record} builder={supportBuilder} />}
+              pending={<PendingPanel patientId={patientId} record={record} builder={pendingBuilder} asOf={state.asOf} onChanged={load} onLeft={onLeft} />}
+              ask={<AskPanel patientId={patientId} record={record} onLeft={onLeft} />}
               onProblems={() => {
                 setTab('problems');
               }}

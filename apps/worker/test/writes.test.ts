@@ -19,7 +19,7 @@ const code = (text: string): string =>
     .join('\n');
 
 /** いまある表（段0〜段3a）。docs/04 の 6 の一覧のうち、作った分 */
-const TABLES = ['devices', 'entrance_daily', 'patients', 'encounters', 'sources', 'observations', 'usage_daily', 'schema_migrations', 'segments', 'medications', 'events', 'problems', 'problem_threads', 'history', 'fact_edits', 'user_edits', 'ap_notes', 'ap_history', 'scale_links', 'documents', 'document_history', 'course_items', 'problem_lists', 'problem_list_edits', 'clinical_support'];
+const TABLES = ['devices', 'entrance_daily', 'patients', 'encounters', 'sources', 'observations', 'usage_daily', 'schema_migrations', 'segments', 'medications', 'events', 'problems', 'problem_threads', 'history', 'fact_edits', 'user_edits', 'ap_notes', 'ap_history', 'scale_links', 'documents', 'document_history', 'course_items', 'problem_lists', 'problem_list_edits', 'clinical_support', 'pending_results', 'pending_result_edits'];
 
 describe('書き込みの一覧', () => {
   test('migrations が作る表は、一覧のとおり', () => {

@@ -41,6 +41,8 @@ export function errorMessage(error: ApiError, left?: number): string {
       return 'まだ整理した記録がないので、プロブレムリストを組めません。記録を入れて整理してから、もう一度試してください。';
     case 'support_empty':
       return 'プロブレムリストに活動中の問題がないので、臨床支援を組めません。';
+    case 'ask_empty':
+      return 'この受診には、まだ聞ける記録がありません。';
     case 'shape':
       return '記載か頼みに、電話番号・メールなどの形があるので、送りませんでした。消してから、もう一度送ってください。';
     case 'bad_span':

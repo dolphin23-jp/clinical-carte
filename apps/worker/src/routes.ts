@@ -20,6 +20,9 @@ import {
   SourceAppend,
   SourceTextPut,
   SupportRequest,
+  AskRequest,
+  findShapes,
+  PendingPatch,
   FACT_KINDS,
   type FactKind,
   FactPatch,
@@ -41,6 +44,7 @@ import type { z } from 'zod';
 
 import type { Db } from './db.ts';
 import { addApNotes, type ApOutcome, deleteApNote, patchApNote } from './ap.ts';
+import { askRecord } from './ask.ts';
 import { generateSupport } from './clinicalsupport.ts';
 import { addDocument, type CallGate, deleteDocument, documentMaterialFor, gatherReferences, generateDocument, patchDocument, reviseDocument, type SaveOutcome, talkHasShapes } from './documents.ts';
 import { addFact, appendSource, patchSegment, patchSource, retypeSource } from './edits.ts';
@@ -50,6 +54,7 @@ import { organizeSource } from './organize.ts';
 import type { Organizer } from './organizer.ts';
 import type { BookSearcher } from './references.ts';
 import { type EditOutcome, type LinkOutcome, linkPatient, moveMention, patchThread, setTypedName } from './problems.ts';
+import { generatePending, markPending } from './pending.ts';
 import { generateList, patchList } from './problemlist.ts';
 import { ORGANIZE_PROMPTS, SELECT_PROMPT_VERSION } from './prompt.ts';
 import {
@@ -410,6 +415,47 @@ export async function recordApi(request: Request, path: string, deps: RecordDeps
       return aiFailed(r.failure);
     }
     return reply(200, { support: r.body });
+  }
+
+  // 結果待ち（段K6。CA-065）：組み直す（AI の 1 回。提出の候補がなければ、AI を呼ばずに空の一覧を残す）・先生の印（ボタンだけ）
+  const pending = /^\/api\/patients\/([^/]+)\/pending$/.exec(path);
+  if (pending && method === 'POST') {
+    const patientId = pending[1] ?? '';
+    if (!isUlid(patientId)) return bad();
+    if (deps.organizer === null) return reply(503, { error: 'no_ai' });
+    const r = await generatePending(db, patientId, deps.organizer, gate, runtime);
+    if (!r.ok) {
+      if (r.reason === 'not_found') return missing();
+      if (r.reason === 'ai_limit') return reply(429, { error: 'ai_limit' });
+      return aiFailed(r.failure);
+    }
+    return reply(200, { pending: r.body });
+  }
+  if (pending && method === 'PATCH') {
+    const patientId = pending[1] ?? '';
+    if (!isUlid(patientId)) return bad();
+    const body = await readBody(request, PendingPatch);
+    if (body === null) return bad();
+    return (await markPending(db, patientId, body, runtime)) ? reply(200, { ok: true }) : missing();
+  }
+
+  // 記録への質問（段K6。CA-066）：保存しない（問い・答えとも）。問いに識別情報の形があれば送らない（相談の頼みと同じ）。AI の 1 回
+  const ask = /^\/api\/patients\/([^/]+)\/ask$/.exec(path);
+  if (ask && method === 'POST') {
+    const patientId = ask[1] ?? '';
+    if (!isUlid(patientId)) return bad();
+    const body = await readBody(request, AskRequest);
+    if (body === null) return bad();
+    if (deps.organizer === null) return reply(503, { error: 'no_ai' });
+    if (findShapes(body.question).length > 0) return reply(422, { error: 'shape' });
+    const r = await askRecord(db, patientId, body.question, { organizer: deps.organizer, gate, today });
+    if (!r.ok) {
+      if (r.reason === 'not_found') return missing();
+      if (r.reason === 'empty') return reply(422, { error: 'ask_empty' });
+      if (r.reason === 'ai_limit') return reply(429, { error: 'ai_limit' });
+      return aiFailed(r.failure);
+    }
+    return reply(200, { answer: r.reply });
   }
 
   // 数の印の照らし合わせの表（段I）：AI を使わない（残した記載を開いたときの印に使う）。数だけを返す

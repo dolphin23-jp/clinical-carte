@@ -138,6 +138,8 @@ export function StateView({
   patient = null,
   scores = null,
   support = null,
+  pending = null,
+  ask = null,
 }: {
   state: PatientState;
   sources: readonly Source[];
@@ -151,6 +153,10 @@ export function StateView({
   scores?: PresetRecordInput | null;
   /** AI の臨床支援（段K5）の節。プロブレムリストの下に出す */
   support?: ReactNode;
+  /** 結果待ち（段K6）の節。臨床支援の下に出す */
+  pending?: ReactNode;
+  /** 記録に聞く（段K6）の節。右の列の先頭に出す（電話の幅では、左の列の下） */
+  ask?: ReactNode;
 }) {
   const textOf = (sourceId: string, start: number, end: number): string => sources.find((s) => s.id === sourceId)?.text.slice(start, end).trim() ?? '';
   // いまの問題は、名前の1行だけ。押すと、最後の A・P と、その問題の記載に書かれた値・薬が開く（段I。「いま」を1〜2画面に）。開いたものは画面のメモリだけ
@@ -240,6 +246,8 @@ export function StateView({
       )}
 
       {support}
+
+      {pending}
 
       {(() => {
         const writtenProblems = (
@@ -372,6 +380,8 @@ export function StateView({
       })()}
       </div>
       <div className="state-col">
+
+      {ask}
 
       {scores !== null && <ScoresView input={scores} fallbackDay={state.asOf} />}
 

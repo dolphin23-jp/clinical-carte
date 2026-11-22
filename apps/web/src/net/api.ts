@@ -44,6 +44,9 @@ import type {
   Sex,
   SourceKind,
   SupportBody,
+  AskReply,
+  PendingBody,
+  PendingMark,
 } from '@clinical-carte/core';
 
 export interface DeviceView {
@@ -75,6 +78,7 @@ export type ApiError =
   | 'document_empty'
   | 'list_empty'
   | 'support_empty'
+  | 'ask_empty'
   | 'shape'
   | 'bad_span'
   | 'too_long';
@@ -101,6 +105,7 @@ const KNOWN: readonly ApiError[] = [
   'document_empty',
   'list_empty',
   'support_empty',
+  'ask_empty',
   'shape',
   'bad_span',
 ];
@@ -357,6 +362,14 @@ export interface SupportView {
   readonly body: SupportBody;
 }
 
+/** 結果待ち（段K6。CA-065） */
+export interface PendingView {
+  readonly madeAt: string;
+  readonly promptVersion: string;
+  readonly basis: string;
+  readonly body: PendingBody;
+}
+
 export interface PatientSummary {
   readonly patient: Patient;
   readonly latest: Encounter | null;
@@ -405,6 +418,8 @@ export interface PatientRecord {
   readonly problemList: ProblemListView | null;
   /** AI の臨床支援（段K5。まだなければ null） */
   readonly support: SupportView | null;
+  /** 結果待ち（段K6。まだなければ null） */
+  readonly pending: PendingView | null;
   /** サーバーの、今日（日本の日） */
   readonly today: string;
 }
@@ -430,7 +445,7 @@ export async function createPatient(input: NewPatient): Promise<Result<Patient>>
 export async function getRecord(patientId: string): Promise<Result<PatientRecord>> {
   const result = await call('GET', `patients/${encodeURIComponent(patientId)}`);
   if (!result.ok) return result;
-  const { patient, encounters, sources, observations, segments, medications, events, problems, problemThreads, history, factEdits, userEdits, apNotes, scaleLinks, documents, course, problemList, support, today } = result.value;
+  const { patient, encounters, sources, observations, segments, medications, events, problems, problemThreads, history, factEdits, userEdits, apNotes, scaleLinks, documents, course, problemList, support, pending, today } = result.value;
   const lists = [encounters, sources, observations, segments, medications, events, problems, problemThreads, history, factEdits, userEdits, apNotes, scaleLinks, documents, course];
   if (!isRecord(patient) || lists.some((l) => !Array.isArray(l)) || typeof today !== 'string') return { ok: false, error: 'network' };
   return {
@@ -454,6 +469,7 @@ export async function getRecord(patientId: string): Promise<Result<PatientRecord
       course: course as CourseItem[],
       problemList: isRecord(problemList) ? (problemList as unknown as ProblemListView) : null,
       support: isRecord(support) && isRecord(support['body']) ? (support as unknown as SupportView) : null,
+      pending: isRecord(pending) && isRecord(pending['body']) ? (pending as unknown as PendingView) : null,
       today,
     },
   };
@@ -762,4 +778,23 @@ export async function patchProblemList(patientId: string, patch: ListPatch): Pro
 /** 記録から、AI が臨床支援を組み直す（ネットの出典も探すかを選ぶ。書籍は設定があるとき、いつも） */
 export async function generateSupport(patientId: string, web: boolean): Promise<Result<null>> {
   return done(await call('POST', `patients/${encodeURIComponent(patientId)}/support`, { web }));
+}
+
+// --- 結果待ち（段K6。CA-065）
+
+/** 記録から、結果待ちの一覧を組み直す（AI の 1 回。提出の候補がなければ、AI を呼ばずに空の一覧） */
+export async function generatePending(patientId: string): Promise<Result<null>> {
+  return done(await call('POST', `patients/${encodeURIComponent(patientId)}/pending`, {}));
+}
+
+/** 先生の印（結果を確かめた・外す・戻す）。ボタンだけ */
+export async function markPending(patientId: string, key: string, mark: PendingMark): Promise<Result<null>> {
+  return done(await call('PATCH', `patients/${encodeURIComponent(patientId)}/pending`, { key, mark }));
+}
+
+// --- 記録への質問（段K6。CA-066）
+
+/** 記録に聞く（保存しない。問いも答えも、画面のメモリだけ） */
+export async function askRecord(patientId: string, question: string): Promise<Result<AskReply>> {
+  return field<AskReply>(await call('POST', `patients/${encodeURIComponent(patientId)}/ask`, { question }), 'answer');
 }

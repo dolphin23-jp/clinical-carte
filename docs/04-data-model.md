@@ -204,6 +204,8 @@ AI が返すのは、次の3つだけ（構造化した出力）。
 | `problem_lists` | AI がプロブレムリストを組んだとき・本人が直したとき（CA-057。患者ごとに1つ） |
 | `problem_list_edits` | 本人がプロブレムリストを直したとき（CA-057。名前の前後は選別を通した後の字） |
 | `clinical_support` | AI が臨床支援を組んだとき（段K5。CA-064。患者ごとに1つ。確かめた後の支援だけ）・患者を消すとき |
+| `pending_results` | 結果待ちを組んだとき（段K6。CA-065。患者ごとに1つ。確かめた後の一覧だけ。候補がなければ AI を呼ばずに空の一覧）・本人が印を付けたとき・患者を消すとき |
+| `pending_result_edits` | 本人が結果待ちに印を付けたとき（段K6。印の前後だけ。**文は入らない**）・患者を消すとき |
 | `devices` | 端末の登録・外すとき・その日はじめて使ったとき（1日に1回） |
 | `entrance_daily` | 合鍵を間違えたとき |
 | `usage_daily` | AI を呼んだとき |
@@ -212,7 +214,7 @@ AI が返すのは、次の3つだけ（構造化した出力）。
 
 - 打った原文・AI へ送った文・AI の答えそのものは、どの表にも書かない。ログにも出さない。
 - 表を足すときは、先にこの一覧を直す。
-- いまある表（段0〜段5）は `devices`・`entrance_daily`・`patients`・`encounters`・`sources`・`observations`・`usage_daily`・`schema_migrations`・`segments`・`medications`・`events`・`problems`・`problem_threads`・`history`・`fact_edits`・`user_edits`・`ap_notes`・`ap_history`・`scale_links`・`documents`・`document_history`・`course_items`・`problem_lists`・`problem_list_edits`・`clinical_support`。`apps/worker/test/writes.test.ts` が、migrations が作る表と、ソースの SQL が書く表を、この一覧と突き合わせる。
+- いまある表（段0〜段5）は `devices`・`entrance_daily`・`patients`・`encounters`・`sources`・`observations`・`usage_daily`・`schema_migrations`・`segments`・`medications`・`events`・`problems`・`problem_threads`・`history`・`fact_edits`・`user_edits`・`ap_notes`・`ap_history`・`scale_links`・`documents`・`document_history`・`course_items`・`problem_lists`・`problem_list_edits`・`clinical_support`・`pending_results`・`pending_result_edits`。記録への質問（段K6。CA-066）は、どの表にも書かない。`apps/worker/test/writes.test.ts` が、migrations が作る表と、ソースの SQL が書く表を、この一覧と突き合わせる。
 
 ## 7. 段1 で作ったものと、案との違い
 
@@ -374,3 +376,15 @@ AI が返すのは、次の3つだけ（構造化した出力）。
 
 - AI に送った資料・出典の抜き出し・AI の答えそのものは、保存もログもしない。書籍・ページの本文は入れない。
 - 患者を消すと消える（`PATIENT_TABLES`）。組み直すと入れ替わる。AI が失敗したら、前の支援を残す。
+
+## 18. 結果待ちと、記録への質問（段K6。CA-065・CA-066）
+
+作った表は、`apps/worker/migrations/0013_pending_results.sql`。
+
+| 表 | 列 |
+|---|---|
+| `pending_results` | patient_id（患者ごとに1つ）・made_at・prompt_version・basis（記録の印。`listBasis` と同じ）・body（確かめた後の一覧の JSON：候補ごとの key〔種類・文の id・字の始まり〕・kind〔event・course〕・sourceId・start・end・name〔記録に書かれた名前〕・at・atApprox・state〔pending・resulted・unsorted〕・results〔結果の記載の場所と短い名前と日時〕・mark〔none・checked・hidden〕。notSubmission〔提出ではないと整理した数〕・rejected〔理由ごとの数〕・dropped〔数・長さの上限で落とした数〕） |
+| `pending_result_edits` | id・patient_id・at・item_key・before・after（印だけ：none・checked・hidden） |
+
+- AI に送った資料・AI の答えそのものは、保存もログもしない。患者を消すと消える（`PATIENT_TABLES`）。組み直すと入れ替わり、印は同じ鍵の項目へ引き継ぐ。AI が失敗したら、前の一覧を残す。
+- 記録への質問は、表を作らない。問い・答え・資料を、どの表にも書かず、ログに出さない（画面のメモリだけ）。数えるのは `usage_daily` の回数だけ。
