@@ -1,6 +1,6 @@
-// 問題の帯（段K。CA-058）：問題ごとに、「書かれた日時」を時間の軸に並べるための計算。純関数。
-// 帯は、最初に書かれた日時から、最後に書かれた日時までだけ（その先へは伸ばさない：続いているかは書かれていないので、補わない。
-// 投薬の帯〔medicationSpans〕と同じ考え）。判定しない：持つのは、書かれた日時と、状態の名前（書かれた・先生が決めた・AI の整理のとおり）だけ。
+// 問題ごとの、書かれた日の点（段L。CA-080）：問題ごとに、「書かれた日時」を時間の軸に並べるための計算。純関数。
+// 持つのは、書かれた日時（点）だけ。期間を作らない：問題が続いている期間の帯は、経過表のボード（CA-061）の役目で、ここでは補わない。
+// 判定しない：書かれた日時と、状態の名前（書かれた・先生が決めた・AI の整理のとおり）だけ。
 import { LIST_ACTIVITY_NAMES, type ListItem, numberedList } from '../problems/list.ts';
 import type { ThreadGroup, ThreadView } from '../problems/threads.ts';
 import { type ChartTime, chartTime } from './chart.ts';
@@ -13,13 +13,13 @@ export interface ProblemLane {
   /** プロブレムリストの番号（問題のタブ・いまと同じ。記録に書かれた名前から作るときは null） */
   readonly no: number | null;
   readonly name: string;
-  /** 活動中（いまの問題）か。帯の線の形を分けるためだけに使う（色で判定しない） */
+  /** 活動中（いまの問題）か。名前の字の濃さを分けるためだけに使う（色で判定しない） */
   readonly active: boolean;
   /** 状態の名前（活動中のときは空） */
   readonly stateName: string;
   /** 書かれた日時（古い順。同じ日時は1つ） */
   readonly marks: readonly ChartTime[];
-  /** 日時の分からない記載の数（帯には置けない） */
+  /** 日時の分からない記載の数（点には置けない） */
   readonly undated: number;
   /** AI のプロブレムリストの項目か（そうでなければ、記録に書かれた問題の筋） */
   readonly listed: boolean;
@@ -45,7 +45,7 @@ function marksOf(ats: readonly (string | null)[]): { marks: ChartTime[]; undated
   return { marks: [...seen.values()].sort((a, b) => a.t - b.t), undated };
 }
 
-/** 問題ごとの帯。AI のプロブレムリストに外していない項目があれば、その番号と並びで。なければ、記録に書かれた問題の筋の並びで */
+/** 問題ごとの、書かれた日時の点。AI のプロブレムリストに外していない項目があれば、その番号と並びで。なければ、記録に書かれた問題の筋の並びで */
 export function problemLanes(input: LaneInput): ProblemLane[] {
   const numbered = numberedList(input.list);
   if (numbered.length === 0) {
@@ -75,7 +75,7 @@ export function problemLanes(input: LaneInput): ProblemLane[] {
   });
 }
 
-/** 帯の時間の範囲：書かれた日時の最小〜最大を、日の境まで広げたもの（1つもなければ null） */
+/** 図の時間の範囲：書かれた日時の最小〜最大を、日の境まで広げたもの（1つもなければ null） */
 export function laneDomain(lanes: readonly Pick<ProblemLane, 'marks'>[]): readonly [number, number] | null {
   const DAY_MS = 86_400_000;
   const times = lanes.flatMap((lane) => lane.marks.map((m) => m.t));

@@ -123,6 +123,26 @@ describe('最後の記録までの24時間', () => {
   });
 });
 
+describe('最新の所見（2026-11-23）', () => {
+  test('この受診で、その区切りがあるいちばん新しい記載の、その種類の区切りすべて', () => {
+    const s = patientState(
+      base({
+        segments: [
+          { sourceId: 's0', label: 'physical_exam', start: 0, end: 5 },
+          { sourceId: 's1', label: 'physical_exam', start: 0, end: 4 },
+          { sourceId: 's1', label: 'labs', start: 10, end: 20 },
+          { sourceId: 's1', label: 'labs', start: 30, end: 40 },
+          { sourceId: 's1', label: 'past_history', start: 50, end: 60 },
+        ],
+      }),
+    );
+    expect(s.findings.map((f) => [f.label, f.sourceId, f.parts.length])).toEqual([
+      ['physical_exam', 's1', 1],
+      ['labs', 's1', 2],
+    ]);
+  });
+});
+
 describe('投薬と背景', () => {
   test('薬ごとの最後の記載。中止と書かれたものは別。続いているかは補わない', () => {
     const s = patientState(
@@ -134,8 +154,10 @@ describe('投薬と背景', () => {
         ],
       }),
     );
-    expect(s.medications).toEqual([{ name: 'アモキシシリン', action: 'start', doseText: '500mg', at: '2026-11-20T08:00', entries: 1 }]);
+    expect(s.medications).toEqual([{ name: 'アモキシシリン', action: 'start', doseText: '500mg', at: '2026-11-20T08:00', entries: 1, days: { startedAt: '2026-11-20T08:00', stoppedAt: null, day: 1 } }]);
     expect(s.stoppedMedications.map((m) => [m.name, m.entries])).toEqual([['セフトリアキソン', 2]]);
+    // 段K1：開始から何日目（中止なら中止の日まで）
+    expect(s.stoppedMedications[0]?.days).toEqual({ startedAt: '2026-11-17T23:00', stoppedAt: '2026-11-20', day: 4 });
   });
 
   test('背景は、区切りごとに、いちばん新しい記載のもの（受診をまたぐ）。ほかの記載の数も', () => {

@@ -1,0 +1,61 @@
+{
+  "source": "clinical-casebook",
+  "commit": "454820c76cb61ca7b27b3873bd76a2605dd839d0",
+  "files": [
+    {
+      "path": "docs/casebook-contract/handoff-packet.md",
+      "from": "docs/contracts/handoff-packet.md",
+      "sha256": "9zqJaHzfvlAZrQR7t7KWzY8JDHd35KOE4TyJlUH7LxA"
+    },
+    {
+      "path": "fixtures/casebook-handoff/new-inpatient.json",
+      "from": "fixtures/synthetic/handoff/new-inpatient.json",
+      "sha256": "ibB1Bxm6DHHp3NKDtvUeBDnu7ewI_r-BXYTm5NUZqUo"
+    },
+    {
+      "path": "fixtures/casebook-handoff/append-inpatient.json",
+      "from": "fixtures/synthetic/handoff/append-inpatient.json",
+      "sha256": "ZFteZXpbUHhYVbieX1eHi6X76_4Kr6j6y8r1Z-XTalc"
+    },
+    {
+      "path": "fixtures/casebook-handoff/new-emergency-synthetic.json",
+      "from": "fixtures/synthetic/handoff/new-emergency-synthetic.json",
+      "sha256": "2QA8HON-BQVanFxUyQEUVSs0HJNPTF5r4KJUDxOeZ5A"
+    },
+    {
+      "path": "packages/core/src/casebook/handoff/codec.ts",
+      "from": "packages/core/src/handoff/codec.ts",
+      "sha256": "boCzxohLopujXDtssWFLy-wI28r-GDqIYYlWPZMFLjk"
+    },
+    {
+      "path": "packages/core/src/casebook/handoff/packet.ts",
+      "from": "packages/core/src/handoff/packet.ts",
+      "sha256": "A4fdxJ44q5TOV2ZzEEiy--FK2q7bTanf7-ToEoKGQHk"
+    },
+    {
+      "path": "packages/core/src/casebook/ids/case-code.ts",
+      "from": "packages/core/src/ids/case-code.ts",
+      "sha256": "Zy_zFeTheJyreFhLU6CKBEim4zfiQecIyOUN3BBmiRk"
+    },
+    {
+      "path": "packages/core/src/casebook/ids/ulid.ts",
+      "from": "packages/core/src/ids/ulid.ts",
+      "sha256": "0n2lts0ZlotmkF1lP7P_x1TVnLitDex9zl5w3DemBPY"
+    },
+    {
+      "path": "packages/core/src/casebook/schema/primitives.ts",
+      "from": "packages/core/src/schema/primitives.ts",
+      "sha256": "NNgR-4CMzDGZ44VfGpospVNMHFHCTpoyYWKGh-4jshU"
+    },
+    {
+      "path": "packages/core/src/casebook/lint/anonymize.ts",
+      "from": "packages/core/src/lint/anonymize.ts",
+      "sha256": "StM33t_xm4-EiifoOaPUveJuBfN93Fu5o7KcLJUCWU0"
+    },
+    {
+      "path": "packages/core/src/casebook/text/normalize.ts",
+      "from": "packages/core/src/text/normalize.ts",
+      "sha256": "KQx6sW8IKYDVlNnZobKAsYYCd144pX3mulKV_Px1H30"
+    }
+  ]
+}

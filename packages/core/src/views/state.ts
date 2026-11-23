@@ -11,11 +11,14 @@ import { ageNow, hospitalDay } from '../record/headline.ts';
 import { ENCOUNTER_KIND_LABELS, type EncounterKind, type Sex } from '../record/schema.ts';
 import { compareDateTime } from '../time/datetime.ts';
 import { chartTime } from './chart.ts';
+import { type DeviceLine, deviceDays, type MedicationDays, medicationDays } from './days.ts';
 
 const SEX_WORDS: Readonly<Record<Sex, string>> = { male: '男性', female: '女性', other: '性別その他・不明' };
 
 /** 背景として出す区切り（CA-027） */
 export const BACKGROUND_LABELS: readonly SegmentLabel[] = ['past_history', 'home_medications', 'allergy', 'social_history', 'family_history'];
+/** 最新の所見として出す区切り（2026-11-23。この受診の、いちばん新しい記載のもの。CA-060 の改訂） */
+export const FINDING_LABELS: readonly SegmentLabel[] = ['chief_complaint', 'present_illness', 'review_of_systems', 'physical_exam', 'labs', 'imaging'];
 
 /** 「この期間に入ったこと」の幅（時間） */
 export const RECENT_HOURS = 24;
@@ -115,6 +118,8 @@ export interface MedicationLast {
   readonly at: string | null;
   /** 記載の数 */
   readonly entries: number;
+  /** 開始から何日目（段K1。開始の記載があるときだけ。中止なら中止の日まで。数えるだけ） */
+  readonly days: MedicationDays;
 }
 
 export interface BackgroundPart {
@@ -127,6 +132,15 @@ export interface BackgroundPart {
   readonly end: number;
   /** ほかの記載にも同じ区切りがある数 */
   readonly others: number;
+}
+
+/** 最新の所見の1つの区切り（場所だけ。同じ記載に同じ種類の区切りが2つ以上あれば、すべて） */
+export interface FindingPart {
+  readonly label: SegmentLabel;
+  readonly name: string;
+  readonly sourceId: string;
+  readonly at: string | null;
+  readonly parts: readonly { readonly start: number; readonly end: number }[];
 }
 
 export interface PatientState {
@@ -148,7 +162,11 @@ export interface PatientState {
   /** 薬ごとの最後の記載。中止と書かれたものは別に */
   readonly medications: readonly MedicationLast[];
   readonly stoppedMedications: readonly MedicationLast[];
+  /** デバイスの入れてから何日目（段K1。できごとの挿入・抜去の字から） */
+  readonly devices: readonly DeviceLine[];
   readonly background: readonly BackgroundPart[];
+  /** 最新の所見（主訴・現病歴・システムレビュー・身体所見・検査・画像。この受診の、その区切りがあるいちばん新しい記載のもの） */
+  readonly findings: readonly FindingPart[];
 }
 
 /** 日時のいちばん新しいもの（日時のないものは、日時のあるものがなければ、最後のもの） */
@@ -260,7 +278,7 @@ export function patientState(input: StateInput): PatientState {
   const medsLast: MedicationLast[] = lines.map((line) => {
     const dated = line.entries.filter((e) => e.at !== null);
     const e = dated.at(-1) ?? line.entries.at(-1);
-    return { name: line.name, action: e?.action ?? null, doseText: e?.doseText ?? null, at: e?.at ?? null, entries: line.entries.length };
+    return { name: line.name, action: e?.action ?? null, doseText: e?.doseText ?? null, at: e?.at ?? null, entries: line.entries.length, days: medicationDays(line.entries, asOf) };
   });
 
   // 問題（受診をまたぐ）
@@ -348,7 +366,29 @@ export function patientState(input: StateInput): PatientState {
     background.push({ label, name: SEGMENT_LABEL_NAMES[label], sourceId: newest.sourceId, at: sourceAt.get(newest.sourceId)?.at ?? null, start: newest.start, end: newest.end, others: sources.size - 1 });
   }
 
+  // 最新の所見（この受診）：区切りごとに、それを持ついちばん新しい記載の、その種類の区切りすべて
+  const findings: FindingPart[] = [];
+  const encounterIds = new Set(encounterSources.map((src) => src.id));
+  for (const label of FINDING_LABELS) {
+    const parts = input.segments.filter((g) => g.label === label && encounterIds.has(g.sourceId));
+    if (parts.length === 0) continue;
+    const newestSource = [...new Set(parts.map((g) => g.sourceId))]
+      .map((id) => sourceAt.get(id))
+      .filter((src): src is StateSource => src !== undefined)
+      .sort((a, b) => compareDateTime(a.at, b.at) || a.enteredAt.localeCompare(b.enteredAt) || a.id.localeCompare(b.id))
+      .at(-1);
+    if (newestSource === undefined) continue;
+    findings.push({
+      label,
+      name: SEGMENT_LABEL_NAMES[label],
+      sourceId: newestSource.id,
+      at: newestSource.at,
+      parts: parts.filter((g) => g.sourceId === newestSource.id).sort((a, b) => a.start - b.start).map((g) => ({ start: g.start, end: g.end })),
+    });
+  }
+
   return {
+    findings,
     oneLiner,
     asOf,
     lastEntered,
@@ -360,6 +400,7 @@ export function patientState(input: StateInput): PatientState {
     recent,
     medications: medsLast.filter((m) => m.action !== 'stop'),
     stoppedMedications: medsLast.filter((m) => m.action === 'stop'),
+    devices: deviceDays(input.events, asOf),
     background,
   };
 }

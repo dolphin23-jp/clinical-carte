@@ -9,10 +9,12 @@ import { KeyMaker } from './KeyMaker.tsx';
 import { errorMessage } from './messages.ts';
 import { type ApiError, type DeviceView, getSession } from './net/api.ts';
 import { PatientPage } from './PatientPage.tsx';
+import { QueueBanner } from './QueueView.tsx';
 import { Patients } from './Patients.tsx';
 import { Register } from './Register.tsx';
 import { OrganizeCheck } from './OrganizeCheck.tsx';
 import { SelfCheck } from './SelfCheck.tsx';
+import type { OpenFocus } from './SearchView.tsx';
 
 type State =
   | { readonly at: 'loading' }
@@ -24,12 +26,19 @@ export function App() {
   const [state, setState] = useState<State>({ at: 'loading' });
   /** 開いている患者（一覧なら null）。画面のメモリだけに持つ（読み込み直すと、一覧に戻る） */
   const [patientId, setPatientId] = useState<string | null>(null);
+  /** 受け持ちから探した当たりから開くときの行き先（段K8。画面のメモリだけ） */
+  const [focus, setFocus] = useState<OpenFocus | null>(null);
+  const openPatient = useCallback((id: string, to?: OpenFocus) => {
+    setFocus(to ?? null);
+    setPatientId(id);
+  }, []);
   const [showDevices, setShowDevices] = useState(false);
   const [showBooks, setShowBooks] = useState(false);
   const [showSelfCheck, setShowSelfCheck] = useState(false);
   const [showOrganizeCheck, setShowOrganizeCheck] = useState(false);
   const toList = useCallback(() => {
     setPatientId(null);
+    setFocus(null);
   }, []);
 
   const check = useCallback(() => {
@@ -57,6 +66,7 @@ export function App() {
           <span className="brand-name">carte</span>
         </span>
         <Banner />
+        <QueueBanner />
       </header>
       {state.at === 'loading' && (
         <main className="page narrow">
@@ -81,10 +91,10 @@ export function App() {
           }}
         />
       )}
-      {state.at === 'in' && patientId !== null && <PatientPage key={patientId} patientId={patientId} onBack={toList} onLeft={toRegister} />}
+      {state.at === 'in' && patientId !== null && <PatientPage key={patientId} patientId={patientId} focus={focus} onBack={toList} onLeft={toRegister} />}
       {state.at === 'in' && patientId === null && (
         <main className="page" data-testid="home">
-          <Patients onOpen={setPatientId} onLeft={toRegister} />
+          <Patients onOpen={openPatient} onLeft={toRegister} />
           <section className="card tools" aria-labelledby="tools-title">
             <h2 id="tools-title" className="section-head">
               <Icon name="settings" />

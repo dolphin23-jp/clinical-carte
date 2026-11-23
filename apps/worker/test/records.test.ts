@@ -300,3 +300,52 @@ describe('AI を呼んだ回数（CA-022）', () => {
     expect(w.db.raw.prepare('SELECT calls FROM usage_daily').get()).toEqual({ calls: 1 });
   });
 });
+
+describe('送る鍵（段K9。CA-072）：送り直しても、二重に保存しない', () => {
+  const KEY = '01JDABCDEFGHJKMNPQRSTVWXYZ';
+  test('同じ受診に同じ鍵の文があれば、AI を呼ばず・回数に数えず、保存した文を返す。鍵がなければ、これまでどおり', async () => {
+    const selector = fakeSelector(KNOWN);
+    const { w, cookie, encounterId } = await setup({ selector });
+    const send = () => w.call('POST', `/api/encounters/${encounterId}/sources`, { cookie, body: source('WBC 12.3 CRP 8.1', { kind: 'lab', sendKey: KEY }) });
+    const first = (await (await send()).json()) as { source: { id: string }; observations: { name: string }[] };
+    const calls = (w.db.raw.prepare('SELECT calls FROM usage_daily').get() as { calls: number }).calls;
+    const again = await send();
+    expect(again.status).toBe(200);
+    const body = (await again.json()) as { source: { id: string }; observations: { name: string }[]; again: boolean };
+    expect(body.source.id).toBe(first.source.id);
+    expect(body.observations.map((o) => o.name)).toEqual(['WBC', 'CRP']);
+    expect(body.again).toBe(true);
+    expect(selector.seen).toHaveLength(1);
+    expect((w.db.raw.prepare('SELECT calls FROM usage_daily').get() as { calls: number }).calls).toBe(calls);
+    expect(w.db.raw.prepare('SELECT COUNT(*) AS n FROM sources').get()).toEqual({ n: 1 });
+    expect(w.db.raw.prepare('SELECT send_key FROM sources').get()).toEqual({ send_key: KEY });
+    // 鍵のない文は、同じ字でも別に保存する（これまでどおり）
+    await w.call('POST', `/api/encounters/${encounterId}/sources`, { cookie, body: source('WBC 12.3 CRP 8.1', { kind: 'lab' }) });
+    expect(w.db.raw.prepare('SELECT COUNT(*) AS n FROM sources').get()).toEqual({ n: 2 });
+  });
+
+  test('同じ鍵の送り直しが同時に届いても、1つだけ保存する。形の違う鍵は 400', async () => {
+    const { w, cookie, encounterId } = await setup();
+    const send = () => w.call('POST', `/api/encounters/${encounterId}/sources`, { cookie, body: source('解熱傾向。', { sendKey: KEY }) });
+    const [a, b] = await Promise.all([send(), send()]);
+    expect([a.status, b.status]).toEqual([200, 200]);
+    const ids = await Promise.all([a, b].map(async (r) => ((await r.json()) as { source: { id: string } }).source.id));
+    expect(ids[0]).toBe(ids[1]);
+    expect(w.db.raw.prepare('SELECT COUNT(*) AS n FROM sources').get()).toEqual({ n: 1 });
+    for (const bad of ['short', `${KEY}0`, 'ZZZZZZZZZZZZZZZZZZZZZZZZZZ', 12]) {
+      expect((await w.call('POST', `/api/encounters/${encounterId}/sources`, { cookie, body: source('解熱傾向。', { sendKey: bad }) })).status, String(bad)).toBe(400);
+    }
+  });
+
+  test('選別で断られた文は、鍵があっても保存しない（送り直すと、もう一度選別する）', async () => {
+    let fail = true;
+    const selector = fakeSelector(KNOWN, () => (fail ? { ok: false, reason: 'unavailable' } : { ok: true, answer: { identifiers: [] } }));
+    const { w, cookie, encounterId } = await setup({ selector });
+    const send = () => w.call('POST', `/api/encounters/${encounterId}/sources`, { cookie, body: source('解熱傾向。', { sendKey: KEY }) });
+    expect((await send()).status).toBe(502);
+    expect(w.db.raw.prepare('SELECT COUNT(*) AS n FROM sources').get()).toEqual({ n: 0 });
+    fail = false;
+    expect((await send()).status).toBe(200);
+    expect(selector.seen).toHaveLength(2);
+  });
+});

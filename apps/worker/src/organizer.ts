@@ -1,5 +1,5 @@
 // 整理を頼む先（AI）の形。本物は anthropic.ts、試験では、決まった答えを返す代役を渡す。
-import type { DocumentAnswer, LinkAnswer, OrganizeAnswer, ProblemListAnswer, ReviseAnswer } from '@clinical-carte/core';
+import type { AskAnswer, DocumentAnswer, LinkAnswer, OrganizeAnswer, PendingAnswer, PlanAnswer, ProblemListAnswer, ProposeAnswer, ReviseAnswer, SupportAnswer, TranscribeAnswer } from '@clinical-carte/core';
 
 import type { OrganizePromptChoice } from './prompt.ts';
 import type { WebHit } from './references.ts';
@@ -11,6 +11,12 @@ export type ResearchResult = { readonly ok: true; readonly hits: readonly WebHit
 export type DocumentResult = { readonly ok: true; readonly answer: DocumentAnswer } | { readonly ok: false; readonly reason: SelectorFailure };
 export type ProblemListResult = { readonly ok: true; readonly answer: ProblemListAnswer } | { readonly ok: false; readonly reason: SelectorFailure };
 export type ReviseResult = { readonly ok: true; readonly answer: ReviseAnswer } | { readonly ok: false; readonly reason: SelectorFailure };
+export type SupportResult = { readonly ok: true; readonly answer: SupportAnswer } | { readonly ok: false; readonly reason: SelectorFailure };
+export type PendingResultAnswer = { readonly ok: true; readonly answer: PendingAnswer } | { readonly ok: false; readonly reason: SelectorFailure };
+export type PlanResultAnswer = { readonly ok: true; readonly answer: PlanAnswer } | { readonly ok: false; readonly reason: SelectorFailure };
+export type AskResult = { readonly ok: true; readonly answer: AskAnswer } | { readonly ok: false; readonly reason: SelectorFailure };
+export type TranscribeResult = { readonly ok: true; readonly answer: TranscribeAnswer } | { readonly ok: false; readonly reason: SelectorFailure };
+export type ProposeResult = { readonly ok: true; readonly answer: ProposeAnswer } | { readonly ok: false; readonly reason: SelectorFailure };
 export type LinkerResult = { readonly ok: true; readonly answer: LinkAnswer } | { readonly ok: false; readonly reason: SelectorFailure };
 
 export interface Organizer {
@@ -27,4 +33,16 @@ export interface Organizer {
   revise(message: string): Promise<ReviseResult>;
   /** プロブレムリスト（CA-057）：記録全体の資料（JSON。core の listMaterial が作る）から、#1… のリストと結びつけ。例外を投げない */
   problemList(message: string): Promise<ProblemListResult>;
+  /** AI の臨床支援（段K5。CA-064）：記録から作った資料と出典（JSON。core の supportMessage が作る）から、問題ごとの疑う疾患・検査の候補・照合。例外を投げない */
+  support(message: string): Promise<SupportResult>;
+  /** 結果待ち（段K6。CA-065）：提出の候補と記録の事実（JSON。core の pendingMaterial が作る）から、候補ごとの状態と結果の記号だけ。文を書かない。例外を投げない */
+  pending(message: string): Promise<PendingResultAnswer>;
+  /** 予定と実施（段K9。CA-071）：予定の行と記録の事実（JSON。core の planMaterial が作る）から、行ごとの種類・予定の日の手がかり・実施の記号だけ。文を書かない。例外を投げない */
+  plans(message: string): Promise<PlanResultAnswer>;
+  /** 記録への質問（段K6。CA-066）：資料と先生の問い（JSON。core の askMessage が作る）から、根拠の記号つきの答え。保存しない。例外を投げない */
+  ask(message: string): Promise<AskResult>;
+  /** 指示簿を写す（段K11。CA-074）：保存した記載の字（JSON。core の transcribeMessage が作る）から、指示ごとの欄と引用だけ。文を書かない。例外を投げない */
+  orderTranscribe(message: string): Promise<TranscribeResult>;
+  /** 指示簿の案（段K11。CA-076）：記録の資料・臨床支援・テンプレ・いまの指示（JSON。core の proposeMessage が作る）から、欄ごとの案と根拠の記号。保存しない。例外を投げない */
+  orderPropose(message: string): Promise<ProposeResult>;
 }

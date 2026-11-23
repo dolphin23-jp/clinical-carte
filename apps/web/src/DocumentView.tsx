@@ -4,6 +4,8 @@
 // - 残すのは「保存する」を押したときだけ。文はサーバーで選別（C-1）を通る。「AI が書いた」「AI が書いて先生が直した」「先生が書いた」の印。
 // - 記載の中の数のうち、記録・出典に見つからないものに、下線と「※」の印を付ける（消さない。色で判定しない）。core の markNumbers。
 // - 病院のカルテへ持っていく向き（コピーのボタン）は作らない（CA-001・CA-033）。
+// - 申し送り（段K7。CA-067。I-PASS）：AI が書くのは、患者の要約・やること・起こりうることと対応だけ。重症度は先生が選ぶ（既定なし。選ぶまで
+//   保存できない。AI の答えから決めない）。受け手の確認は、受け手の欄で、残さない（画面のメモリだけ）。残す先は handoffs。
 import {
   AP_ORIGIN_NAMES,
   type ApRef,
@@ -18,6 +20,10 @@ import {
   DOC_TYPES_FOR,
   type DocNotes,
   type DocType,
+  HANDOFF_HEADINGS,
+  HANDOFF_SEVERITIES,
+  HANDOFF_SEVERITY_NAMES,
+  type HandoffSeverity,
   hospitalDay,
   markNumbers,
   SHAPE_LABELS,
@@ -29,7 +35,22 @@ import { Fragment, useEffect, useState } from 'react';
 
 import { showDateTime } from './format.ts';
 import { errorMessage } from './messages.ts';
-import { type ApiError, deleteApNote, deleteDocument, documentBacking, type Encounter, generateDocument, patchDocument, type PatientRecord, type RefLabel, reviseDocument, saveDocument } from './net/api.ts';
+import {
+  type ApiError,
+  deleteApNote,
+  deleteDocument,
+  deleteHandoff,
+  documentBacking,
+  type Encounter,
+  generateDocument,
+  patchDocument,
+  patchHandoff,
+  type PatientRecord,
+  type RefLabel,
+  reviseDocument,
+  saveDocument,
+  saveHandoff,
+} from './net/api.ts';
 
 /** 保存しない画面の誤りの文（「文は保存していません」は、ここでは要らない） */
 const say = (error: ApiError): string => errorMessage(error).replace('文は保存していません。', '');
@@ -59,6 +80,17 @@ interface Work {
   readonly notes: DocNotes | null;
   readonly material: { readonly records: number; readonly shortened: number; readonly dropped: number } | null;
   readonly webFailed: boolean;
+  /** 申し送りの重症度（先生が選んだもの。選ぶまで null。AI の答えからは決めない） */
+  readonly severity: HandoffSeverity | null;
+}
+
+/** 重症度の印（色は、名前と一緒に出す。先生が選んだ値） */
+export function SeverityTag({ severity }: { severity: HandoffSeverity }) {
+  return (
+    <span className={`tag sev sev-${severity}`} data-testid="handoff-severity-tag">
+      重症度：{HANDOFF_SEVERITY_NAMES[severity]}
+    </span>
+  );
 }
 
 const withHeadings = (type: DocType, sections: readonly { readonly key: string; readonly text: string; readonly refs?: readonly ApRef[] }[]): WorkSection[] =>
@@ -120,6 +152,7 @@ function notesText(work: Work): string[] {
     const shapes = Object.entries(n.shapes).filter(([, c]) => c > 0);
     if (shapes.length > 0) out.push(`識別情報の形（${shapes.map(([k, c]) => `${SHAPE_LABELS[k as ShapeKind]} ${String(c)}`).join('・')}）は伏せました`);
     if (n.unknownRefs > 0) out.push(`実在しない根拠の記号 ${String(n.unknownRefs)} 件は、根拠にしていません`);
+    if (n.severityLines > 0) out.push(`AI が書いた重症度の行 ${String(n.severityLines)} 件は出していません（重症度は先生が選びます）`);
   }
   const m = work.material;
   if (m !== null) {
@@ -160,6 +193,8 @@ export function DocumentView({
   const [message, setMessage] = useState<string | null>(null);
   const [askRegenerate, setAskRegenerate] = useState(false);
   const [deleting, setDeleting] = useState<string | null>(null);
+  // 申し送りの受け手の確認（残さない。画面のメモリだけ）
+  const [received, setReceived] = useState(false);
 
   const lastDay = days.at(-1) ?? null;
   const day = chosenDay ?? defaultDocDay(type, encounter, lastDay, selectedDay);
@@ -167,18 +202,22 @@ export function DocumentView({
     const hd = encounter.kind === 'inpatient' ? hospitalDay(encounter.start, d) : null;
     return `${d.slice(5).replace('-', '/')}${hd === null ? '' : `（${String(hd)}病日）`}`;
   };
-  const saved = record.documents.filter((d) => d.encounterId === encounter.id);
+  // 保存した記載と申し送り（申し送りは handoffs に残る。並びは、日の新しい順）
+  const saved = [
+    ...record.documents.filter((d) => d.encounterId === encounter.id).map((d) => ({ ...d, severity: null })),
+    ...record.handoffs.filter((h) => h.encounterId === encounter.id).map((h) => ({ ...h, type: 'handoff' as const })),
+  ].sort((a, b) => b.day.localeCompare(a.day) || b.updatedAt.localeCompare(a.updatedAt) || b.id.localeCompare(a.id));
   const threads = threadViews(record.problemThreads, record.problems).threads;
   const apNotes = record.apNotes.filter((n) => n.encounterId === encounter.id);
 
   // 保存した後、サーバーの字（選別で置き換えた後）に合わせる（保存してから変えていなければ）
   useEffect(() => {
     if (work?.savedId === null || work === null || work.dirty) return;
-    const doc = record.documents.find((d) => d.id === work.savedId);
+    const doc = [...record.documents, ...record.handoffs.map((h) => ({ ...h, type: 'handoff' as const }))].find((d) => d.id === work.savedId);
     if (doc === undefined) return;
     const sections = withHeadings(doc.type, doc.sections);
     if (sections.some((x, i) => x.text !== work.sections[i]?.text)) setWork({ ...work, sections });
-  }, [record.documents, work]);
+  }, [record.documents, record.handoffs, work]);
 
   const fail = (error: ApiError): void => {
     if (error === 'unregistered') onLeft();
@@ -198,9 +237,12 @@ export function DocumentView({
       setUndo([]);
       setTalk([]);
       setEditing(false);
+      setReceived(false);
       setWork({
         type,
         day,
+        // 重症度は、出すたびに空から（AI の答えからは決めない）
+        severity: null,
         sections: r.value.document.sections,
         origin: 'ai',
         edited: false,
@@ -237,6 +279,8 @@ export function DocumentView({
 
   const save = () => {
     if (work === null) return;
+    // 申し送りは、先生が重症度を選ぶまで残さない
+    if (work.type === 'handoff' && work.severity === null) return;
     setBusy('save');
     setMessage(null);
     const sections = work.sections.map((x) => ({ key: x.key, text: x.text, refs: [...x.refs] }));
@@ -247,6 +291,18 @@ export function DocumentView({
       setMessage('保存しました（文は選別を通しています。名前などは置き換わります）。');
       onChanged();
     };
+    if (work.type === 'handoff' && work.severity !== null) {
+      const severity = work.severity;
+      const request = work.savedId !== null ? patchHandoff(work.savedId, { severity, sections }).then((r) => (r.ok ? { ok: true as const, value: work.savedId ?? '' } : r)) : saveHandoff(encounter.id, { day: work.day, severity, sections, origin: work.origin, edited: work.edited });
+      void request.then((r) => {
+        if (r.ok) done(r.value);
+        else {
+          setBusy(null);
+          fail(r.error);
+        }
+      });
+      return;
+    }
     if (work.savedId !== null) {
       const id = work.savedId;
       void patchDocument(id, sections).then((r) => {
@@ -274,11 +330,13 @@ export function DocumentView({
     setUndo([]);
     setTalk([]);
     setEditing(false);
+    setReceived(false);
     setType(doc.type);
     setChosenDay(doc.day);
     const base: Work = {
       type: doc.type,
       day: doc.day,
+      severity: doc.severity,
       sections: withHeadings(doc.type, doc.sections),
       origin: doc.origin === 'self' ? 'self' : 'ai',
       edited: doc.origin === 'ai_edited',
@@ -301,7 +359,8 @@ export function DocumentView({
     setMessage(null);
     setUndo([]);
     setTalk([]);
-    setWork({ type, day, sections: withHeadings(type, []), origin: 'self', edited: false, savedId: null, dirty: true, backing: null, refLabels: [], notes: null, material: null, webFailed: false });
+    setReceived(false);
+    setWork({ type, day, severity: null, sections: withHeadings(type, []), origin: 'self', edited: false, savedId: null, dirty: true, backing: null, refLabels: [], notes: null, material: null, webFailed: false });
     setEditing(true);
     void documentBacking(encounter.id, { type, day }).then((r) => {
       if (r.ok) setWork((w) => (w !== null && w.savedId === null && w.origin === 'self' ? { ...w, backing: r.value } : w));
@@ -440,6 +499,7 @@ export function DocumentView({
             <h3 className="sub-title">
               {DOC_TYPE_NAMES[work.type]} {dayLabel(work.day)}
             </h3>
+            {work.type === 'handoff' && work.severity !== null && <SeverityTag severity={work.severity} />}
             <span className="tag" data-testid="doc-origin">
               {work.origin === 'self' ? DOC_ORIGIN_NAMES.self : work.edited ? DOC_ORIGIN_NAMES.ai_edited : DOC_ORIGIN_NAMES.ai}
             </span>
@@ -458,6 +518,30 @@ export function DocumentView({
                 <li key={t}>{t}</li>
               ))}
             </ul>
+          )}
+
+          {work.type === 'handoff' && (
+            <div className="doc-section handoff-severity" data-testid="handoff-severity">
+              <h4 className="doc-heading">【{HANDOFF_HEADINGS.severity}】</h4>
+              <div className="chips" role="radiogroup" aria-label="重症度（先生が選ぶ）">
+                {HANDOFF_SEVERITIES.map((sev) => (
+                  <button
+                    key={sev}
+                    type="button"
+                    role="radio"
+                    aria-checked={work.severity === sev}
+                    className={work.severity === sev ? `chip on sev-chip sev-${sev}` : `chip sev-chip sev-${sev}`}
+                    onClick={() => {
+                      setWork({ ...work, severity: sev, dirty: true });
+                    }}
+                    data-testid={`handoff-severity-${sev}`}
+                  >
+                    {HANDOFF_SEVERITY_NAMES[sev]}
+                  </button>
+                ))}
+              </div>
+              <p className="note">{work.severity === null ? 'AI は重症度を選びません。先生が選んでください（選ぶまで保存できません）。' : '先生が選んだ重症度です。'}</p>
+            </div>
           )}
 
           {work.sections.map((x, i) => (
@@ -489,6 +573,23 @@ export function DocumentView({
             </div>
           ))}
 
+          {work.type === 'handoff' && (
+            <div className="doc-section handoff-synthesis" data-testid="handoff-synthesis">
+              <h4 className="doc-heading">【{HANDOFF_HEADINGS.synthesis}】</h4>
+              <label className="check">
+                <input
+                  type="checkbox"
+                  checked={received}
+                  onChange={(e) => {
+                    setReceived(e.target.checked);
+                  }}
+                  data-testid="handoff-received"
+                />
+                受け手が要約を言い直し、問いを確かめた（この印は保存しません）
+              </label>
+            </div>
+          )}
+
           <div className="row-actions doc-actions">
             <button
               type="button"
@@ -500,7 +601,7 @@ export function DocumentView({
             >
               {editing ? '直すのを終える' : '自分で直す'}
             </button>
-            <button type="button" className="button primary" disabled={busy !== null || (work.savedId !== null && !work.dirty) || work.sections.every((x) => x.text.trim() === '')} onClick={save} data-testid="doc-save">
+            <button type="button" className="button primary" disabled={busy !== null || (work.savedId !== null && !work.dirty) || work.sections.every((x) => x.text.trim() === '') || (work.type === 'handoff' && work.severity === null)} onClick={save} data-testid="doc-save">
               {busy === 'save' ? '保存しています…' : work.savedId === null ? '保存する' : '直したものを保存する'}
             </button>
             {undo.length > 0 && (
@@ -564,6 +665,7 @@ export function DocumentView({
                 <span className="fact-when">{dayLabel(d.day)}</span>
                 <span className="fact-main">
                   {DOC_TYPE_NAMES[d.type]}
+                  {d.severity !== null && <SeverityTag severity={d.severity} />}
                   <span className="tag">{DOC_ORIGIN_NAMES[d.origin]}</span>
                   <span className="row-sub">更新 {showDateTime(d.updatedAt)}</span>
                 </span>
@@ -584,7 +686,7 @@ export function DocumentView({
                         type="button"
                         className="button danger small"
                         onClick={() => {
-                          void deleteDocument(d.id).then((r) => {
+                          void (d.type === 'handoff' ? deleteHandoff(d.id) : deleteDocument(d.id)).then((r) => {
                             setDeleting(null);
                             if (r.ok || r.error === 'not_found') {
                               if (work?.savedId === d.id) setWork(null);

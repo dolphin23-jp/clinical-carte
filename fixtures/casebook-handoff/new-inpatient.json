@@ -1,0 +1,119 @@
+{
+  "synthetic": true,
+  "description": "新しい入院の症例（架空）。病日 10 の時点で、問題・診断・検査値・所見・経過・治療を送る",
+  "packet": "CBH1:eyJtYWdpYyI6IkNCSDEiLCJzY2hlbWFWZXJzaW9uIjoxLCJwYWNrZXRJZCI6IjAxTUNDNVJNMDEwMDAwMDAwMDAwMDAwMDAxIiwidGFyZ2V0Ijp7Im1vZGUiOiJuZXcifSwicGF0aWVudCI6eyJhZ2VZZWFycyI6ODEsInNleCI6IkYiLCJzZXR0aW5nIjoiaW5wYXRpZW50In0sImhvc3BpdGFsRGF5IjoxMCwiaXRlbXMiOlt7Iml0ZW1JZCI6IjAxTUNDNVJNMDIwMDAwMDAwMDAwMDAwMDAyIiwic291cmNlIjoicnVsZSIsImJvZHkiOnsia2luZCI6InByb2JsZW0iLCJ0ZXh0Ijoi6aOf5oCd5LiN5oyv44Go5rC05qeY5LiL55ei77yI6ISx5rC077yJIn19LHsiaXRlbUlkIjoiMDFNQ0M1Uk0wMzAwMDAwMDAwMDAwMDAwMDMiLCJzb3VyY2UiOiJydWxlIiwiYm9keSI6eyJraW5kIjoiZGlhZ25vc2lzIiwidGV4dCI6IuiFjuWJjeaAp-aApeaAp-iFjumanOWusyIsInN0YXR1cyI6ImNvbmZpcm1lZCJ9fSx7Iml0ZW1JZCI6IjAxTUNDNVJNMDQwMDAwMDAwMDAwMDAwMDA0IiwiZGF5IjotMiwic291cmNlIjoidXNlciIsImJvZHkiOnsia2luZCI6ImNvdXJzZSIsInRleHQiOiLpo5_mgJ3kuI3mjK_jgajmsLTmp5jkuIvnl6LjgYzlp4vjgb7jgaPjgZ_jgIIifX0seyJpdGVtSWQiOiIwMU1DQzVSTTA1MDAwMDAwMDAwMDAwMDAwNSIsImRheSI6MSwic291cmNlIjoicnVsZSIsImJvZHkiOnsia2luZCI6ImxhYiIsIm5hbWUiOiJDciIsInZhbHVlIjoyLjksInVuaXQiOiJtZy9kTCJ9fSx7Iml0ZW1JZCI6IjAxTUNDNVJNMDYwMDAwMDAwMDAwMDAwMDA2IiwiZGF5IjoxLCJzb3VyY2UiOiJydWxlIiwiYm9keSI6eyJraW5kIjoibGFiIiwibmFtZSI6IksiLCJ2YWx1ZSI6Ni40LCJ1bml0IjoibUVxL0wifX0seyJpdGVtSWQiOiIwMU1DQzVSTTA3MDAwMDAwMDAwMDAwMDAwNyIsImRheSI6MSwic291cmNlIjoicnVsZSIsImJvZHkiOnsia2luZCI6ImZpbmRpbmciLCJ0ZXh0Ijoi5Y-j6IWU5YaF5Lm-54elIiwicG9sYXJpdHkiOiJwb3NpdGl2ZSJ9fSx7Iml0ZW1JZCI6IjAxTUNDNVJNMDgwMDAwMDAwMDAwMDAwMDA4IiwiZGF5IjoxLCJzb3VyY2UiOiJydWxlIiwiYm9keSI6eyJraW5kIjoiZWNnIiwidGV4dCI6IuODhuODs-ODiOeKtlTms6LjgIJRUlMg5bmF44Gv5q2j5bi4In19LHsiaXRlbUlkIjoiMDFNQ0M1Uk0wOTAwMDAwMDAwMDAwMDAwMDkiLCJkYXkiOjEsInNvdXJjZSI6InJ1bGUiLCJib2R5Ijp7ImtpbmQiOiJ0cmVhdG1lbnQiLCJ0ZXh0Ijoi44Kr44Or44K344Km44Og6KO95Ymk44Gu6Z2Z5rOo44Go6KOc5ray44KS6ZaL5aeLIiwiY2hhbmdlIjoic3RhcnQiLCJyZWFzb24iOiLpq5jjgqvjg6rjgqbjg6DooYDnl4cifX0seyJpdGVtSWQiOiIwMU1DQzVSTTBBMDAwMDAwMDAwMDAwMDAwQSIsImRheSI6NCwic291cmNlIjoicnVsZSIsImJvZHkiOnsia2luZCI6ImxhYiIsIm5hbWUiOiJDciIsInZhbHVlIjoxLjQsInVuaXQiOiJtZy9kTCJ9fSx7Iml0ZW1JZCI6IjAxTUNDNVJNMEIwMDAwMDAwMDAwMDAwMDBCIiwiZGF5Ijo5LCJzb3VyY2UiOiJ1c2VyIiwiYm9keSI6eyJraW5kIjoiY291cnNlIiwidGV4dCI6IuiFjuapn-iDveOBjOaUueWWhOOBl-OBn-OAgiJ9fV19.d32e269f",
+  "json": {
+    "magic": "CBH1",
+    "schemaVersion": 1,
+    "packetId": "01MCC5RM010000000000000001",
+    "target": {
+      "mode": "new"
+    },
+    "patient": {
+      "ageYears": 81,
+      "sex": "F",
+      "setting": "inpatient"
+    },
+    "hospitalDay": 10,
+    "items": [
+      {
+        "itemId": "01MCC5RM020000000000000002",
+        "source": "rule",
+        "body": {
+          "kind": "problem",
+          "text": "食思不振と水様下痢（脱水）"
+        }
+      },
+      {
+        "itemId": "01MCC5RM030000000000000003",
+        "source": "rule",
+        "body": {
+          "kind": "diagnosis",
+          "text": "腎前性急性腎障害",
+          "status": "confirmed"
+        }
+      },
+      {
+        "itemId": "01MCC5RM040000000000000004",
+        "day": -2,
+        "source": "user",
+        "body": {
+          "kind": "course",
+          "text": "食思不振と水様下痢が始まった。"
+        }
+      },
+      {
+        "itemId": "01MCC5RM050000000000000005",
+        "day": 1,
+        "source": "rule",
+        "body": {
+          "kind": "lab",
+          "name": "Cr",
+          "value": 2.9,
+          "unit": "mg/dL"
+        }
+      },
+      {
+        "itemId": "01MCC5RM060000000000000006",
+        "day": 1,
+        "source": "rule",
+        "body": {
+          "kind": "lab",
+          "name": "K",
+          "value": 6.4,
+          "unit": "mEq/L"
+        }
+      },
+      {
+        "itemId": "01MCC5RM070000000000000007",
+        "day": 1,
+        "source": "rule",
+        "body": {
+          "kind": "finding",
+          "text": "口腔内乾燥",
+          "polarity": "positive"
+        }
+      },
+      {
+        "itemId": "01MCC5RM080000000000000008",
+        "day": 1,
+        "source": "rule",
+        "body": {
+          "kind": "ecg",
+          "text": "テント状T波。QRS 幅は正常"
+        }
+      },
+      {
+        "itemId": "01MCC5RM090000000000000009",
+        "day": 1,
+        "source": "rule",
+        "body": {
+          "kind": "treatment",
+          "text": "カルシウム製剤の静注と補液を開始",
+          "change": "start",
+          "reason": "高カリウム血症"
+        }
+      },
+      {
+        "itemId": "01MCC5RM0A000000000000000A",
+        "day": 4,
+        "source": "rule",
+        "body": {
+          "kind": "lab",
+          "name": "Cr",
+          "value": 1.4,
+          "unit": "mg/dL"
+        }
+      },
+      {
+        "itemId": "01MCC5RM0B000000000000000B",
+        "day": 9,
+        "source": "user",
+        "body": {
+          "kind": "course",
+          "text": "腎機能が改善した。"
+        }
+      }
+    ]
+  }
+}

@@ -1,6 +1,8 @@
 // 記録の API（段1：患者・受診・取り込み）。ここに来るのは、入口（印の照合）を通った要求だけ（handler.ts）。
 // 形の確かめは、core の型（zod）。誤りの答えは、名前だけ（何が起きたかの文・打った文を返さない）。
 import {
+  CasebookPatch,
+  casebookSetting,
   compareDateTime,
   AddFact,
   ApNotePatch,
@@ -9,6 +11,8 @@ import {
   DocumentPatch,
   DocumentBackingRequest,
   DocumentRequest,
+  HandoffNew,
+  HandoffPatch,
   EncounterPatch,
   ReviseRequest,
   ListPatch,
@@ -19,6 +23,20 @@ import {
   scaleUnitKey,
   SourceAppend,
   SourceTextPut,
+  SupportRequest,
+  AskRequest,
+  findShapes,
+  headline,
+  SearchRequest,
+  searchQueryProblem,
+  searchRecords,
+  PendingPatch,
+  PlanPatch,
+  OrderAdd,
+  OrderPatch,
+  OrderProposeRequest,
+  OrderTranscribeRequest,
+  ScaleTemplateBody,
   FACT_KINDS,
   type FactKind,
   FactPatch,
@@ -40,7 +58,10 @@ import type { z } from 'zod';
 
 import type { Db } from './db.ts';
 import { addApNotes, type ApOutcome, deleteApNote, patchApNote } from './ap.ts';
-import { addDocument, type CallGate, deleteDocument, documentMaterialFor, gatherReferences, generateDocument, patchDocument, reviseDocument, type SaveOutcome, talkHasShapes } from './documents.ts';
+import { askRecord } from './ask.ts';
+import { ensureCasebookLink, patchCasebookLink } from './casebook.ts';
+import { generateSupport } from './clinicalsupport.ts';
+import { addDocument, addHandoff, type CallGate, deleteDocument, deleteHandoff, documentMaterialFor, patchHandoff, gatherReferences, generateDocument, patchDocument, reviseDocument, type SaveOutcome, talkHasShapes } from './documents.ts';
 import { addFact, appendSource, patchSegment, patchSource, retypeSource } from './edits.ts';
 import { patchFact } from './facts.ts';
 import { intake } from './intake.ts';
@@ -48,6 +69,9 @@ import { organizeSource } from './organize.ts';
 import type { Organizer } from './organizer.ts';
 import type { BookSearcher } from './references.ts';
 import { type EditOutcome, type LinkOutcome, linkPatient, moveMention, patchThread, setTypedName } from './problems.ts';
+import { generatePending, markPending } from './pending.ts';
+import { addOrders, addTemplate, deleteOrder, type OrderOutcome, patchOrder, patchTemplate, type ProposalOutcome, proposeOrders, removeTemplate, transcribeOrders } from './orders.ts';
+import { generatePlans, markPlan } from './plans.ts';
 import { generateList, patchList } from './problemlist.ts';
 import { ORGANIZE_PROMPTS, SELECT_PROMPT_VERSION } from './prompt.ts';
 import {
@@ -59,13 +83,17 @@ import {
   getEncounter,
   getPatient,
   getRecord,
+  latestHandoffs,
+  listOrderTemplates,
   listPatients,
   listScaleLinks,
+  searchInput,
   type NewObservation,
   observationOf,
   type Patient,
   patchPatient,
   saveSource,
+  sourceBySendKey,
   setEncounterEnd,
   setEncounterKind,
   type Source,
@@ -142,6 +170,25 @@ const docReply = (r: SaveOutcome): Reply => {
 
 const newId = (runtime: Runtime): string => ulid(runtime.now(), runtime.randomBytes(ULID_RANDOM_BYTES));
 
+const orderReply = (r: OrderOutcome): Reply => {
+  if (r.ok) return reply(200, { ids: r.ids });
+  if (r.error === 'not_found') return missing();
+  if (r.error === 'bad_request') return bad();
+  if (r.error === 'too_many') return reply(400, { error: 'too_long' });
+  if (r.error === 'no_ai') return reply(503, { error: 'no_ai' });
+  if (r.error === 'ai_limit') return reply(429, { error: 'ai_limit' });
+  if (r.error === 'ai') return aiFailed(r.failure);
+  return reply(422, { error: 'selection_failed' });
+};
+
+const proposalReply = (r: ProposalOutcome): Reply => {
+  if (r.ok) return reply(200, { proposals: r.proposals, counts: r.counts });
+  if (r.reason === 'not_found') return missing();
+  if (r.reason === 'empty') return reply(422, { error: 'orders_empty' });
+  if (r.reason === 'ai') return aiFailed(r.failure);
+  return reply(429, { error: 'ai_limit' });
+};
+
 /** 記録の API。当てはまる道がなければ null（呼ぶ側が 404 にする）。 */
 export async function recordApi(request: Request, path: string, deps: RecordDeps): Promise<Reply | null> {
   const { db, runtime } = deps;
@@ -159,6 +206,27 @@ export async function recordApi(request: Request, path: string, deps: RecordDeps
       return reply(200, { patient, encounter });
     }
     return null;
+  }
+
+  // 受け持ち全員の申し送り（段K7）：患者ごとに、いちばん新しい受診の、いちばん新しい残した申し送り（読むだけ。AI は呼ばない）
+  if (path === '/api/handoffs' && method === 'GET') return reply(200, { handoffs: await latestHandoffs(db) });
+
+  // 受け持ちを横断する検索（段K8。CA-070）：決定論で、AI を使わない。読むだけ（何も書かない）。
+  // 問いは保存しない・ログに出さない・外へ送らない（本文で受ける：道の字に問いを載せない）。識別情報の形の問いは、画面と同じ関数で断る
+  if (path === '/api/search') {
+    if (method !== 'POST') return null;
+    const body = await readBody(request, SearchRequest);
+    if (body === null) return bad();
+    const problem = searchQueryProblem(body.q);
+    if (problem === 'shape') return reply(422, { error: 'shape' });
+    if (problem !== null) return bad();
+    const result = searchRecords(await searchInput(db), body.q);
+    return reply(200, {
+      today,
+      total: result.total,
+      shown: result.shown,
+      patients: result.patients.map((p) => ({ ...p, headline: headline({ ...p.patient, encounter: p.encounter }, today) })),
+    });
   }
 
   const onePatient = /^\/api\/patients\/([^/]+)$/.exec(path);
@@ -210,6 +278,26 @@ export async function recordApi(request: Request, path: string, deps: RecordDeps
     return reply(200, { encounter: { ...encounter, end: body.end } });
   }
 
+  // Casebook へ送る（段K10。CA-073）：受診ごとの印（種・症例コード・取り込んだ項目の印）を用意する・直す。パケットは画面が作ってクリップボードに載せるだけで、
+  // サーバーは Casebook へ何も送らない。外来の受診は送れない（Casebook では外来の受診日が要るため）
+  const encounterCasebook = /^\/api\/encounters\/([^/]+)\/casebook$/.exec(path);
+  if (encounterCasebook && (method === 'POST' || method === 'PATCH')) {
+    const encounterId = encounterCasebook[1] ?? '';
+    if (!isUlid(encounterId)) return bad();
+    const encounter = await getEncounter(db, encounterId);
+    if (encounter === null) return missing();
+    if (casebookSetting(encounter.kind) === null) return bad();
+    if (method === 'POST') {
+      const link = await ensureCasebookLink(db, encounter, runtime);
+      return link === null ? reply(500, { error: 'server' }) : reply(200, { casebook: link });
+    }
+    const body = await readBody(request, CasebookPatch);
+    if (body === null) return bad();
+    const r = await patchCasebookLink(db, encounterId, body, runtime);
+    if (!r.ok) return r.reason === 'not_found' ? missing() : bad();
+    return reply(200, { casebook: r.link });
+  }
+
   const encounterSources = /^\/api\/encounters\/([^/]+)\/sources$/.exec(path);
   if (encounterSources && method === 'POST') {
     const encounterId = encounterSources[1] ?? '';
@@ -218,6 +306,12 @@ export async function recordApi(request: Request, path: string, deps: RecordDeps
     if (body === null) return bad();
     const encounter = await getEncounter(db, encounterId);
     if (encounter === null) return missing();
+    // 送る鍵（段K9。CA-072）：同じ受診に同じ鍵の文がもう保存されていれば、保存し直さずに、その文を返す（答えが戻らずに送り直したとき。AI は呼ばない）
+    const sendKey = body.sendKey ?? null;
+    if (sendKey !== null) {
+      const saved = await sourceBySendKey(db, encounterId, sendKey);
+      if (saved !== null) return reply(200, { source: saved.source, observations: saved.observations, again: true });
+    }
     if (deps.selector === null) return reply(503, { error: 'no_ai' });
     if (deps.dailyAiLimit > 0 && (await callsOn(db, today)) >= deps.dailyAiLimit) return reply(429, { error: 'ai_limit' });
     await countCall(db, today);
@@ -245,7 +339,14 @@ export async function recordApi(request: Request, path: string, deps: RecordDeps
       nextDayFrom: body.nextDay === true ? (nextDayPoint(result.text)?.at ?? null) : null,
     };
     const observations: NewObservation[] = result.rows.map((row) => ({ id: newId(runtime), row }));
-    await saveSource(db, source, observations);
+    try {
+      await saveSource(db, source, observations, sendKey);
+    } catch (error) {
+      // 同じ鍵の送り直しが、先の要求と同時に届いた（鍵の重なりで保存できなかった）：先に保存した文を返す
+      const saved = sendKey === null ? null : await sourceBySendKey(db, encounterId, sendKey);
+      if (saved === null) throw error;
+      return reply(200, { source: saved.source, observations: saved.observations, again: true });
+    }
     return reply(200, { source, observations: observations.map((o) => observationOf(source, o)) });
   }
 
@@ -392,6 +493,144 @@ export async function recordApi(request: Request, path: string, deps: RecordDeps
     return reply(422, { error: 'selection_failed' });
   }
 
+  // AI の臨床支援（段K5。CA-064）：組み直す（書籍・ネットの検索には問題の名前だけ。AI の 1 回〔ネットを頼めば、もう 1 回〕。活動中の問題がなければ呼ばない）
+  const support = /^\/api\/patients\/([^/]+)\/support$/.exec(path);
+  if (support && method === 'POST') {
+    const patientId = support[1] ?? '';
+    if (!isUlid(patientId)) return bad();
+    const body = await readBody(request, SupportRequest);
+    if (body === null) return bad();
+    if (deps.organizer === null) return reply(503, { error: 'no_ai' });
+    const r = await generateSupport(db, patientId, { web: body.web, organizer: deps.organizer, books: deps.books, gate, runtime, today });
+    if (!r.ok) {
+      if (r.reason === 'not_found') return missing();
+      if (r.reason === 'empty') return reply(422, { error: 'support_empty' });
+      if (r.reason === 'ai_limit') return reply(429, { error: 'ai_limit' });
+      return aiFailed(r.failure);
+    }
+    return reply(200, { support: r.body });
+  }
+
+  // 結果待ち（段K6。CA-065）：組み直す（AI の 1 回。提出の候補がなければ、AI を呼ばずに空の一覧を残す）・先生の印（ボタンだけ）
+  const pending = /^\/api\/patients\/([^/]+)\/pending$/.exec(path);
+  if (pending && method === 'POST') {
+    const patientId = pending[1] ?? '';
+    if (!isUlid(patientId)) return bad();
+    if (deps.organizer === null) return reply(503, { error: 'no_ai' });
+    const r = await generatePending(db, patientId, deps.organizer, gate, runtime);
+    if (!r.ok) {
+      if (r.reason === 'not_found') return missing();
+      if (r.reason === 'ai_limit') return reply(429, { error: 'ai_limit' });
+      return aiFailed(r.failure);
+    }
+    return reply(200, { pending: r.body });
+  }
+  if (pending && method === 'PATCH') {
+    const patientId = pending[1] ?? '';
+    if (!isUlid(patientId)) return bad();
+    const body = await readBody(request, PendingPatch);
+    if (body === null) return bad();
+    return (await markPending(db, patientId, body, runtime)) ? reply(200, { ok: true }) : missing();
+  }
+
+  // 予定と実施（段K9。CA-071）：組み直す（AI の 1 回。予定の行がなければ、AI を呼ばずに空の一覧を残す）・先生の印（ボタンだけ）
+  const plans = /^\/api\/patients\/([^/]+)\/plans$/.exec(path);
+  if (plans && method === 'POST') {
+    const patientId = plans[1] ?? '';
+    if (!isUlid(patientId)) return bad();
+    if (deps.organizer === null) return reply(503, { error: 'no_ai' });
+    const r = await generatePlans(db, patientId, deps.organizer, gate, runtime);
+    if (!r.ok) {
+      if (r.reason === 'not_found') return missing();
+      if (r.reason === 'ai_limit') return reply(429, { error: 'ai_limit' });
+      return aiFailed(r.failure);
+    }
+    return reply(200, { plans: r.body });
+  }
+  if (plans && method === 'PATCH') {
+    const patientId = plans[1] ?? '';
+    if (!isUlid(patientId)) return bad();
+    const body = await readBody(request, PlanPatch);
+    if (body === null) return bad();
+    return (await markPlan(db, patientId, body, runtime)) ? reply(200, { ok: true }) : missing();
+  }
+
+  // 指示簿（段K11。CA-074〜CA-079）：足す・直す（中止・再開・スケールの体重と段）・消す。字は選別を通す（写した字そのままの欄を除く。選別が要るときだけ AI の 1 回）。
+  // 写す・案を出すは、AI の 1 回で、保存しない（案を返すだけ。先生が採用した項目だけを、足す要求で保存する）。病院のカルテへ戻す向きはない
+  const orderAi = /^\/api\/encounters\/([^/]+)\/orders\/(transcribe|propose)$/.exec(path);
+  if (orderAi && method === 'POST') {
+    const encounterId = orderAi[1] ?? '';
+    if (!isUlid(encounterId)) return bad();
+    if (deps.organizer === null) return reply(503, { error: 'no_ai' });
+    if (orderAi[2] === 'transcribe') {
+      const body = await readBody(request, OrderTranscribeRequest);
+      if (body === null || !isUlid(body.sourceId)) return bad();
+      return proposalReply(await transcribeOrders(db, encounterId, body.sourceId, { organizer: deps.organizer, gate }));
+    }
+    const body = await readBody(request, OrderProposeRequest);
+    if (body === null) return bad();
+    return proposalReply(await proposeOrders(db, encounterId, body.categories, { organizer: deps.organizer, gate, today }));
+  }
+  const orderNew = /^\/api\/encounters\/([^/]+)\/orders$/.exec(path);
+  if (orderNew && method === 'POST') {
+    const encounterId = orderNew[1] ?? '';
+    if (!isUlid(encounterId)) return bad();
+    const body = await readBody(request, OrderAdd);
+    if (body === null) return bad();
+    return orderReply(await addOrders(db, encounterId, body, { selector: deps.selector, gate, runtime }));
+  }
+  const oneOrder = /^\/api\/encounters\/([^/]+)\/orders\/([^/]+)$/.exec(path);
+  if (oneOrder && (method === 'PATCH' || method === 'DELETE')) {
+    const encounterId = oneOrder[1] ?? '';
+    const itemId = oneOrder[2] ?? '';
+    if (!isUlid(encounterId) || !isUlid(itemId)) return bad();
+    if (method === 'DELETE') return (await deleteOrder(db, encounterId, itemId, runtime)) ? reply(200, { removed: itemId }) : missing();
+    const body = await readBody(request, OrderPatch);
+    if (body === null) return bad();
+    return orderReply(await patchOrder(db, encounterId, itemId, body, { selector: deps.selector, gate, runtime }));
+  }
+
+  // スケールのテンプレ（段K11。CA-075。全患者に共通。患者に付かない）：字は選別に通さず、識別情報の形があれば断る（CA-079）。AI を使わない
+  if (path === '/api/order-templates') {
+    if (method === 'GET') return reply(200, { templates: await listOrderTemplates(db) });
+    if (method === 'POST') {
+      const body = await readBody(request, ScaleTemplateBody);
+      if (body === null) return bad();
+      const r = await addTemplate(db, body, runtime);
+      return r.ok ? reply(200, { id: r.id }) : reply(422, { error: 'shape' });
+    }
+    return null;
+  }
+  const oneTemplate = /^\/api\/order-templates\/([^/]+)$/.exec(path);
+  if (oneTemplate && (method === 'PATCH' || method === 'DELETE')) {
+    const id = oneTemplate[1] ?? '';
+    if (!isUlid(id)) return bad();
+    if (method === 'DELETE') return (await removeTemplate(db, id, runtime)) ? reply(200, { removed: id }) : missing();
+    const body = await readBody(request, ScaleTemplateBody);
+    if (body === null) return bad();
+    const r = await patchTemplate(db, id, body, runtime);
+    return r.ok ? reply(200, { id: r.id }) : r.error === 'not_found' ? missing() : reply(422, { error: 'shape' });
+  }
+
+  // 記録への質問（段K6。CA-066）：保存しない（問い・答えとも）。問いに識別情報の形があれば送らない（相談の頼みと同じ）。AI の 1 回
+  const ask = /^\/api\/patients\/([^/]+)\/ask$/.exec(path);
+  if (ask && method === 'POST') {
+    const patientId = ask[1] ?? '';
+    if (!isUlid(patientId)) return bad();
+    const body = await readBody(request, AskRequest);
+    if (body === null) return bad();
+    if (deps.organizer === null) return reply(503, { error: 'no_ai' });
+    if (findShapes(body.question).length > 0) return reply(422, { error: 'shape' });
+    const r = await askRecord(db, patientId, body.question, { organizer: deps.organizer, gate, today });
+    if (!r.ok) {
+      if (r.reason === 'not_found') return missing();
+      if (r.reason === 'empty') return reply(422, { error: 'ask_empty' });
+      if (r.reason === 'ai_limit') return reply(429, { error: 'ai_limit' });
+      return aiFailed(r.failure);
+    }
+    return reply(200, { answer: r.reply });
+  }
+
   // 数の印の照らし合わせの表（段I）：AI を使わない（残した記載を開いたときの印に使う）。数だけを返す
   const docBacking = /^\/api\/encounters\/([^/]+)\/documents\/backing$/.exec(path);
   if (docBacking && method === 'POST') {
@@ -428,6 +667,33 @@ export async function recordApi(request: Request, path: string, deps: RecordDeps
     const id = oneDoc[1] ?? '';
     if (!isUlid(id)) return bad();
     return (await deleteDocument(db, id, runtime)) ? reply(200, { removed: id }) : missing();
+  }
+
+  // 申し送りを残す・直す・消す（段K7。CA-067）：重症度は先生が選んだもの。文は選別（C-1）を通す（1回の選別）
+  const handoffNew = /^\/api\/encounters\/([^/]+)\/handoffs$/.exec(path);
+  if (handoffNew && method === 'POST') {
+    const encounterId = handoffNew[1] ?? '';
+    if (!isUlid(encounterId)) return bad();
+    const body = await readBody(request, HandoffNew);
+    if (body === null) return bad();
+    if (deps.selector === null) return reply(503, { error: 'no_ai' });
+    if (!(await gate.take())) return reply(429, { error: 'ai_limit' });
+    return docReply(await addHandoff(db, encounterId, body, deps.selector, runtime));
+  }
+  const oneHandoff = /^\/api\/handoffs\/([^/]+)$/.exec(path);
+  if (oneHandoff && method === 'PATCH') {
+    const id = oneHandoff[1] ?? '';
+    if (!isUlid(id)) return bad();
+    const body = await readBody(request, HandoffPatch);
+    if (body === null) return bad();
+    if (deps.selector === null) return reply(503, { error: 'no_ai' });
+    if (!(await gate.take())) return reply(429, { error: 'ai_limit' });
+    return docReply(await patchHandoff(db, id, body, deps.selector, runtime));
+  }
+  if (oneHandoff && method === 'DELETE') {
+    const id = oneHandoff[1] ?? '';
+    if (!isUlid(id)) return bad();
+    return (await deleteHandoff(db, id, runtime)) ? reply(200, { removed: id }) : missing();
   }
 
   // 問題以外の事実を直す（段3e）：外す・戻す、投薬の動き・できごとの種類・日時を選び直す

@@ -1,6 +1,9 @@
 // サーバーの API を呼ぶ、ただ1つの場所（ESLint と試験が見張る）。宛先は、自分のオリジンの /api/ だけ。
 // 印（Cookie）は、ブラウザが付ける。画面のプログラムからは読めない（HttpOnly）。
 import type {
+  SearchHit,
+  SearchPatient,
+  SearchEncounter,
   AuthorRole,
   Comparator,
   DeviceKind,
@@ -24,7 +27,9 @@ import type {
   ListItem,
   ListPatch,
   DocType,
+  HandoffSeverity,
   SavedDocument,
+  SavedHandoff,
   SavedSection,
   PlanKind,
   SegmentPatch,
@@ -43,6 +48,21 @@ import type {
   SegmentLabel,
   Sex,
   SourceKind,
+  SupportBody,
+  AskReply,
+  PendingBody,
+  PendingMark,
+  PlanBody,
+  PlanMark,
+  CasebookLink,
+  CasebookPatch,
+  OrderCategory,
+  OrderFields,
+  OrderItem,
+  OrderNew,
+  OrderProposal,
+  ScaleTemplate,
+  ScaleTemplateBody,
 } from '@clinical-carte/core';
 
 export interface DeviceView {
@@ -73,6 +93,9 @@ export type ApiError =
   | 'conflict'
   | 'document_empty'
   | 'list_empty'
+  | 'support_empty'
+  | 'ask_empty'
+  | 'orders_empty'
   | 'shape'
   | 'bad_span'
   | 'too_long';
@@ -98,6 +121,9 @@ const KNOWN: readonly ApiError[] = [
   'conflict',
   'document_empty',
   'list_empty',
+  'support_empty',
+  'ask_empty',
+  'orders_empty',
   'shape',
   'bad_span',
 ];
@@ -106,11 +132,17 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-async function call(method: 'GET' | 'POST' | 'PATCH' | 'PUT' | 'DELETE', path: string, body?: unknown): Promise<Result<Record<string, unknown>>> {
+async function call(method: 'GET' | 'POST' | 'PATCH' | 'PUT' | 'DELETE', path: string, body?: unknown, timeoutMs?: number): Promise<Result<Record<string, unknown>>> {
   let response: Response;
   let data: unknown;
+  // 待つ時間の上限（文を入れるときだけ。段K9）：電波の弱いところで、答えが戻らないまま待ち続けない。過ぎたら、つながらないのと同じ扱い（送り待ちになる）
+  const controller = timeoutMs === undefined ? null : new AbortController();
+  const timer = controller === null ? null : setTimeout(() => {
+    controller.abort();
+  }, timeoutMs);
   try {
     const init: RequestInit = { method, credentials: 'same-origin', cache: 'no-store', redirect: 'error' };
+    if (controller !== null) init.signal = controller.signal;
     if (body !== undefined) {
       init.headers = { 'content-type': 'application/json' };
       init.body = JSON.stringify(body);
@@ -119,6 +151,8 @@ async function call(method: 'GET' | 'POST' | 'PATCH' | 'PUT' | 'DELETE', path: s
     data = await response.json();
   } catch {
     return { ok: false, error: 'network' };
+  } finally {
+    if (timer !== null) clearTimeout(timer);
   }
   if (!isRecord(data)) return { ok: false, error: 'network' };
   if (response.ok) return { ok: true, value: data };
@@ -346,12 +380,43 @@ export interface ProblemListView {
   readonly items: readonly ListItem[];
 }
 
+/** AI の臨床支援（段K5。CA-064） */
+export interface SupportView {
+  readonly madeAt: string;
+  readonly promptVersion: string;
+  readonly basis: string;
+  readonly body: SupportBody;
+}
+
+/** Casebook へ送る印（段K10。CA-073） */
+export interface CasebookLinkView extends CasebookLink {
+  readonly encounterId: string;
+}
+
+/** 結果待ち（段K6。CA-065） */
+export interface PendingView {
+  readonly madeAt: string;
+  readonly promptVersion: string;
+  readonly basis: string;
+  readonly body: PendingBody;
+}
+
+/** 予定と実施（段K9。CA-071） */
+export interface PlanView {
+  readonly madeAt: string;
+  readonly promptVersion: string;
+  readonly basis: string;
+  readonly body: PlanBody;
+}
+
 export interface PatientSummary {
   readonly patient: Patient;
   readonly latest: Encounter | null;
   readonly sources: number;
   /** 回診リストの材料（段3d） */
   readonly round: RoundSummary;
+  /** いちばん新しい受診の、いちばん新しい申し送り（段K7）の日と、先生が選んだ重症度だけ（なければ null） */
+  readonly handoff: { readonly id: string; readonly day: string; readonly severity: HandoffSeverity } | null;
 }
 
 /** 残した A/P（段5）。参照は場所・題・頁・URL だけ（本文なし） */
@@ -388,12 +453,32 @@ export interface PatientRecord {
   readonly scaleLinks: readonly ScaleLinkView[];
   /** 残したカルテ記載（段I。CA-054） */
   readonly documents: readonly SavedDocument[];
+  /** 残した申し送り（段K7。CA-067。新しい順） */
+  readonly handoffs: readonly SavedHandoff[];
   /** 経過の出来事（CA-056） */
   readonly course: readonly CourseItem[];
   /** AI のプロブレムリスト（CA-057。まだなければ null） */
   readonly problemList: ProblemListView | null;
+  /** AI の臨床支援（段K5。まだなければ null） */
+  readonly support: SupportView | null;
+  /** 結果待ち（段K6。まだなければ null） */
+  readonly pending: PendingView | null;
+  /** 予定と実施（段K9。まだなければ null） */
+  readonly plans: PlanView | null;
+  /** Casebook へ送る印（段K10。受診ごと。種・症例コード・取り込んだ項目の印だけ） */
+  readonly casebook: readonly CasebookLinkView[];
+  /** 指示簿（段K11。受診ごとに1つ） */
+  readonly orders: readonly OrderSheetView[];
+  /** スケールのテンプレ（段K11。全患者に共通） */
+  readonly orderTemplates: readonly ScaleTemplate[];
   /** サーバーの、今日（日本の日） */
   readonly today: string;
+}
+
+export interface OrderSheetView {
+  readonly encounterId: string;
+  readonly items: readonly OrderItem[];
+  readonly updatedAt: string;
 }
 
 /** 答えの中の欄を、決めた型として読む（欄がなければ、つながらないのと同じ扱い） */
@@ -417,8 +502,8 @@ export async function createPatient(input: NewPatient): Promise<Result<Patient>>
 export async function getRecord(patientId: string): Promise<Result<PatientRecord>> {
   const result = await call('GET', `patients/${encodeURIComponent(patientId)}`);
   if (!result.ok) return result;
-  const { patient, encounters, sources, observations, segments, medications, events, problems, problemThreads, history, factEdits, userEdits, apNotes, scaleLinks, documents, course, problemList, today } = result.value;
-  const lists = [encounters, sources, observations, segments, medications, events, problems, problemThreads, history, factEdits, userEdits, apNotes, scaleLinks, documents, course];
+  const { patient, encounters, sources, observations, segments, medications, events, problems, problemThreads, history, factEdits, userEdits, apNotes, scaleLinks, documents, handoffs, course, problemList, support, pending, plans, casebook, orders, orderTemplates, today } = result.value;
+  const lists = [encounters, sources, observations, segments, medications, events, problems, problemThreads, history, factEdits, userEdits, apNotes, scaleLinks, documents, handoffs, course];
   if (!isRecord(patient) || lists.some((l) => !Array.isArray(l)) || typeof today !== 'string') return { ok: false, error: 'network' };
   return {
     ok: true,
@@ -438,8 +523,15 @@ export async function getRecord(patientId: string): Promise<Result<PatientRecord
       apNotes: apNotes as ApNote[],
       scaleLinks: scaleLinks as ScaleLinkView[],
       documents: documents as SavedDocument[],
+      handoffs: handoffs as SavedHandoff[],
       course: course as CourseItem[],
       problemList: isRecord(problemList) ? (problemList as unknown as ProblemListView) : null,
+      support: isRecord(support) && isRecord(support['body']) ? (support as unknown as SupportView) : null,
+      pending: isRecord(pending) && isRecord(pending['body']) ? (pending as unknown as PendingView) : null,
+      plans: isRecord(plans) && isRecord(plans['body']) ? (plans as unknown as PlanView) : null,
+      casebook: Array.isArray(casebook) ? (casebook as CasebookLinkView[]) : [],
+      orders: Array.isArray(orders) ? (orders as OrderSheetView[]) : [],
+      orderTemplates: Array.isArray(orderTemplates) ? (orderTemplates as ScaleTemplate[]) : [],
       today,
     },
   };
@@ -467,9 +559,13 @@ export async function setEncounterEnd(encounterId: string, end: string | null): 
   return field<Encounter>(await call('PATCH', `encounters/${encodeURIComponent(encounterId)}`, { end }), 'encounter');
 }
 
-/** 文を入れる。サーバーで、AI の選別と置き換えを通ったものだけが保存され、保存された形が返る。 */
+/** 文を入れるときに待つ時間の上限（ミリ秒。サーバーの選別は、AI の待ちを含めて長くかかることがあるので長め）。過ぎたら、つながらない扱い（段K9） */
+export const ADD_SOURCE_TIMEOUT_MS = 120_000;
+
+/** 文を入れる。サーバーで、AI の選別と置き換えを通ったものだけが保存され、保存された形が返る。
+ *  送る鍵（sendKey）があれば、送り直しても、サーバーは同じ文を二重に保存しない（段K9） */
 export async function addSource(encounterId: string, input: NewSource): Promise<Result<{ source: Source; observations: readonly Observation[] }>> {
-  const result = await call('POST', `encounters/${encodeURIComponent(encounterId)}/sources`, input);
+  const result = await call('POST', `encounters/${encodeURIComponent(encounterId)}/sources`, input, ADD_SOURCE_TIMEOUT_MS);
   if (!result.ok) return result;
   const { source, observations } = result.value;
   return isRecord(source) && Array.isArray(observations) ? { ok: true, value: { source: source as unknown as Source, observations: observations as Observation[] } } : { ok: false, error: 'network' };
@@ -718,6 +814,28 @@ export async function deleteDocument(id: string): Promise<Result<null>> {
   return done(await call('DELETE', `documents/${encodeURIComponent(id)}`));
 }
 
+/** 申し送りを残す（段K7。重症度は先生が選んだもの。文はサーバーで選別を通す） */
+export async function saveHandoff(encounterId: string, body: { day: string; severity: HandoffSeverity; sections: readonly SavedSection[]; origin: 'ai' | 'self'; edited: boolean }): Promise<Result<string>> {
+  return field<string>(await call('POST', `encounters/${encodeURIComponent(encounterId)}/handoffs`, body), 'id');
+}
+
+/** 残した申し送りを直す（重症度の選び直しも。選別を通す） */
+export async function patchHandoff(id: string, body: { severity: HandoffSeverity; sections: readonly SavedSection[] }): Promise<Result<null>> {
+  return done(await call('PATCH', `handoffs/${encodeURIComponent(id)}`, body));
+}
+
+export async function deleteHandoff(id: string): Promise<Result<null>> {
+  return done(await call('DELETE', `handoffs/${encodeURIComponent(id)}`));
+}
+
+/** 受け持ち全員の申し送り（段K7）：患者ごとに、いちばん新しい受診の、いちばん新しい残した申し送り（読むだけ） */
+export async function listHandoffs(): Promise<Result<readonly { readonly patientId: string; readonly handoff: SavedHandoff }[]>> {
+  const result = await call('GET', 'handoffs');
+  if (!result.ok) return result;
+  const list = result.value['handoffs'];
+  return Array.isArray(list) ? { ok: true, value: list as { patientId: string; handoff: SavedHandoff }[] } : { ok: false, error: 'network' };
+}
+
 /** 書籍の参照元（clinical-RAG）のつながり：設定なし・つながっている・鍵が違う・つながらない */
 export type BookStatus = 'off' | 'ok' | 'unauthorized' | 'unavailable';
 
@@ -741,4 +859,118 @@ export async function generateProblemList(patientId: string): Promise<Result<{ r
 /** 先生の直し（名前はサーバーで選別を通す） */
 export async function patchProblemList(patientId: string, patch: ListPatch): Promise<Result<null>> {
   return done(await call('PATCH', `patients/${encodeURIComponent(patientId)}/problem-list`, patch));
+}
+
+// --- AI の臨床支援（段K5。CA-064）
+
+/** 記録から、AI が臨床支援を組み直す（ネットの出典も探すかを選ぶ。書籍は設定があるとき、いつも） */
+export async function generateSupport(patientId: string, web: boolean): Promise<Result<null>> {
+  return done(await call('POST', `patients/${encodeURIComponent(patientId)}/support`, { web }));
+}
+
+// --- 結果待ち（段K6。CA-065）
+
+/** 記録から、結果待ちの一覧を組み直す（AI の 1 回。提出の候補がなければ、AI を呼ばずに空の一覧） */
+export async function generatePending(patientId: string): Promise<Result<null>> {
+  return done(await call('POST', `patients/${encodeURIComponent(patientId)}/pending`, {}));
+}
+
+/** 先生の印（結果を確かめた・外す・戻す）。ボタンだけ */
+export async function markPending(patientId: string, key: string, mark: PendingMark): Promise<Result<null>> {
+  return done(await call('PATCH', `patients/${encodeURIComponent(patientId)}/pending`, { key, mark }));
+}
+
+// --- 予定と実施（段K9。CA-071）
+
+/** 記録から、予定と実施の一覧を組み直す（AI の 1 回。予定の行がなければ、AI を呼ばずに空の一覧） */
+export async function generatePlans(patientId: string): Promise<Result<null>> {
+  return done(await call('POST', `patients/${encodeURIComponent(patientId)}/plans`, {}));
+}
+
+/** 先生の印（実施を確かめた・中止・不要・外す・戻す）。ボタンだけ */
+export async function markPlan(patientId: string, key: string, mark: PlanMark): Promise<Result<null>> {
+  return done(await call('PATCH', `patients/${encodeURIComponent(patientId)}/plans`, { key, mark }));
+}
+
+// --- 記録への質問（段K6。CA-066）
+
+/** 記録に聞く（保存しない。問いも答えも、画面のメモリだけ） */
+export async function askRecord(patientId: string, question: string): Promise<Result<AskReply>> {
+  return field<AskReply>(await call('POST', `patients/${encodeURIComponent(patientId)}/ask`, { question }), 'answer');
+}
+
+/** 受け持ちを横断する検索（段K8。CA-070）の答え。保存しない（画面のメモリだけ） */
+export interface SearchReply {
+  readonly total: number;
+  readonly shown: number;
+  readonly patients: readonly { readonly patientId: string; readonly headline: string; readonly patient: SearchPatient; readonly encounter: SearchEncounter | null; readonly total: number; readonly hits: readonly SearchHit[] }[];
+}
+
+/** 受け持ちから探す（AI を使わない）。問いは本文で送る（道の字に載せない）。サーバーは保存しない */
+export async function searchAll(q: string): Promise<Result<SearchReply>> {
+  const result = await call('POST', 'search', { q });
+  if (!result.ok) return result;
+  const { total, shown, patients } = result.value;
+  return typeof total === 'number' && typeof shown === 'number' && Array.isArray(patients) ? { ok: true, value: { total, shown, patients: patients as SearchReply['patients'] } } : { ok: false, error: 'network' };
+}
+
+/** Casebook へ送る印を用意する（段K10。なければ新しい種で作る。Casebook へは何も送らない） */
+export async function ensureCasebookLink(encounterId: string): Promise<Result<CasebookLinkView>> {
+  return field<CasebookLinkView>(await call('POST', `encounters/${encodeURIComponent(encounterId)}/casebook`, {}), 'casebook');
+}
+
+/** 症例コード・Casebook が取り込んだ項目の印・最初からやり直す（段K10） */
+export async function patchCasebookLink(encounterId: string, patch: CasebookPatch): Promise<Result<CasebookLinkView>> {
+  return field<CasebookLinkView>(await call('PATCH', `encounters/${encodeURIComponent(encounterId)}/casebook`, patch), 'casebook');
+}
+
+// --- 指示簿（段K11。CA-074〜CA-079）。病院のカルテへ戻す向き（コピー）はない
+
+/** 写す・案を出すの答え（保存しない。画面のメモリだけ） */
+export interface OrderProposals {
+  readonly proposals: readonly OrderProposal[];
+  readonly counts: { readonly notOrder: number; readonly cleared: number; readonly shapes: number; readonly rejected: Readonly<Record<string, number>> };
+}
+
+function proposalsOf(result: Result<Record<string, unknown>>): Result<OrderProposals> {
+  if (!result.ok) return result;
+  const { proposals, counts } = result.value;
+  return Array.isArray(proposals) && isRecord(counts) ? { ok: true, value: { proposals: proposals as OrderProposal[], counts: counts as unknown as OrderProposals['counts'] } } : { ok: false, error: 'network' };
+}
+
+/** 記録の文から写す（AI の 1 回。保存しない） */
+export async function transcribeOrders(encounterId: string, sourceId: string): Promise<Result<OrderProposals>> {
+  return proposalsOf(await call('POST', `encounters/${encodeURIComponent(encounterId)}/orders/transcribe`, { sourceId }));
+}
+
+/** AI の案を出す（AI の 1 回。保存しない）。categories が空なら、すべての欄 */
+export async function proposeOrders(encounterId: string, categories: readonly OrderCategory[]): Promise<Result<OrderProposals>> {
+  return proposalsOf(await call('POST', `encounters/${encodeURIComponent(encounterId)}/orders/propose`, { categories }));
+}
+
+/** 指示簿に足す（先生が打った字・AI の案の字は、サーバーで選別を通す） */
+export async function addOrders(encounterId: string, items: readonly OrderNew[]): Promise<Result<null>> {
+  return done(await call('POST', `encounters/${encodeURIComponent(encounterId)}/orders`, { items }));
+}
+
+/** 欄を直す・中止／再開・スケールの体重と段 */
+export async function patchOrder(encounterId: string, itemId: string, patch: { fields: OrderFields } | { status: 'active' | 'stopped' } | { weightKg: number | null; step: number | null }): Promise<Result<null>> {
+  return done(await call('PATCH', `encounters/${encodeURIComponent(encounterId)}/orders/${encodeURIComponent(itemId)}`, patch));
+}
+
+export async function deleteOrder(encounterId: string, itemId: string): Promise<Result<null>> {
+  return done(await call('DELETE', `encounters/${encodeURIComponent(encounterId)}/orders/${encodeURIComponent(itemId)}`));
+}
+
+/** スケールのテンプレ（全患者に共通。患者の情報を書かない） */
+export async function addTemplate(body: ScaleTemplateBody): Promise<Result<null>> {
+  return done(await call('POST', 'order-templates', body));
+}
+
+export async function patchTemplate(id: string, body: ScaleTemplateBody): Promise<Result<null>> {
+  return done(await call('PATCH', `order-templates/${encodeURIComponent(id)}`, body));
+}
+
+export async function removeTemplate(id: string): Promise<Result<null>> {
+  return done(await call('DELETE', `order-templates/${encodeURIComponent(id)}`));
 }

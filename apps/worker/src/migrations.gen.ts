@@ -135,5 +135,59 @@ export const MIGRATIONS: readonly Migration[] = [
       "CREATE TABLE IF NOT EXISTS problem_list_edits ( id TEXT PRIMARY KEY, patient_id TEXT NOT NULL REFERENCES patients (id) ON DELETE CASCADE, at TEXT NOT NULL CHECK (length(at) = 16), item_key TEXT NOT NULL, field TEXT NOT NULL CHECK (field IN ('name', 'certainty', 'activity', 'hidden', 'move')), before TEXT, after TEXT )",
       "CREATE INDEX IF NOT EXISTS problem_list_edits_by_patient ON problem_list_edits (patient_id, at)"
     ]
+  },
+  {
+    "name": "0012_clinical_support",
+    "statements": [
+      "CREATE TABLE IF NOT EXISTS clinical_support ( patient_id TEXT PRIMARY KEY REFERENCES patients (id) ON DELETE CASCADE, made_at TEXT NOT NULL CHECK (length(made_at) = 16), prompt_version TEXT NOT NULL, basis TEXT NOT NULL, body TEXT NOT NULL )"
+    ]
+  },
+  {
+    "name": "0013_pending_results",
+    "statements": [
+      "CREATE TABLE IF NOT EXISTS pending_results ( patient_id TEXT PRIMARY KEY REFERENCES patients (id) ON DELETE CASCADE, made_at TEXT NOT NULL CHECK (length(made_at) = 16), prompt_version TEXT NOT NULL, basis TEXT NOT NULL, body TEXT NOT NULL )",
+      "CREATE TABLE IF NOT EXISTS pending_result_edits ( id TEXT PRIMARY KEY, patient_id TEXT NOT NULL REFERENCES patients (id) ON DELETE CASCADE, at TEXT NOT NULL CHECK (length(at) = 16), item_key TEXT NOT NULL, before TEXT NOT NULL CHECK (before IN ('none', 'checked', 'hidden')), after TEXT NOT NULL CHECK (after IN ('none', 'checked', 'hidden')) )",
+      "CREATE INDEX IF NOT EXISTS pending_result_edits_by_patient ON pending_result_edits (patient_id, at)"
+    ]
+  },
+  {
+    "name": "0014_handoffs",
+    "statements": [
+      "CREATE TABLE IF NOT EXISTS handoffs ( id TEXT PRIMARY KEY, patient_id TEXT NOT NULL REFERENCES patients (id) ON DELETE CASCADE, encounter_id TEXT NOT NULL REFERENCES encounters (id) ON DELETE CASCADE, day TEXT NOT NULL CHECK (length(day) = 10), severity TEXT NOT NULL CHECK (severity IN ('stable', 'watcher', 'unstable')), sections TEXT NOT NULL, origin TEXT NOT NULL CHECK (origin IN ('self', 'ai', 'ai_edited')), entered_at TEXT NOT NULL CHECK (length(entered_at) = 16), updated_at TEXT NOT NULL CHECK (length(updated_at) = 16) )",
+      "CREATE INDEX IF NOT EXISTS handoffs_by_encounter ON handoffs (encounter_id, day)",
+      "CREATE INDEX IF NOT EXISTS handoffs_by_patient ON handoffs (patient_id, day)"
+    ]
+  },
+  {
+    "name": "0015_plan_checks",
+    "statements": [
+      "CREATE TABLE IF NOT EXISTS plan_checks ( patient_id TEXT PRIMARY KEY REFERENCES patients (id) ON DELETE CASCADE, made_at TEXT NOT NULL CHECK (length(made_at) = 16), prompt_version TEXT NOT NULL, basis TEXT NOT NULL, body TEXT NOT NULL )",
+      "CREATE TABLE IF NOT EXISTS plan_check_edits ( id TEXT PRIMARY KEY, patient_id TEXT NOT NULL REFERENCES patients (id) ON DELETE CASCADE, at TEXT NOT NULL CHECK (length(at) = 16), item_key TEXT NOT NULL, before TEXT NOT NULL CHECK (before IN ('none', 'confirmed', 'cancelled', 'hidden')), after TEXT NOT NULL CHECK (after IN ('none', 'confirmed', 'cancelled', 'hidden')) )",
+      "CREATE INDEX IF NOT EXISTS plan_check_edits_by_patient ON plan_check_edits (patient_id, at)"
+    ]
+  },
+  {
+    "name": "0016_send_key",
+    "statements": [
+      "ALTER TABLE sources ADD COLUMN send_key TEXT CHECK (send_key IS NULL OR length(send_key) = 26)",
+      "CREATE UNIQUE INDEX IF NOT EXISTS sources_send_key ON sources (encounter_id, send_key)"
+    ]
+  },
+  {
+    "name": "0017_casebook_links",
+    "statements": [
+      "CREATE TABLE IF NOT EXISTS casebook_links ( encounter_id TEXT PRIMARY KEY REFERENCES encounters (id) ON DELETE CASCADE, patient_id TEXT NOT NULL REFERENCES patients (id) ON DELETE CASCADE, seed TEXT NOT NULL CHECK (length(seed) = 10), case_code TEXT CHECK (case_code IS NULL OR length(case_code) = 6), sent TEXT NOT NULL, packets INTEGER NOT NULL CHECK (packets >= 0) )",
+      "CREATE INDEX IF NOT EXISTS casebook_links_by_patient ON casebook_links (patient_id)"
+    ]
+  },
+  {
+    "name": "0018_orders",
+    "statements": [
+      "CREATE TABLE IF NOT EXISTS order_sheets ( encounter_id TEXT PRIMARY KEY REFERENCES encounters (id) ON DELETE CASCADE, patient_id TEXT NOT NULL REFERENCES patients (id) ON DELETE CASCADE, items TEXT NOT NULL, updated_at TEXT NOT NULL CHECK (length(updated_at) = 16) )",
+      "CREATE INDEX IF NOT EXISTS order_sheets_by_patient ON order_sheets (patient_id)",
+      "CREATE TABLE IF NOT EXISTS order_edits ( id TEXT PRIMARY KEY, patient_id TEXT NOT NULL REFERENCES patients (id) ON DELETE CASCADE, encounter_id TEXT NOT NULL, at TEXT NOT NULL CHECK (length(at) = 16), item_id TEXT NOT NULL, action TEXT NOT NULL CHECK (action IN ('add', 'edit', 'stop', 'restart', 'scale', 'delete')), origin TEXT NOT NULL CHECK (origin IN ('self', 'ai', 'transcribed')) )",
+      "CREATE INDEX IF NOT EXISTS order_edits_by_patient ON order_edits (patient_id, at)",
+      "CREATE TABLE IF NOT EXISTS order_templates ( id TEXT PRIMARY KEY, body TEXT NOT NULL, created_at TEXT NOT NULL CHECK (length(created_at) = 16), updated_at TEXT NOT NULL CHECK (length(updated_at) = 16), removed_at TEXT CHECK (removed_at IS NULL OR length(removed_at) = 16) )"
+    ]
   }
 ];

@@ -1,6 +1,6 @@
-// 画面の見直しの E2E（段K。CA-058）：絵と図（最新バイタルの小さな推移の線・記録の地図・24時間の数の札・問題の帯・日の帯の絵の印・
+// 画面の見直しの E2E（段L。CA-080）：絵と図（最新バイタルの小さな推移の線・記録の地図・24時間の数の札・問題ごとの書かれた日の点・日の帯の絵の印・
 // 時系列の縦の線）と、骨組み（細い帯・電話では下のタブ）。AI は試験の代役。文と値はすべて架空（synthetic）。
-// 判定しないこと（値で色を変えない・判定の語を出さない）、書かれていない先へ帯を伸ばさないこと、電話の幅ではみ出さないことを確かめる。
+// 足した図が、値で色・大きさを変えないこと・判定の語を出さないこと、問題の点を線で結ばないこと（期間の帯はボードだけ）、電話の幅ではみ出さないことを確かめる。
 import type { LinkAnswer, OrganizeAnswer } from '@clinical-carte/core';
 import type { Browser, BrowserContext, Page } from 'playwright-core';
 import { devices as presets } from 'playwright-core';
@@ -196,7 +196,7 @@ const shot = async (page: Page, name: string, fullPage = false): Promise<void> =
 /** 画面の上へ（撮るため） */
 const toTop = (page: Page) => page.evaluate(() => { window.scrollTo(0, 0); });
 
-describe('画面の見直し（段K）', () => {
+describe('画面の見直し（段L）', () => {
   test('いま：最新バイタルの札に小さな推移の線。記録の地図は「入っているか」だけ。24時間の数の札。判定の語・値による色分けを出さない', async () => {
     const page = await openCase();
     await page.getByTestId('tab-state').click();
@@ -227,14 +227,14 @@ describe('画面の見直し（段K）', () => {
     if (box === null) throw new Error('地図がない');
     await hit.click({ position: { x: (box.width / 4) * 2.5, y: 40 } });
     expect(await page.getByTestId('record-map-readout').textContent()).toContain('11/19');
-    expect(await page.getByTestId('record-map-readout').textContent()).toContain('記録 0・バイタル 0・検査 0・投薬 0・できごと 0');
+    expect(await page.getByTestId('record-map-readout').textContent()).toContain('記録 0・バイタル 0・検査 0・できごと 0・投薬 0');
     await hit.click({ position: { x: (box.width / 4) * 3.5, y: 40 } });
     expect(await page.getByTestId('record-map-readout').textContent()).toContain('11/20');
 
     // 24時間の数の札（種類ごとの数だけ）
     expect(await page.getByTestId('state-recent-tiles').textContent()).toMatch(/\d+問題\d+投薬の動き\d+できごと\d+検査の項目/u);
-    // 判定の語を出さない
-    expect(await page.getByTestId('state').textContent()).not.toMatch(/異常|正常値|高値|低値|警告|悪化|上昇傾向|低下傾向/u);
+    // 足した図は、判定の語を出さない（基準範囲の印・スコアは、これまでの場所だけ。CA-059）
+    for (const id of ['latest', 'record-map', 'state-recent-tiles']) expect(await page.getByTestId(id).textContent()).not.toMatch(/異常|正常|高値|低値|警告|悪化|上昇|低下/u);
     expect(await fits(page)).toBe(true);
     await toTop(page);
     await shot(page, 'k-state-iphone');
@@ -246,7 +246,7 @@ describe('画面の見直し（段K）', () => {
     expect(problems).toEqual([]);
   });
 
-  test('問題の帯：書かれた日時に点。線は最初から最後に書かれた日時までで、その先へ伸びない。活動中は実線、それ以外は点線', async () => {
+  test('問題ごとの、書かれた日の点：書かれた日時に点だけ。線で結ばない（期間の帯は、経過表のボードだけ）。活動中でないものは、状態の字', async () => {
     const page = await openCase();
     await page.getByTestId('tab-problems').click();
     await expect.poll(() => page.getByTestId('plist-item').count(), { timeout: 10_000 }).toBe(2);
@@ -255,17 +255,13 @@ describe('画面の見直し（段K）', () => {
     expect(await lanes.nth(0).textContent()).toContain('#1 市中肺炎（右下葉）');
     expect(await lanes.nth(1).textContent()).toContain('#2 低Na血症');
     expect(await lanes.nth(1).textContent()).toContain('解決');
-    expect(await lanes.nth(0).locator('.problem-span:not(.closed)').count()).toBe(1);
-    expect(await lanes.nth(1).locator('.problem-span.closed').count()).toBe(1);
-    // 来院前の出来事（3日前・前日）と、3回の記載
-    expect(await lanes.nth(0).locator('.problem-mark').count()).toBe(5);
-    expect(await lanes.nth(1).locator('.problem-mark').count()).toBe(3);
-    // 線の右の端は、最後の点（最後に書かれた日時）と同じ場所。その先へは伸ばさない
-    for (const lane of [lanes.nth(0), lanes.nth(1)]) {
-      const spanEnd = Number(await lane.locator('.problem-span').getAttribute('x2'));
-      const marks = await lane.locator('.problem-mark').evaluateAll((els) => els.map((el) => Number(el.getAttribute('cx'))));
-      expect(spanEnd).toBeCloseTo(Math.max(...marks), 3);
-    }
+    // 来院前の出来事（3日前・前日）と、3回の記載。点は、書かれた日時の数だけ
+    expect(await lanes.nth(0).locator('.written-mark').count()).toBe(5);
+    expect(await lanes.nth(1).locator('.written-mark').count()).toBe(3);
+    // 線で結ばない（期間を、ボードの「問題の帯」と別の決まりで描かない）
+    expect(await page.getByTestId('problem-lanes').locator('.problem-span').count()).toBe(0);
+    expect(await lanes.nth(0).getAttribute('class')).not.toContain('closed');
+    expect(await lanes.nth(1).getAttribute('class')).toContain('closed');
     await lanes.nth(1).getByTestId('problem-lane-hit').click();
     const readout = page.getByTestId('problem-lanes-readout');
     expect(await readout.textContent()).toContain('#2 低Na血症（解決）');

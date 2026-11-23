@@ -1,11 +1,13 @@
 // 「いまの状態」（段3b。CA-023・CA-026・CA-027）：患者の現在地を1画面に。作文しない：1行の要約は決定論のひな形、
 // ほかは整理した事実と、保存した文の区切りの字そのもの。「いま」は記録の上での最後の日時で、端末の時計ではない。判定しない。
-import { EVENT_KIND_NAMES, LIST_ACTIVITY_NAMES, LIST_CERTAINTY_NAMES, type ListItem, MEDICATION_ACTION_NAMES, numberedList, PROBLEM_ACTIVITY_NAMES, PROBLEM_STATUS_NAMES, type PatientState, type RecentItem, recentGroups, SEGMENT_LABEL_NAMES } from '@clinical-carte/core';
+import { type DeviceLine, EVENT_KIND_NAMES, type MedicationDays, LIST_ACTIVITY_NAMES, LIST_CERTAINTY_NAMES, type ListItem, MEDICATION_ACTION_NAMES, numberedList, PROBLEM_ACTIVITY_NAMES, PROBLEM_STATUS_NAMES, type PatientState, type PresetRecordInput, type RecentItem, recentGroups, SEGMENT_LABEL_NAMES } from '@clinical-carte/core';
 import { type ReactNode, useState } from 'react';
 
 import { showDateTime } from './format.ts';
 import { Icon, type IconName } from './Icon.tsx';
 import type { Source } from './net/api.ts';
+import { markFor, refLetter, type RefPatient } from './refmark.ts';
+import { ScoresView } from './ScoresView.tsx';
 
 function recentText(item: RecentItem): { tag: string; text: string } {
   switch (item.type) {
@@ -22,7 +24,25 @@ function recentText(item: RecentItem): { tag: string; text: string } {
   }
 }
 
-const labText = (item: Extract<RecentItem, { type: 'lab' }>): string => `${item.name} ${item.comparator ?? ''}${item.valueText}${item.unit === null ? '' : ` ${item.unit}`}`;
+/** 開始から何日目（段K1。数えるだけ。開始の記載がなければ出さない） */
+function dayTag(days: MedicationDays): string | null {
+  if (days.day === null) return null;
+  return days.stoppedAt === null ? `開始から ${String(days.day)} 日目` : `${String(days.day)} 日間（中止まで）`;
+}
+
+/** デバイスの1行（段K1） */
+function deviceText(d: DeviceLine): string {
+  const day = d.day === null ? '' : d.removedAt === null ? `${String(d.day)} 日目` : `${String(d.day)} 日間`;
+  return `${d.name}${d.replaced ? '（入れ替え）' : ''}${day === '' ? '' : `・${day}`}`;
+}
+
+/** 検査値の字（段K3：基準範囲の外なら H・L を添える。数として読める値だけ） */
+const labText = (item: Extract<RecentItem, { type: 'lab' }>, patient: RefPatient | null = null): string => {
+  const value = Number(item.valueText.normalize('NFKC'));
+  const m = markFor({ name: item.name, value: Number.isFinite(value) ? value : null, comparator: item.comparator, unit: item.unit }, patient);
+  const letter = m === null ? '' : refLetter(m);
+  return `${item.name} ${item.comparator ?? ''}${item.valueText}${item.unit === null ? '' : ` ${item.unit}`}${letter === '' ? '' : `【${letter}】`}`;
+};
 
 /** 1つのまとまりで、はじめに見せる数（残りは畳む） */
 const FIRST = 3;
@@ -47,7 +67,7 @@ function RecentRows({ items }: { items: readonly RecentItem[] }) {
 }
 
 /** 24時間の一覧を、種類ごとのまとまりで出す（中身は同じ。1日の濃い記録でも読めるように、新しいものから少しずつ見せる） */
-function RecentList({ items }: { items: readonly RecentItem[] }) {
+function RecentList({ items, patient }: { items: readonly RecentItem[]; patient: RefPatient | null }) {
   const g = recentGroups(items);
   const groups: readonly (readonly [string, string, readonly RecentItem[]])[] = [
     ['problems', '問題', g.problems],
@@ -81,13 +101,13 @@ function RecentList({ items }: { items: readonly RecentItem[] }) {
           <h4 className="part-label">検査値（項目ごとのいちばん新しい値。{String(g.labs.length)} 項目）</h4>
           {g.repeatedLabs.length > 0 && (
             <p className="thread-sub" data-testid="state-recent-labs-repeated">
-              この間に2回以上：{g.repeatedLabs.map((l) => `${labText(l.latest)}（${showDateTime(l.latest.at)}・${String(l.count)} 件）`).join('　')}
+              この間に2回以上：{g.repeatedLabs.map((l) => `${labText(l.latest, patient)}（${showDateTime(l.latest.at)}・${String(l.count)} 件）`).join('　')}
             </p>
           )}
           {g.singleLabs.length > 0 && (
             <details data-testid="state-recent-labs-single">
               <summary>この間に1回だけの項目（{String(g.singleLabs.length)}）</summary>
-              <p className="thread-sub">{g.singleLabs.map((l) => `${labText(l.latest)}（${showDateTime(l.latest.at)}）`).join('　')}</p>
+              <p className="thread-sub">{g.singleLabs.map((l) => `${labText(l.latest, patient)}（${showDateTime(l.latest.at)}）`).join('　')}</p>
             </details>
           )}
         </div>
@@ -142,6 +162,13 @@ export function StateView({
   listBusy = false,
   map = null,
   vitals = null,
+  patient = null,
+  scores = null,
+  support = null,
+  pending = null,
+  plans = null,
+  orders = null,
+  ask = null,
 }: {
   state: PatientState;
   sources: readonly Source[];
@@ -149,10 +176,24 @@ export function StateView({
   /** AI のプロブレムリスト（CA-057。外したものを除いた項目）。あれば、いまの問題の主な見方にする */
   list?: readonly ListItem[];
   listBusy?: boolean;
-  /** 記録の地図（段K。どの日に、どの種類の記録が入っているか） */
+  /** 記録の地図（段L。どの日に、どの種類の記録が入っているか） */
   map?: ReactNode;
   /** 最新のバイタルの札（1行の要約のすぐ下に置く） */
   vitals?: ReactNode;
+  /** 基準範囲の印（段K3）に使う年齢と性別 */
+  patient?: RefPatient | null;
+  /** スコア・診断基準（段K4）の計算に使う記録（患者・受診・この受診の測定値・いまの問題の名前） */
+  scores?: PresetRecordInput | null;
+  /** AI の臨床支援（段K5）の節。プロブレムリストの下に出す */
+  support?: ReactNode;
+  /** 結果待ち（段K6）の節。臨床支援の下に出す */
+  pending?: ReactNode;
+  /** 予定と実施（段K9）の節。結果待ちの下に出す */
+  plans?: ReactNode;
+  /** 指示簿（段K11）の、指示中の項目の要約。予定と実施の下に出す */
+  orders?: ReactNode;
+  /** 記録に聞く（段K6）の節。右の列の先頭に出す（電話の幅では、左の列の下） */
+  ask?: ReactNode;
 }) {
   const textOf = (sourceId: string, start: number, end: number): string => sources.find((s) => s.id === sourceId)?.text.slice(start, end).trim() ?? '';
   // いまの問題は、名前の1行だけ。押すと、最後の A・P と、その問題の記載に書かれた値・薬が開く（段I。「いま」を1〜2画面に）。開いたものは画面のメモリだけ
@@ -262,6 +303,14 @@ export function StateView({
           )}
         </section>
       )}
+
+      {support}
+
+      {pending}
+
+      {plans}
+
+      {orders}
 
       {(() => {
         const writtenProblems = (
@@ -397,6 +446,10 @@ export function StateView({
       </div>
       <div className="state-col">
 
+      {ask}
+
+      {scores !== null && <ScoresView input={scores} fallbackDay={state.asOf} />}
+
       {state.recent !== null && <RecentTiles items={state.recent.items} />}
       {state.recent !== null && (
         <details className="state-section folded" data-testid="state-recent">
@@ -406,7 +459,7 @@ export function StateView({
           {state.recent.items.length === 0 ? (
             <p className="note">この間に、問題・投薬の動き・できごと・検査値の記載はありません（バイタルは上の帯と経過表）。</p>
           ) : (
-            <RecentList items={state.recent.items} />
+            <RecentList items={state.recent.items} patient={patient} />
           )}
         </details>
       )}
@@ -424,12 +477,60 @@ export function StateView({
                   {m.name}
                   <span className="tag">{m.action === null ? '動きの記載なし' : MEDICATION_ACTION_NAMES[m.action]}</span>
                   {m.doseText !== null && <span className="fact-dose">{m.doseText}</span>}
+                  {dayTag(m.days) !== null && (
+                    <span className="tag" data-testid="state-med-day">
+                      {dayTag(m.days)}
+                    </span>
+                  )}
                 </span>
               </li>
             ))}
           </ul>
-          {state.stoppedMedications.length > 0 && <p className="thread-sub">中止と書かれたもの：{state.stoppedMedications.map((m) => `${m.name}（${showDateTime(m.at)}）`).join('、')}</p>}
+          {state.stoppedMedications.length > 0 && (
+            <p className="thread-sub">
+              中止と書かれたもの：{state.stoppedMedications.map((m) => `${m.name}（${showDateTime(m.at)}${dayTag(m.days) === null ? '' : `・${dayTag(m.days) ?? ''}`}）`).join('、')}
+            </p>
+          )}
           <p className="note">いま続いているかは、書かれていないので補っていません。</p>
+        </details>
+      )}
+
+      {state.devices.length > 0 && (
+        <details className="state-section folded" data-testid="state-devices">
+          <summary className="sub-title">
+            デバイス（入れてから何日目。{state.devices.filter((d) => d.removedAt === null).map(deviceText).join('、') || '入っていると書かれたものなし'}）
+          </summary>
+          <ul className="fact-list">
+            {state.devices.map((d) => (
+              <li key={`${d.name}-${d.placedAt}`} className="fact-row" data-testid="state-device">
+                <span className="fact-when">{showDateTime(d.placedAt)}〜{d.removedAt === null ? '' : showDateTime(d.removedAt)}</span>
+                <span className="fact-main">
+                  {deviceText(d)}
+                  <span className="tag">{d.removedAt === null ? '抜去の記載なし' : '抜去'}</span>
+                </span>
+              </li>
+            ))}
+          </ul>
+          <p className="note">できごとの「挿入・留置・確保・入れ替え・抜去・抜管」の字から数えています。抜去の記載がなければ、記録の上で最後の日まで数えています（入っているかは補っていません）。</p>
+        </details>
+      )}
+
+      {state.findings.length > 0 && (
+        <details className="state-section folded" data-testid="state-findings">
+          <summary className="sub-title">最新の所見（{state.findings.map((f) => f.name).join('・')}）</summary>
+          {state.findings.map((f) => (
+            <div key={f.label} className="thread-note" data-testid="state-finding">
+              <span className="part-label">
+                {f.name}・{showDateTime(f.at)}
+              </span>
+              {f.parts.map((p) => (
+                <p key={String(p.start)} className="source-text">
+                  {textOf(f.sourceId, p.start, p.end)}
+                </p>
+              ))}
+            </div>
+          ))}
+          <p className="note">この受診で、その区切りがあるいちばん新しい記載の字をそのまま出しています。</p>
         </details>
       )}
 

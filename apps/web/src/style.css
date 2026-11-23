@@ -1,6 +1,7 @@
 /* 画面の見た目。CSP（style-src 'self'）のため、インラインの style を使わない。電話の幅を基準にする（CA-017）。
-   段K（CA-058）で、全体を組み直した：色と余白の決まり（下の変数）→ 骨組み → 部品 → 画面ごと → グラフ、の順。
-   色の約束：値で色を変えない（判定しない）。色は「どの種類・どの項目か」を見分けるためだけで、いつも字の名前か絵の印が一緒に出る。 */
+   段L（CA-080）で、全体を組み直した：色と余白の決まり（下の変数）→ 骨組み → 部品 → 画面ごと → グラフ、の順。
+   色の約束：色は「どの種類・どの項目か」を見分けるためで、いつも字の名前か絵の印が一緒に出る。値で色が変わるのは、
+   出典つきの表からの印（基準範囲の H・L〔CA-062〕・スコア〔CA-063〕など。CA-059）だけで、それも字と一緒に出す。 */
 
 /* ===== 1. 色と余白の決まり ===== */
 :root {
@@ -42,14 +43,29 @@
   --chart-band: rgb(18 60 58 / 3.5%);
   --chip-outline: #c9d3d0;
 
-  /* 種類の色（記載・バイタル・検査・投薬・できごと・症状）。同じ検査を、記録の地図の並び（記載→バイタル→検査→投薬→できごと）で通した */
-  --cat-note: #6250d6;
+  /* 種類の色（記録の地図・日の帯・記載の札）。経過表のボード（CA-061）の色の組（--tone-*）と意味をそろえる：
+     投薬＝処置・治療・内服の色、検査＝検査・所見の色。記録は緑、バイタルは桃、できごとは黄。
+     記録の地図の並び（記録→バイタル→検査→できごと→投薬）で、dataviz の検査の道具に通した（明・暗とも） */
+  --cat-note: #008300;
   --cat-vital: #e87ba4;
-  --cat-lab: #2a78d6;
-  --cat-med: #1baf7a;
-  --cat-event: #eb6834;
-  --cat-symptom: #eda100;
+  --cat-lab: var(--tone-test);
+  --cat-med: var(--tone-treat);
+  --cat-event: #eda100;
   --cat-problem: var(--accent);
+
+  /* できごと・経過の出来事・問題の帯の色の組（CA-061） */
+  --tone-symptom: #eb6834;
+  --tone-treat: #6250d6;
+  --tone-test: #2a78d6;
+  --tone-visit: #1baf7a;
+  --tone-alert: #c8322b;
+  --tone-other: #898781;
+  /* 基準範囲の外（CA-062。色だけに頼らず、H・L の字と一緒に） */
+  --ref-high: #b42318;
+  --ref-high-bg: #fdecea;
+  --ref-low: #1d5fb4;
+  --ref-low-bg: #e8f0fb;
+  --ref-band: #1baf7a;
   color-scheme: light dark;
 }
 
@@ -86,12 +102,21 @@
     --chart-band: rgb(255 255 255 / 3%);
     --chip-outline: #3a4846;
 
-    --cat-note: #9085e9;
+    --cat-note: #0ca30c;
     --cat-vital: #d55181;
-    --cat-lab: #3987e5;
-    --cat-med: #199e70;
-    --cat-event: #d95926;
-    --cat-symptom: #c98500;
+    --cat-event: #c98500;
+
+    --tone-symptom: #d95926;
+    --tone-treat: #9085e9;
+    --tone-test: #3987e5;
+    --tone-visit: #199e70;
+    --tone-alert: #f0958c;
+    --tone-other: #898781;
+    --ref-high: #f3a29a;
+    --ref-high-bg: #3a1f1c;
+    --ref-low: #8fb8f0;
+    --ref-low-bg: #1a2a40;
+    --ref-band: #199e70;
   }
 }
 
@@ -172,6 +197,7 @@ h2 {
   top: 0;
   z-index: 40;
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 4px 12px;
   min-height: calc(var(--top-h) + env(safe-area-inset-top));
@@ -211,6 +237,7 @@ h2 {
 
 .banner {
   display: flex;
+  flex: 1 1 0;
   flex-direction: column;
   min-width: 0;
   /* 電話の幅で、1行に収まる大きさ（文は変えない） */
@@ -743,8 +770,14 @@ select.input {
 .cat-lab { --cat: var(--cat-lab); }
 .cat-med { --cat: var(--cat-med); }
 .cat-event { --cat: var(--cat-event); }
-.cat-symptom { --cat: var(--cat-symptom); }
 .cat-problem { --cat: var(--cat-problem); }
+/* 時系列の種類の色の組：経過表のボード（CA-061）と同じ（症状・治療・検査・受診と説明・急変・その他） */
+.cat-mark.tone-symptom, .cat-tag.tone-symptom { --cat: var(--tone-symptom); }
+.cat-mark.tone-treat, .cat-tag.tone-treat { --cat: var(--tone-treat); }
+.cat-mark.tone-test, .cat-tag.tone-test { --cat: var(--tone-test); }
+.cat-mark.tone-visit, .cat-tag.tone-visit { --cat: var(--tone-visit); }
+.cat-mark.tone-alert, .cat-tag.tone-alert { --cat: var(--tone-alert); }
+.cat-mark.tone-other, .cat-tag.tone-other { --cat: var(--tone-other); }
 
 .cat-mark {
   display: inline-grid;
@@ -1546,6 +1579,24 @@ select.input {
   margin-bottom: 0;
 }
 
+/* 「いま」に並ぶ節（臨床支援・結果待ち・予定と実施・指示簿の要約・記録に聞く）：1つずつ、枠で区切る */
+.state-section.support,
+.state-section.pending,
+.state-section.orders-summary,
+.state-section.ask {
+  padding: 10px 12px 12px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+}
+
+.state-section.support > .plist-head .sub-title,
+.state-section.pending > .plist-head .sub-title,
+.state-section.orders-summary > .plist-head .sub-title,
+.state-section.ask > .sub-title {
+  margin: 0;
+}
+
 .state-section.folded > summary {
   min-height: 40px;
   padding: 8px 12px;
@@ -2026,8 +2077,9 @@ select.input {
 /* 経過の中の見方（経過表・検査・投薬・時系列・記載）：ひとつながりの切り替え */
 .subbar {
   display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
-  gap: 2px;
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(0, 1fr);
+  gap: 1px;
   margin: 2px 0 6px;
   padding: 3px;
   border-radius: 14px;
@@ -2039,14 +2091,16 @@ select.input {
   display: grid;
   justify-items: center;
   gap: 1px;
+  min-width: 0;
   min-height: 46px;
-  padding: 5px 2px 4px;
+  padding: 5px 0 4px;
   border: 0;
   border-radius: 11px;
   background: none;
   color: var(--muted);
   font: inherit;
-  font-size: 12.5px;
+  font-size: 11.5px;
+  white-space: nowrap;
   line-height: 1.3;
   cursor: pointer;
 }
@@ -2232,7 +2286,7 @@ select.input {
 .source.kind-note { --cat: var(--cat-note); }
 .source.kind-vital { --cat: var(--cat-vital); }
 .source.kind-lab { --cat: var(--cat-lab); }
-.source.kind-memo { --cat: var(--cat-symptom); }
+.source.kind-memo { --cat: var(--cat-event); }
 
 .source.folded {
   padding: 0;
@@ -3155,30 +3209,26 @@ select.input {
   flex: 1 1 100%;
 }
 
-/* 問題の帯：点は書かれた日時、線は最初から最後に書かれた日時まで（色は1つ。線と点の形で分ける） */
-.problem-span {
-  stroke: var(--accent);
-  stroke-width: 3;
-  stroke-linecap: round;
-  opacity: 0.45;
-}
-
-.problem-span.closed {
-  stroke: var(--muted);
-  stroke-dasharray: 1 6;
-  opacity: 0.8;
-}
-
-.problem-mark {
+/* 問題ごとの、書かれた日の点（色は1つ。中が白い点は、日だけ分かる記載。線で結ばない：期間の帯は経過表のボードの役目） */
+.written-mark {
   fill: var(--accent);
   stroke: var(--surface-2);
   stroke-width: 1.5;
 }
 
-.problem-mark.hollow {
+.written-mark.hollow {
   fill: var(--surface);
   stroke: var(--accent);
   stroke-width: 2;
+}
+
+/* 活動中でない問題は、名前の字を薄く（状態の字も添える） */
+.lane-row.closed .lane-title {
+  fill: var(--muted);
+}
+
+.lane-row.closed .lane-no {
+  fill: var(--muted);
 }
 
 /* 検査値の推移（小さなグラフを並べる。群ごとにまとめ、押すと大きく見る） */
@@ -3283,4 +3333,887 @@ select.input {
 .trend-values li {
   display: flex;
   gap: 8px;
+}
+
+/* ===== 14. 臨床支援・結果待ち・申し送り・水分・検索・予定・送り待ち・Casebook・指示簿（段K2〜K11 の部品） ===== */
+/* ===== 段K2：治療と出来事のボード（経過表の帯） ===== */
+.mark-event.tone-symptom, .mark-course.tone-symptom { fill: var(--tone-symptom); }
+.mark-event.tone-treat, .mark-course.tone-treat { fill: var(--tone-treat); }
+.mark-event.tone-test, .mark-course.tone-test { fill: var(--tone-test); }
+.mark-event.tone-visit, .mark-course.tone-visit { fill: var(--tone-visit); }
+.mark-event.tone-alert, .mark-course.tone-alert { fill: var(--tone-alert); }
+.mark-event.tone-other, .mark-course.tone-other { fill: var(--tone-other); }
+.mark-course { stroke: var(--surface); stroke-width: 1.5; }
+.mark-course.approx { fill-opacity: 0.45; stroke-dasharray: 2 2; }
+.device-span {
+  stroke: var(--tone-treat);
+  stroke-width: 6;
+  stroke-opacity: 0.45;
+  stroke-linecap: round;
+}
+.device-span.open { stroke-dasharray: 6 4; }
+.problem-span {
+  stroke-width: 14;
+  stroke-opacity: 0.22;
+  stroke-linecap: round;
+}
+.problem-span.tone-p0 { stroke: var(--series-hr); }
+.problem-span.tone-p1 { stroke: var(--series-bt); }
+.problem-span.tone-p2 { stroke: var(--series-bp); }
+.problem-span.tone-p3 { stroke: var(--series-rr); }
+.problem-span.tone-p4 { stroke: var(--series-spo2); }
+.problem-span.tone-p5 { stroke: var(--chart-mark); }
+.problem-label {
+  fill: var(--ink);
+  font-size: 11.5px;
+}
+
+/* ===== 段K3：基準範囲の印（H・L と色。範囲と出典は title） ===== */
+td.ref-high { color: var(--ref-high); background: var(--ref-high-bg); font-weight: 600; }
+td.ref-low { color: var(--ref-low); background: var(--ref-low-bg); font-weight: 600; }
+.ref-tag {
+  display: inline-block;
+  margin-left: 4px;
+  padding: 0 5px;
+  border-radius: 6px;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1.5;
+}
+.ref-tag.ref-high { color: var(--ref-high); background: var(--ref-high-bg); }
+.ref-tag.ref-low { color: var(--ref-low); background: var(--ref-low-bg); }
+.ref-band { fill: var(--ref-band); fill-opacity: 0.1; }
+
+/* ===== 段K4：スコア・診断基準（臨床支援）。色だけに頼らず、字（満たす・未入力など）と、基準の項目・出典を添える ===== */
+:root {
+  --score-met: #b42318;
+  --score-met-bg: #fdecea;
+  --score-near: #8a5a00;
+  --score-near-bg: #fdf3dc;
+  --score-band: #1f6f6a;
+  --score-band-bg: #e3efed;
+  --score-open: #5b6765;
+  --score-open-line: #c9d3d0;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --score-met: #f3a29a;
+    --score-met-bg: #3a1f1c;
+    --score-near: #f0c674;
+    --score-near-bg: #3a2f14;
+    --score-band: #6fc3bb;
+    --score-band-bg: #1f3331;
+    --score-open: #9aa8a5;
+    --score-open-line: #3a4846;
+  }
+}
+
+.scores-summary {
+  font-weight: 400;
+  font-size: 13px;
+  color: var(--muted);
+}
+.preset-card {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 8px 10px;
+  min-width: 0;
+}
+.preset-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+}
+.preset-name {
+  overflow-wrap: anywhere;
+}
+.preset-body {
+  display: grid;
+  gap: 6px;
+  margin-top: 6px;
+  min-width: 0;
+}
+.score-tag {
+  display: inline-block;
+  padding: 1px 8px;
+  border-radius: 999px;
+  font-size: 12.5px;
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+.score-tag.score-met { color: var(--score-met); background: var(--score-met-bg); }
+.score-tag.score-near { color: var(--score-near); background: var(--score-near-bg); }
+.score-tag.score-band { color: var(--score-band); background: var(--score-band-bg); }
+.score-tag.score-not { color: var(--ink); background: var(--tag-bg); font-weight: 600; }
+.score-tag.score-open { color: var(--score-open); border: 1px dashed var(--score-open-line); font-weight: 600; }
+.unconfirmed-tag {
+  color: var(--muted);
+  background: transparent;
+  border: 1px solid var(--line);
+}
+.preset-items {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 6px;
+}
+.preset-item {
+  border-top: 1px solid var(--line);
+  padding-top: 6px;
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+.preset-item-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px;
+}
+.preset-item-label {
+  flex: 1 1 12em;
+  overflow-wrap: anywhere;
+}
+.item-state {
+  font-size: 12.5px;
+  font-weight: 700;
+  padding: 0 6px;
+  border-radius: 6px;
+}
+.item-state.item-yes { color: var(--score-met); background: var(--score-met-bg); }
+.item-state.item-plain { color: var(--ink); background: var(--tag-bg); }
+.item-state.item-open { color: var(--score-open); border: 1px dashed var(--score-open-line); }
+.preset-points {
+  color: var(--muted);
+  font-size: 12.5px;
+  font-variant-numeric: tabular-nums;
+}
+.preset-item-from {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12.5px;
+  overflow-wrap: anywhere;
+}
+.preset-picker > summary {
+  cursor: pointer;
+  color: var(--accent);
+  font-size: 14px;
+}
+.preset-area {
+  display: grid;
+  gap: 4px;
+  margin-top: 8px;
+}
+
+/* ===== 段K5：AI の臨床支援（CA-059・CA-064）。照合の状態は、色だけに頼らず字（沿っている・差がある・分からない）と一緒に ===== */
+:root {
+  --support-ok: #1f6f6a;
+  --support-ok-bg: #e3efed;
+  --support-gap: #8a5a00;
+  --support-gap-bg: #fdf3dc;
+  --support-unclear: #5b6765;
+  --support-unclear-line: #c9d3d0;
+  --support-line: #c9d3d0;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --support-ok: #6fc3bb;
+    --support-ok-bg: #1f3331;
+    --support-gap: #f0c674;
+    --support-gap-bg: #3a2f14;
+    --support-unclear: #9aa8a5;
+    --support-unclear-line: #3a4846;
+    --support-line: #3a4846;
+  }
+}
+
+.support {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+.support-tag {
+  border-style: solid;
+  font-weight: 600;
+}
+.support-caution {
+  margin: 0;
+  font-size: 13.5px;
+  font-weight: 600;
+  border-left: 3px solid var(--support-line);
+  padding-left: 8px;
+}
+.support-problem {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 8px 10px;
+  min-width: 0;
+}
+.support-problem-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px;
+  cursor: pointer;
+}
+.support-body {
+  display: grid;
+  gap: 8px;
+  margin-top: 6px;
+  min-width: 0;
+}
+.support-part {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+.support-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 6px;
+}
+.support-list > li {
+  border-top: 1px solid var(--line);
+  padding-top: 6px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.support-text {
+  margin: 2px 0;
+  overflow-wrap: anywhere;
+}
+.support-points {
+  overflow-wrap: anywhere;
+}
+.support-status {
+  display: inline-block;
+  padding: 1px 8px;
+  border-radius: 999px;
+  font-size: 12.5px;
+  font-weight: 700;
+}
+.support-status.support-consistent { color: var(--support-ok); background: var(--support-ok-bg); }
+.support-status.support-gap { color: var(--support-gap); background: var(--support-gap-bg); }
+.support-status.support-unclear { color: var(--support-unclear); border: 1px dashed var(--support-unclear-line); }
+
+/* ===== 段K6：結果待ち・記録に聞く（CA-065・CA-066）。どちらも警告ではなく、記録の状態と、記録からの答え ===== */
+.pending,
+.ask {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+.pending-results {
+  display: grid;
+  gap: 4px;
+  margin: 4px 0;
+  min-width: 0;
+}
+.pending .chip,
+.ask .chip {
+  max-width: 100%;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  text-align: left;
+}
+.ask-label {
+  font-size: 13.5px;
+  color: var(--muted);
+}
+.ask textarea {
+  width: 100%;
+  font: inherit;
+  box-sizing: border-box;
+}
+.ask-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.ask-answer {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+.ask-refs {
+  margin-top: 2px;
+}
+.ask .tl-quote,
+.pending .tl-quote {
+  margin-left: 0;
+}
+
+/* ===== 段K7：申し送り（I-PASS）と、前の記載との違い ===== */
+/* 重症度の色は、先生が選んだ値の印（名前と一緒に出す。色だけに頼らない） */
+:root {
+  --sev-stable: #1b7a52;
+  --sev-stable-bg: #e5f4ec;
+  --sev-watcher: #8a5a00;
+  --sev-watcher-bg: #fbf0d9;
+  --sev-unstable: #b42318;
+  --sev-unstable-bg: #fdecea;
+  --diff-added-bg: #fff6d6;
+  --diff-removed: #8a5a00;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --sev-stable: #7fd3a8;
+    --sev-stable-bg: #17322a;
+    --sev-watcher: #f0c46b;
+    --sev-watcher-bg: #3a2e14;
+    --sev-unstable: #f3a29a;
+    --sev-unstable-bg: #3a1f1c;
+    --diff-added-bg: #3a3214;
+    --diff-removed: #f0c46b;
+  }
+}
+.tag.sev-stable,
+.chip.on.sev-stable { color: var(--sev-stable); background: var(--sev-stable-bg); border-color: var(--sev-stable); }
+.tag.sev-watcher,
+.chip.on.sev-watcher { color: var(--sev-watcher); background: var(--sev-watcher-bg); border-color: var(--sev-watcher); }
+.tag.sev-unstable,
+.chip.on.sev-unstable { color: var(--sev-unstable); background: var(--sev-unstable-bg); border-color: var(--sev-unstable); }
+.handoff-severity .chips,
+.handoff-synthesis .check {
+  margin: 4px 0;
+}
+
+.handoff-all {
+  display: grid;
+  gap: 10px;
+  margin-top: 8px;
+  min-width: 0;
+}
+.handoff-card {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 10px 12px;
+  background: var(--surface);
+  min-width: 0;
+}
+.handoff-card-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+.handoff-card .doc-text {
+  margin: 2px 0 6px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.handoff-oneliner {
+  margin: 4px 0;
+  overflow-wrap: anywhere;
+}
+
+/* 前の記載との違い：足した行に薄い地の色（「＋」の字と一緒に）。前にあってこの記載にない行は「−」の字 */
+.tag.diff-same {
+  color: var(--diff-removed);
+  background: var(--diff-added-bg);
+}
+.note-diff {
+  margin: 6px 0;
+  padding: 8px 10px;
+  border: 1px dashed var(--line);
+  border-radius: var(--radius);
+  min-width: 0;
+}
+.note-diff ul {
+  margin: 2px 0 6px;
+  padding-left: 0;
+  list-style: none;
+}
+.note-diff li {
+  overflow-wrap: anywhere;
+}
+.diff-added {
+  background: var(--diff-added-bg);
+}
+.diff-removed {
+  color: var(--diff-removed);
+}
+.diff-section-name {
+  font-weight: 600;
+  font-size: 13.5px;
+}
+
+/* ===== 段K8：水分の出入りと体重（CA-069）・受け持ちから探す（CA-070） ===== */
+/* 色は入・出の見分けだけ（「入」「出」の字をいつも添える。多い・少ないの判定の色ではない） */
+:root {
+  --fluid-in: #2a78d6;
+  --fluid-out: #eb6834;
+  --search-mark: #fff1b8;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --fluid-in: #3987e5;
+    --fluid-out: #d95926;
+    --search-mark: #5a4a10;
+  }
+}
+.fluid {
+  min-width: 0;
+}
+.fluid-table {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+  font-size: 13.5px;
+}
+.fluid-table th,
+.fluid-table td {
+  border-bottom: 1px solid var(--line);
+  padding: 6px 6px;
+  text-align: left;
+  vertical-align: top;
+  overflow-wrap: anywhere;
+}
+.fluid-table thead th:first-child,
+.fluid-table tbody th {
+  width: 4.5em;
+}
+.fluid-in-head {
+  color: var(--fluid-in);
+}
+.fluid-out-head {
+  color: var(--fluid-out);
+}
+.fluid-side {
+  border-left: 3px solid var(--line);
+  padding-left: 6px;
+  min-width: 0;
+}
+.fluid-side.fluid-in {
+  border-left-color: var(--fluid-in);
+}
+.fluid-side.fluid-out {
+  border-left-color: var(--fluid-out);
+}
+.fluid-side ul,
+.fluid-weights {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.fluid-item {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 6px;
+  margin-bottom: 2px;
+}
+.fluid-name {
+  font-weight: 600;
+}
+.fluid-skip {
+  flex-basis: 100%;
+  color: var(--muted);
+  font-size: 12.5px;
+}
+.fluid-total {
+  margin: 4px 0 0;
+  font-weight: 600;
+}
+.fluid-line {
+  margin: 6px 0 0;
+  font-size: 13.5px;
+  overflow-wrap: anywhere;
+}
+.fluid-line-head {
+  margin-right: 6px;
+  color: var(--muted);
+}
+/* 電話の幅：表を日ごとの塊にする（欄の名前を字で添える） */
+@media (max-width: 640px) {
+  .fluid-table thead {
+    display: none;
+  }
+  .fluid-table,
+  .fluid-table tbody,
+  .fluid-table tr,
+  .fluid-table th,
+  .fluid-table td {
+    display: block;
+    width: auto;
+  }
+  .fluid-table tr {
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    margin-bottom: 8px;
+    padding: 4px 8px;
+  }
+  .fluid-table tbody th,
+  .fluid-table td {
+    border-bottom: none;
+    padding: 4px 0;
+  }
+  .fluid-table tbody th {
+    width: auto;
+  }
+  .fluid-table td::before {
+    content: attr(data-label);
+    display: block;
+    font-size: 12px;
+    color: var(--muted);
+  }
+}
+
+.search {
+  margin: 8px 0 12px;
+  min-width: 0;
+}
+.search-form {
+  display: flex;
+  gap: 6px;
+  min-width: 0;
+}
+.search-form input {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.search-form .button {
+  flex: none;
+  white-space: nowrap;
+}
+.search-results {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+.search-patient {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 8px 10px;
+  background: var(--surface);
+  min-width: 0;
+}
+.search-patient-head {
+  margin: 0 0 4px;
+  font-size: 14.5px;
+  overflow-wrap: anywhere;
+}
+.search-hits {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 4px;
+}
+.search-hit {
+  display: grid;
+  gap: 2px;
+  width: 100%;
+  text-align: left;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--bg);
+  color: inherit;
+  font: inherit;
+  padding: 6px 8px;
+  cursor: pointer;
+  min-width: 0;
+}
+.search-where {
+  font-size: 12.5px;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+.search-snippet {
+  overflow-wrap: anywhere;
+}
+.search-snippet mark {
+  background: var(--search-mark);
+  color: inherit;
+}
+.search-found {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 8px;
+  margin: 8px 0;
+  padding: 6px 10px;
+  border: 1px dashed var(--line);
+  border-radius: var(--radius);
+  min-width: 0;
+}
+
+/* ===== 段K9：予定と実施（CA-071）・電波のないときの送り待ち（CA-072） ===== */
+/* 状態の札の色は、見分けのための印（字をいつも添える。良い・悪いの判定の色ではない） */
+:root {
+  --plan-done: #1f6f6a;
+  --plan-done-bg: #e3efed;
+  --plan-past: #8a5a00;
+  --plan-past-bg: #fdf3dc;
+  --plan-open: #5b6765;
+  --plan-open-line: #c9d3d0;
+  --queue-bg: #eef3fb;
+  --queue-line: #9db7df;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --plan-done: #7fc8bf;
+    --plan-done-bg: #1d3634;
+    --plan-past: #e7b765;
+    --plan-past-bg: #3a2e14;
+    --plan-open: #a8b3b1;
+    --plan-open-line: #4b5755;
+    --queue-bg: #1b2636;
+    --queue-line: #3f5a82;
+  }
+}
+.plan-head {
+  flex-wrap: wrap;
+}
+.plan-head .thread-name {
+  overflow-wrap: anywhere;
+  min-width: 0;
+}
+.plan-status {
+  display: inline-block;
+  padding: 1px 8px;
+  border-radius: 999px;
+  font-size: 12.5px;
+  font-weight: 700;
+  overflow-wrap: anywhere;
+  max-width: 100%;
+}
+.plan-status.plan-done { color: var(--plan-done); background: var(--plan-done-bg); }
+.plan-status.plan-past_due { color: var(--plan-past); background: var(--plan-past-bg); }
+.plan-status.plan-open,
+.plan-status.plan-unsorted { color: var(--plan-open); border: 1px dashed var(--plan-open-line); }
+
+/* 送り待ち：ヘッダーの小さな帯と、入れる欄の札（画面のメモリだけ。読み込み直す・閉じると消える） */
+/* ヘッダー（いつも上に出る）の中の1行。帯（Banner）の下に、幅いっぱいで */
+.queue-banner {
+  flex: 1 1 100%;
+  min-width: 0;
+  margin: 0;
+  padding: 4px 10px;
+  border-radius: 8px;
+  background: var(--queue-bg);
+  color: var(--ink);
+  border: 1px solid var(--queue-line);
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+.queue-banner .button.link {
+  min-height: 0;
+  padding: 0 6px;
+  color: var(--accent);
+  vertical-align: baseline;
+}
+.queue {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+.queue-card {
+  display: grid;
+  gap: 4px;
+  padding: 8px 10px;
+  border: 1px solid var(--queue-line);
+  border-radius: var(--radius);
+  background: var(--queue-bg);
+  min-width: 0;
+}
+.queue-card .source-text {
+  margin: 0;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+  max-height: 6.5em;
+  overflow: hidden;
+}
+.queue-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+/* Casebook へ送る（段K10。CA-073）。色は送れる・送れないの見分けの印だけ */
+.casebook {
+  display: grid;
+  gap: 10px;
+  margin-top: 12px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+  min-width: 0;
+}
+.casebook .sub-title {
+  margin: 0;
+}
+.casebook-target,
+.casebook-taken {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+.casebook-code {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: 8px;
+}
+.casebook-group > summary,
+.casebook-not-sent > summary {
+  cursor: pointer;
+  font-weight: 600;
+  font-size: 14.5px;
+  padding: 4px 0;
+}
+.casebook-items {
+  display: grid;
+  gap: 6px;
+  margin: 6px 0 0;
+  padding: 0;
+  list-style: none;
+  min-width: 0;
+}
+.casebook-item {
+  display: grid;
+  gap: 2px;
+  padding: 6px 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  min-width: 0;
+}
+.casebook-item.blocked {
+  border-style: dashed;
+  background: var(--bg);
+}
+.casebook-item .check {
+  flex-wrap: wrap;
+  min-width: 0;
+}
+.casebook-tag {
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+.casebook-text {
+  margin: 0;
+  font-size: 14px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.casebook-why {
+  overflow-wrap: anywhere;
+}
+.casebook-message {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+/* ===== 段K11：指示簿（CA-074〜CA-079） ===== */
+.plan-span {
+  stroke: var(--tone-treat);
+  stroke-width: 8;
+  stroke-opacity: 0.55;
+  stroke-dasharray: 10 5;
+}
+.plan-span.open { stroke-opacity: 0.35; stroke-dasharray: 4 6; }
+.plan-span.stopped { stroke-opacity: 0.25; }
+.mark-plan {
+  fill: var(--surface);
+  stroke: var(--tone-test);
+  stroke-width: 2;
+}
+.mark-plan.resulted { fill: var(--tone-test); }
+.orders {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+}
+.order-section {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+.order-cat {
+  margin: 6px 0 0;
+  font-size: 0.95rem;
+}
+.order-list {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  min-width: 0;
+}
+.order-item {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  padding: 8px 10px;
+  border: 1px solid var(--border, #d0d4da);
+  border-radius: 8px;
+  overflow-wrap: anywhere;
+}
+.order-item.stopped { opacity: 0.6; }
+.order-item.proposal { border-style: dashed; }
+.order-head {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: baseline;
+  justify-content: space-between;
+  min-width: 0;
+}
+.order-text { min-width: 0; overflow-wrap: anywhere; }
+.order-tags { display: flex; flex-wrap: wrap; gap: 4px; }
+.order-fields {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  margin: 0;
+}
+.order-field-name { color: var(--muted, #5b6470); }
+.field-row.wrap { flex-wrap: wrap; }
+.scale-block,
+.scale-table {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+.scale-steps {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.scale-step {
+  padding: 4px 6px;
+  border-left: 3px solid transparent;
+}
+.scale-step.on { border-left-color: var(--tone-treat); }
+.scale-step-head {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  align-items: baseline;
+}
+.scale-rate { font-weight: 600; }
+.template-steps {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding-left: 1.2em;
+}
+.orders-summary-list {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  overflow-wrap: anywhere;
 }

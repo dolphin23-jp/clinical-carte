@@ -1,4 +1,4 @@
-// 問題の帯（段K。CA-058）。架空の名前と日時だけ。
+// 問題ごとの、書かれた日の点（段L。CA-080）。架空の名前と日時だけ。
 import fc from 'fast-check';
 import { describe, expect, test } from 'vitest';
 
@@ -13,7 +13,7 @@ const threads: LaneInput['threads'] = [
   { id: 'T3', name: '肺塞栓', group: 'ruled_out', mentions: [mention('2026-11-18T09:00')] },
 ];
 
-describe('問題の帯', () => {
+describe('問題ごとの、書かれた日の点', () => {
   test('リストがなければ、記録に書かれた問題の筋の並びで。同じ日時は1つ、日時のない記載は数だけ', () => {
     const lanes = problemLanes({ threads, list: [], course: [] });
     expect(lanes.map((l) => [l.name, l.no, l.active, l.stateName, l.listed])).toEqual([
@@ -43,12 +43,12 @@ describe('問題の帯', () => {
       [1, '市中肺炎', true, '', true],
       [2, '低K血症', false, '解決', true],
     ]);
-    // 来院前の出来事（結びつけたものだけ）が、帯のはじめになる
+    // 来院前の出来事（結びつけたものだけ）が、はじめの点になる
     expect(lanes[0]?.marks[0]?.t).toBe(t('2026-11-15T17:00'));
     expect(lanes[0]?.marks).toHaveLength(4);
   });
 
-  test('帯は、書かれた日時の外へ伸びない（最後に書かれた日時より先を作らない）', () => {
+  test('点は、書かれた日時だけ（書かれていない日時の点を作らない。図の範囲は、その日の境まで）', () => {
     const at = fc.tuple(fc.integer({ min: 1, max: 28 }), fc.integer({ min: 0, max: 23 }), fc.boolean()).map(([d, h, dayOnly]) => {
       const day = `2026-11-${String(d).padStart(2, '0')}`;
       return dayOnly ? day : `${day}T${String(h).padStart(2, '0')}:00`;

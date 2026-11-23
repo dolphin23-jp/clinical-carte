@@ -10,6 +10,7 @@ const urine = (name: string, aliases: readonly string[] = []): LabName => ({ nam
 const stool = (name: string, aliases: readonly string[] = []): LabName => ({ name, aliases, kind: 'lab', group: '便', units: [] });
 const infection = (name: string, aliases: readonly string[] = []): LabName => ({ name, aliases, kind: 'lab', group: '感染症（定性）', units: [] });
 const vital = (name: string, aliases: readonly string[] = [], units: readonly string[] = []): LabName => ({ name, aliases, kind: 'vital', group: 'バイタル', units });
+const fluid = (name: string, aliases: readonly string[] = []): LabName => ({ name, aliases, kind: 'vital', group: '水分の出入り', units: ['mL'] });
 
 export const EXTRA_LAB_NAMES: readonly LabName[] = [
   urine('尿潜血', ['尿OB']),
@@ -36,6 +37,17 @@ export const EXTRA_LAB_NAMES: readonly LabName[] = [
   vital('MAP', ['平均血圧'], ['mmHg']),
   vital('JCS'),
   vital('GCS', [], ['点']),
+  // 水分の出入り（段K8。CA-069）。書かれた量を読むだけ（換算しない・判定しない・書かれていない量を補わない）。尿量と体重は、取り込んだ名前にある。
+  // 【案。本人は未確認】名前・別名は、一般的な書き方から選んだ（2026-11-22）。「IN」「OUT」だけの書き方・「排液」「出血」だけの語は、
+  // 文の中の語と取り違えやすく、合計として書かれた量と項目の量を二重に数えるおそれがあるので、置かない
+  fluid('輸液量', ['点滴量', '補液量']),
+  fluid('飲水量', ['飲水']),
+  fluid('経口摂取量'),
+  fluid('経管栄養量', ['経腸栄養量']),
+  fluid('ドレーン排液量', ['ドレーン排液']),
+  fluid('胃管排液量', ['胃管排液', 'NG排液']),
+  fluid('嘔吐量'),
+  fluid('出血量'),
 ];
 
 /**
@@ -73,4 +85,7 @@ export const EXTRA_UNITS: readonly string[] = [
   'x10^4',
   'x10^3/μL',
   'x10^3',
+  // 2026-11-22（段K8）：水分の量の書き方。cc は cc のまま持ち、mL と同じ目盛りにしない（換算しない。合計も分ける）
+  'cc',
+  'mL/日',
 ];

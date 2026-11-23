@@ -14,9 +14,17 @@ import {
   hospitalDay,
   relatedFacts,
   labTrends,
+  leftovers,
+  QUOTED_SEGMENT_LABELS,
   medicationTimeline,
+  numberedList,
+  plannedInfusions,
+  plannedTests,
+  type NoteDiff,
+  noteDiff,
   patientState,
   problemLanes,
+  previousNote,
   READ_VALUES_KINDS,
   readLabText,
   SOURCE_KIND_LABELS,
@@ -33,10 +41,11 @@ import { RecordMap } from './charts/RecordMap.tsx';
 import { DEFAULT_TIMELINE_RANGE, Timeline, type TimelineRange } from './charts/Timeline.tsx';
 import { TrendGrid } from './charts/TrendGrid.tsx';
 
+import { CasebookPanel } from './CasebookPanel.tsx';
 import { Composer } from './Composer.tsx';
 import { DayStrip } from './DayStrip.tsx';
 import { Icon, type IconName } from './Icon.tsx';
-import { PatientBadge } from './Patients.tsx';
+import { PatientBadge } from './PatientBadge.tsx';
 import { joinDateTime, nowLocal, replacedSummary, showDateTime } from './format.ts';
 import { LabTable } from './LabTable.tsx';
 import { LatestStrip } from './LatestStrip.tsx';
@@ -47,6 +56,7 @@ import { ProblemListView, useProblemList } from './ProblemListView.tsx';
 import { EventView, MedicationView } from './Facts.tsx';
 import {
   type ClinicalEvent,
+  type CourseItem,
   createEncounter,
   deletePatient,
   deleteSource,
@@ -57,6 +67,7 @@ import {
   type Observation,
   organizeSource,
   type PatientRecord,
+  type Problem,
   type Segment,
   setEncounterEnd,
   setEncounterKind,
@@ -70,8 +81,16 @@ import { SourceEdit } from './SourceEdit.tsx';
 import { SourceFacts } from './SourceFacts.tsx';
 import { SourceText } from './SourceText.tsx';
 import { StateView } from './StateView.tsx';
+import { SupportPanel, useSupport } from './SupportView.tsx';
+import { AskPanel } from './AskView.tsx';
+import { PendingPanel, usePending } from './PendingView.tsx';
+import { PlansPanel, usePlans } from './PlansView.tsx';
+import { useOutbox } from './outbox.ts';
 import { nextDayLabel } from './NextDayAsk.tsx';
+import { FluidLine, FluidView } from './FluidView.tsx';
+import { type OpenFocus, Snippet } from './SearchView.tsx';
 import { DocumentView } from './DocumentView.tsx';
+import { OrdersSummary, OrdersView } from './OrdersView.tsx';
 
 // 見方（段H。CA-053）：9つのタブを4つにまとめた。経過・検査・投薬・できごと・記載は、どれも同じ時間の上のものなので、
 // 「経過」の中で、日の帯と表示の範囲を分け合って切り替える。草案は、問題の中。
@@ -82,13 +101,15 @@ const TABS: readonly (readonly [Tab, string, IconName])[] = [
   ['problems', '問題', 'problems'],
   ['notes', '記録', 'notes'],
 ];
-type CourseView = 'overview' | 'values' | 'medications' | 'events' | 'chart';
+type CourseView = 'overview' | 'values' | 'fluid' | 'medications' | 'events' | 'chart' | 'orders';
 const COURSE_VIEWS: readonly (readonly [CourseView, string, IconName])[] = [
   ['overview', '経過表', 'vital'],
   ['values', '検査', 'lab'],
+  ['fluid', '水分', 'drop'],
   ['medications', '投薬', 'med'],
   ['events', '時系列', 'clock'],
   ['chart', '記載', 'edit'],
+  ['orders', '指示簿', 'orders'],
 ];
 
 /** 記載の種類の絵の印（種類を見分けるためだけ。色も種類ごとで、中身では変えない） */
@@ -124,11 +145,13 @@ const newestFirst = (a: Source, b: Source): number => {
   return a.at < b.at ? 1 : -1;
 };
 
-export function PatientPage({ patientId, onBack, onLeft }: { patientId: string; onBack: () => void; onLeft: () => void }) {
+export function PatientPage({ patientId, focus = null, onBack, onLeft }: { patientId: string; focus?: OpenFocus | null; onBack: () => void; onLeft: () => void }) {
   const [record, setRecord] = useState<PatientRecord | null>(null);
   const [message, setMessage] = useState<string | null>(null);
-  const [encounterId, setEncounterId] = useState<string | null>(null);
-  const [tab, setTab] = useState<Tab>('state');
+  // 受け持ちから探した当たり（段K8）から開いたときは、その記載の受診・記録のタブ（AI のプロブレムリストの項目は、問題のタブ）
+  const [encounterId, setEncounterId] = useState<string | null>(focus?.kind === 'source' ? focus.encounterId : null);
+  const [tab, setTab] = useState<Tab>(focus === null ? 'state' : focus.kind === 'source' ? 'notes' : 'problems');
+  const [found, setFound] = useState<OpenFocus | null>(focus);
   const [view, setView] = useState<CourseView>('overview');
   // 日の帯で選んだ日と、経過表の表示の範囲（画面のメモリだけ）
   const [day, setDay] = useState<string | null>(null);
@@ -140,9 +163,9 @@ export function PatientPage({ patientId, onBack, onLeft }: { patientId: string; 
   // 記録のタブ：開いた記載（段I。既定は、いちばん新しいものだけ開く）。画面のメモリだけ
   // まとめて整理し直す（段J。CA-056）：この受診の記載を、古い順に1件ずつ（AI の回数は記載の数）
   const [reorganizing, setReorganizing] = useState<{ done: number; total: number; failed: number } | null>(null);
-  const [opened, setOpened] = useState<ReadonlyMap<string, boolean>>(new Map());
+  const [opened, setOpened] = useState<ReadonlyMap<string, boolean>>(focus?.kind === 'source' ? new Map([[focus.sourceId, true]]) : new Map());
   const composerRef = useRef<HTMLElement>(null);
-  const [panel, setPanel] = useState<'none' | 'encounter' | 'end' | 'kind' | 'delete'>('none');
+  const [panel, setPanel] = useState<'none' | 'encounter' | 'end' | 'kind' | 'delete' | 'casebook'>('none');
 
   const load = useCallback(() => {
     void getRecord(patientId).then((result) => {
@@ -155,8 +178,31 @@ export function PatientPage({ patientId, onBack, onLeft }: { patientId: string; 
     });
   }, [patientId, onLeft, onBack]);
   useEffect(load, [load]);
+  // 送り待ち（段K9）の文が送れた・整理が済んだら、記録を読み直す
+  const outbox = useOutbox();
+  const seenVersion = useRef(outbox.version);
+  useEffect(() => {
+    if (outbox.version === seenVersion.current) return;
+    seenVersion.current = outbox.version;
+    load();
+  }, [outbox.version, load]);
+  // 探した当たりの記載へ、読み込んだあと1回だけ動く（画面の位置だけ。何も残さない）
+  const scrolled = useRef(false);
+  useEffect(() => {
+    if (record === null || found?.kind !== 'source' || scrolled.current) return;
+    scrolled.current = true;
+    requestAnimationFrame(() => {
+      document.getElementById(`source-${found.sourceId}`)?.scrollIntoView({ block: 'start' });
+    });
+  }, [record, found]);
   // AI のプロブレムリスト（CA-057）：記録が増えたら、自動で組み直す（いま・問題のタブの主な見方）
   const listBuilder = useProblemList(patientId, record, load, onLeft);
+  // AI の臨床支援（段K5）：プロブレムリストが組み直されたら、自動で組み直す（いまのタブ）
+  const supportBuilder = useSupport(patientId, record, listBuilder.busy, load, onLeft);
+  // 結果待ち（段K6）：記録が増えたら、自動で組み直す（いまのタブ）
+  const pendingBuilder = usePending(patientId, record, load, onLeft);
+  // 予定と実施（段K9）：記録が増えたら、自動で組み直す（いまのタブ）
+  const planBuilder = usePlans(patientId, record, load, onLeft);
 
   if (record === null) {
     return (
@@ -212,6 +258,42 @@ export function PatientPage({ patientId, onBack, onLeft }: { patientId: string; 
   const foldedEvents = foldedEventIds(events);
   const shownMeds = medications.filter((m) => !foldedMeds.has(m.id));
   const shownEvents = events.filter((e) => !foldedEvents.has(e.id));
+  // いまの状態（いま・経過表のボードが同じものを使う）
+  const state =
+    current === null
+      ? null
+      : patientState({
+          patient: record.patient,
+          encounter: current,
+          today: record.today,
+          sources: record.sources,
+          segments: record.segments,
+          threads: record.problemThreads,
+          mentions: record.problems,
+          medications: shownMeds,
+          events: shownEvents,
+          observations,
+          list: record.problemList?.items ?? [],
+        });
+  // スコア・診断基準（段K4）：この受診の測定値（外した値・同じ値の二重を除いたもの）と、いまの問題の名前（記録に書かれた名前と、AI のプロブレムリストの活動中の項目）
+  const scoreInput =
+    current === null
+      ? null
+      : {
+          patient: record.patient,
+          encounter: current,
+          observations,
+          problems: [
+            ...currentThreads.map((t) => ({ name: t.name, source: 'problem' as const })),
+            ...(record.problemList?.items ?? []).filter((i) => !i.hidden && i.activity === 'active').map((i) => ({ name: i.name, source: 'ai' as const })),
+          ],
+        };
+  // 基準範囲の印（段K3）に使う、いまの年齢と性別
+  const refPatient = { age: ageNow(record.patient.age, record.patient.ageOn, record.today), sex: record.patient.sex };
+  // ボード（段K2）の問題の帯：AI のプロブレムリストの活動中の項目（番号はリストの番号）
+  const boardProblems = numberedList(record.problemList?.items ?? [])
+    .filter(({ item }) => item.activity === 'active')
+    .map(({ item, no }) => ({ key: item.key, no, name: item.name, since: item.since }));
   const composerOpen = composing ?? sources.length === 0;
   const toComposer = () => {
     setComposing(true);
@@ -228,8 +310,11 @@ export function PatientPage({ patientId, onBack, onLeft }: { patientId: string; 
   const onDayOf = (at: string | null): boolean => day === null || (at !== null && at.slice(0, 10) === day);
   const hospital = current !== null && current.kind === 'inpatient' && strip.length > 0 ? strip.at(-1)?.hospitalDay ?? null : null;
 
-  // 問題の帯（段K。CA-058）：問題ごとの、書かれた日時（患者のすべての記載から。問題は患者に付く）
+  // 書かれた日の点（段L。CA-080）：問題ごとの、書かれた日時（患者のすべての記載から。問題は患者に付く）
   const lanes = problemLanes({ threads: threadViews(record.problemThreads, record.problems).threads, list: record.problemList?.items ?? [], course: record.course });
+  // 指示簿（段K11）：この受診の項目。点滴の予定の帯・検査の予定の印を経過表に出す（検査に結びついた結果の数も）
+  const orderItems = current === null ? [] : (record.orders.find((o) => o.encounterId === current.id)?.items ?? []);
+  const testResults = new Map((record.pending?.body.orders ?? []).filter((o) => o.state === 'resulted').map((o) => [o.orderId, o.results.length]));
 
   // カルテ記載（段I。CA-054）：種類と日を選んで「出す」。日の帯で選んだ日が、記載の日の既定になる
   const noteView = (key: string) =>
@@ -325,6 +410,18 @@ export function PatientPage({ patientId, onBack, onLeft }: { patientId: string; 
                   {current.kind === 'inpatient' ? '種類を変える' : '入院にする・種類を変える'}
                 </button>
               )}
+              {current !== null && current.kind !== 'outpatient' && (
+                <button
+                  className="button small"
+                  type="button"
+                  onClick={() => {
+                    setPanel(panel === 'casebook' ? 'none' : 'casebook');
+                  }}
+                  data-testid="open-casebook"
+                >
+                  Casebook へ送る
+                </button>
+              )}
             </div>
           </div>
           {panel === 'encounter' && (
@@ -348,6 +445,7 @@ export function PatientPage({ patientId, onBack, onLeft }: { patientId: string; 
               onLeft={onLeft}
             />
           )}
+          {panel === 'casebook' && current !== null && current.kind !== 'outpatient' && <CasebookPanel key={current.id} record={record} encounter={current} onChanged={load} onLeft={onLeft} />}
           {panel === 'end' && current !== null && (
             <EndForm
               encounter={current}
@@ -433,33 +531,55 @@ export function PatientPage({ patientId, onBack, onLeft }: { patientId: string; 
             </button>
           ))}
         </div>
-        {tab === 'state' && current !== null && (
+        {found !== null && ((tab === 'notes' && found.kind === 'source') || (tab === 'problems' && found.kind === 'problems')) && (
+          <div className="search-found" data-testid="search-found">
+            <span className="note">受け持ちから探した字の場所（{found.kind === 'source' ? 'この記載を開いています' : 'AI のプロブレムリストの項目です'}）：</span>
+            <Snippet hit={found.hit} />
+            <button
+              type="button"
+              className="button link small"
+              onClick={() => {
+                setFound(null);
+              }}
+            >
+              閉じる
+            </button>
+          </div>
+        )}
+        {tab === 'state' && current !== null && state !== null && (
           <StateView
               vitals={
-                <LatestStrip
-                  panels={panels}
-                  onOpen={() => {
-                    setView('overview');
-                    setTab('course');
-                  }}
-                />
+                <>
+                  <LatestStrip
+                    panels={panels}
+                    onOpen={() => {
+                      setView('overview');
+                      setTab('course');
+                    }}
+                  />
+                  <FluidLine observations={observations} />
+                </>
               }
-              state={patientState({
-                patient: record.patient,
-                encounter: current,
-                today: record.today,
-                sources: record.sources,
-                segments: record.segments,
-                threads: record.problemThreads,
-                mentions: record.problems,
-                medications: shownMeds,
-                events: shownEvents,
-                observations,
-                list: record.problemList?.items ?? [],
-              })}
+              state={state}
               sources={record.sources}
               list={(record.problemList?.items ?? []).filter((i) => !i.hidden)}
               listBusy={listBuilder.busy}
+              patient={refPatient}
+              scores={scoreInput}
+              support={record.problemList === null ? null : <SupportPanel record={record} builder={supportBuilder} />}
+              pending={<PendingPanel patientId={patientId} record={record} builder={pendingBuilder} asOf={state.asOf} onChanged={load} onLeft={onLeft} />}
+              plans={<PlansPanel patientId={patientId} record={record} builder={planBuilder} asOf={state.asOf} onChanged={load} onLeft={onLeft} />}
+              orders={
+                <OrdersSummary
+                  record={record}
+                  encounter={current}
+                  onOpen={() => {
+                    setTab('course');
+                    setView('orders');
+                  }}
+                />
+              }
+              ask={<AskPanel patientId={patientId} record={record} onLeft={onLeft} />}
               onProblems={() => {
                 setTab('problems');
               }}
@@ -498,7 +618,7 @@ export function PatientPage({ patientId, onBack, onLeft }: { patientId: string; 
                 </button>
               ))}
             </div>
-            <div className={wide && view !== 'chart' ? 'course-grid' : 'course-single'}>
+            <div className={wide && view !== 'chart' && view !== 'orders' ? 'course-grid' : 'course-single'}>
               <div className="course-main">
                 {view === 'overview' && (
                   <Timeline
@@ -510,14 +630,21 @@ export function PatientPage({ patientId, onBack, onLeft }: { patientId: string; 
                     inpatient={current.kind === 'inpatient'}
                     range={range}
                     onRange={setRange}
+                    problems={boardProblems}
+                    course={record.course.filter((c) => c.encounterId === current.id)}
+                    devices={state?.devices ?? []}
+                    asOf={state?.asOf ?? null}
+                    plannedInfusions={plannedInfusions(orderItems)}
+                    plannedTests={plannedTests(orderItems)}
+                    testResults={testResults}
                   />
                 )}
                 {view === 'values' && (
                   <>
-                    <TrendGrid trends={trends} priority={problemValueNames} />
+                    <TrendGrid trends={trends} priority={problemValueNames} patient={refPatient} />
                     <ScaleLinks trends={trends} links={record.scaleLinks} onChanged={load} onLeft={onLeft} />
                     <h3 className="sub-title">表（書かれたとおり。日ごと）</h3>
-                    <LabTable observations={observations} />
+                    <LabTable observations={observations} patient={refPatient} />
                     {foldedHere > 0 && (
                       <p className="note" data-testid="values-folded">
                         記載（経過など）の中で挙げ直した値のうち、同じ日の検査結果・バイタルの文に同じ項目・同じ値があるもの {String(foldedHere)} 件は、二重になるので、ここ・経過表・いまでは出していません（消していません。記録の各記載の「整理した事実」にあります）。
@@ -525,6 +652,7 @@ export function PatientPage({ patientId, onBack, onLeft }: { patientId: string; 
                     )}
                   </>
                 )}
+                {view === 'fluid' && <FluidView observations={observations} encounter={current} day={day} />}
                 {view === 'medications' && (
                   <>
                     {day !== null && <p className="note">{`${day.slice(5).replace('-', '/')} の記録だけを出しています（日を外すと、全期間）。`}</p>}
@@ -550,9 +678,10 @@ export function PatientPage({ patientId, onBack, onLeft }: { patientId: string; 
                   </>
                 )}
                 {view === 'chart' && noteView(current.id)}
+                {view === 'orders' && <OrdersView key={current.id} record={record} encounter={current} onChanged={load} onLeft={onLeft} />}
               </div>
               {/* 広い画面では、右に、その日の記載（段H。PC の2列） */}
-              {wide && view !== 'chart' && (
+              {wide && view !== 'chart' && view !== 'orders' && (
                 <aside className="course-side" aria-label="その日の記載">
                   {noteView(`side-${current.id}`)}
                 </aside>
@@ -566,7 +695,7 @@ export function PatientPage({ patientId, onBack, onLeft }: { patientId: string; 
               <section className="lanes-section" aria-labelledby="lanes-title">
                 <h3 id="lanes-title" className="sub-title with-icon">
                   <Icon name="course" />
-                  問題の帯（書かれた日時）
+                  問題ごとの、書かれた日（点）
                   {lanes.some((l) => l.listed) && (
                     <span className="tag ai-tag">
                       <Icon name="ai" />
@@ -684,11 +813,20 @@ export function PatientPage({ patientId, onBack, onLeft }: { patientId: string; 
                   )}
                   <SourceCard
                     source={s}
+                    previous={(() => {
+                      // 前の記載との違い（段K7。CA-068。決定論）：同じ受診・同じ種類の、前の記載
+                      const prevNote = previousNote(record.sources, s);
+                      if (prevNote === null) return null;
+                      const segOf = (id: string) => record.segments.filter((g) => g.sourceId === id);
+                      return { source: prevNote.source, sameRole: prevNote.sameRole, diff: noteDiff({ text: prevNote.source.text, segments: segOf(prevNote.source.id) }, { text: s.text, segments: segOf(s.id) }) };
+                    })()}
                     segments={record.segments.filter((g) => g.sourceId === s.id)}
                     facts={{
                       medications: record.medications.filter((m) => m.sourceId === s.id),
                       events: record.events.filter((e) => e.sourceId === s.id),
                       observations: record.observations.filter((o) => o.sourceId === s.id),
+                      problems: record.problems.filter((p) => p.sourceId === s.id),
+                      course: record.course.filter((c) => c.sourceId === s.id),
                     }}
                     edits={record.factEdits}
                     userEdits={record.userEdits}
@@ -737,6 +875,9 @@ export function PatientPage({ patientId, onBack, onLeft }: { patientId: string; 
               if (source !== undefined) setTab('notes');
               load();
             }}
+            onQueued={() => {
+              setComposing(true);
+            }}
             onLeft={onLeft}
           />
         </section>
@@ -753,8 +894,59 @@ export function PatientPage({ patientId, onBack, onLeft }: { patientId: string; 
   );
 }
 
+/** 前の記載との違い（段K7。CA-068）：変わった行・足した行だけ。同じ見出しは畳んで数だけ。前にあってこの記載にない行は別に */
+function NoteDiffView({ previous, encounter }: { previous: { source: Source; sameRole: boolean; diff: NoteDiff }; encounter: Encounter | null }) {
+  const { diff, source } = previous;
+  const day = source.at !== null && encounter?.kind === 'inpatient' ? hospitalDay(encounter.start, source.at) : null;
+  return (
+    <section className="note-diff" data-testid="note-diff" aria-label="前の記載との違い">
+      <p className="note">
+        前の記載（{showDateTime(source.at)}
+        {day !== null && `・第${String(day)}病日`}・{SOURCE_KIND_LABELS[source.kind]}・{AUTHOR_ROLE_LABELS[source.authorRole]}）と、行で比べました（AI は使いません。比べるときだけ、全角・半角と空白をそろえています）。
+        {!previous.sameRole && '同じ書き手の前の記載がないので、ほかの書き手の記載と比べています。'}
+      </p>
+      <p className="row-sub" data-testid="note-diff-count">
+        この記載 {String(diff.lines)} 行のうち、前の記載と同じ行 {String(diff.unchanged)}・変わった・足した行 {String(diff.added)}・前の記載にあって、この記載にない行 {String(diff.removed.length)}
+      </p>
+      {diff.sections.map((x) =>
+        x.added.length === 0 ? (
+          <p key={x.key} className="row-sub" data-testid="note-diff-same">
+            <span className="diff-section-name">{x.name}</span>：前の記載と同じ（{String(x.unchanged)} 行）
+          </p>
+        ) : (
+          <div key={x.key} data-testid="note-diff-section">
+            <span className="diff-section-name">{x.name}</span>
+            {x.unchanged > 0 && <span className="row-sub">（ほかに、前の記載と同じ行 {String(x.unchanged)}）</span>}
+            <ul>
+              {x.added.map((line, i) => (
+                <li key={i} className="diff-added" data-testid="note-diff-added">
+                  ＋ {line}
+                </li>
+              ))}
+            </ul>
+          </div>
+        ),
+      )}
+      {diff.removed.length > 0 && (
+        <details data-testid="note-diff-removed">
+          <summary>前の記載にあって、この記載にない行（{String(diff.removed.length)}）</summary>
+          <ul>
+            {diff.removed.map((r, i) => (
+              <li key={i} className="diff-removed">
+                − {r.line}
+                <span className="row-sub">（{r.section}）</span>
+              </li>
+            ))}
+          </ul>
+        </details>
+      )}
+    </section>
+  );
+}
+
 function SourceCard({
   source,
+  previous,
   segments,
   facts,
   edits,
@@ -766,8 +958,10 @@ function SourceCard({
   onLeft,
 }: {
   source: Source;
+  /** 前の記載との違い（段K7。同じ受診・同じ種類の前の記載がなければ null） */
+  previous: { source: Source; sameRole: boolean; diff: NoteDiff } | null;
   segments: readonly Segment[];
-  facts: { medications: readonly Medication[]; events: readonly ClinicalEvent[]; observations: readonly Observation[] };
+  facts: { medications: readonly Medication[]; events: readonly ClinicalEvent[]; observations: readonly Observation[]; problems: readonly Problem[]; course: readonly CourseItem[] };
   edits: readonly FactEdit[];
   userEdits: readonly UserEdit[];
   encounter: Encounter | null;
@@ -780,6 +974,7 @@ function SourceCard({
   const [asking, setAsking] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [organizing, setOrganizing] = useState(false);
+  const [showDiff, setShowDiff] = useState(false);
   const report = source.organized === 'done' ? reportText(source.organizeReport) : null;
   const nextDay = nextDayLabel(source.text, source.nextDayFrom);
 
@@ -804,6 +999,18 @@ function SourceCard({
   const unread = READ_VALUES_KINDS.includes(source.kind) ? readLabText(source.text).unread : [];
 
   const kindClass = source.kind === 'vital' ? 'vital' : source.kind === 'lab' ? 'lab' : CARTE_ONLY_KINDS.includes(source.kind) ? 'memo' : 'note';
+  // 振り分けられなかった字（段K1。A1）：どの事実にも、引用で出す区切り（背景・A・P）にも入らなかった字。整理が終わった記載だけ
+  const left =
+    source.organized === 'done'
+      ? leftovers(source.text, [
+          ...facts.medications,
+          ...facts.events,
+          ...facts.observations,
+          ...facts.problems,
+          ...facts.course,
+          ...segments.filter((g) => QUOTED_SEGMENT_LABELS.includes(g.label)),
+        ])
+      : [];
   const firstLine = source.text.split(/\r?\n/u).find((l) => l.trim() !== '')?.trim() ?? '';
   const head = (
     <button type="button" className="source-head source-toggle" aria-expanded={open} onClick={onToggle} data-testid="source-summary">
@@ -820,24 +1027,62 @@ function SourceCard({
         {CARTE_ONLY_KINDS.includes(source.kind) && <span className="tag">carte だけの記録</span>}
         {source.organized === null && <span className="tag">未整理</span>}
         {source.organized === 'failed' && <span className="tag">整理できず</span>}
+        {left.length > 0 && <span className="tag" data-testid="leftover-count">振り分けられなかった字 {String(left.length)}</span>}
+        {previous !== null && (
+          <span className="tag" data-testid="diff-count">
+            前回から変わった行 {String(previous.diff.added)}
+          </span>
+        )}
+        {previous?.diff.nearlySame === true && (
+          <span className="tag diff-same" data-testid="diff-nearly-same">
+            ほぼ前回と同じ
+          </span>
+        )}
       </span>
       {!open && <span className="source-first">{firstLine}</span>}
     </button>
   );
   if (!open)
     return (
-      <li className={`source folded kind-${kindClass}`} data-testid="source">
+      <li className={`source folded kind-${kindClass}`} id={`source-${source.id}`} data-testid="source">
         {head}
       </li>
     );
 
   return (
-    <li className={`source kind-${kindClass}`} data-testid="source">
+    <li className={`source kind-${kindClass}`} id={`source-${source.id}`} data-testid="source">
       {head}
+      {previous !== null && (
+        <div className="row-actions">
+          <button
+            type="button"
+            className={showDiff ? 'chip small on' : 'chip small'}
+            aria-pressed={showDiff}
+            onClick={() => {
+              setShowDiff(!showDiff);
+            }}
+            data-testid="diff-toggle"
+          >
+            前の記載との違い
+          </button>
+        </div>
+      )}
+      {previous !== null && showDiff && <NoteDiffView previous={previous} encounter={encounter} />}
       <SourceText text={source.text} segments={segments} />
       <SourceFacts medications={facts.medications} events={facts.events} observations={facts.observations} edits={edits} userEdits={userEdits} onChanged={onChanged} onLeft={onLeft} />
       <SourceAppend key={source.text} source={source} onChanged={onChanged} onLeft={onLeft} />
       <SourceEdit source={source} segments={segments} edits={userEdits} onChanged={onChanged} onLeft={onLeft} />
+      {left.length > 0 && (
+        <details className="unread" data-testid="leftovers">
+          <summary className="unread-title">振り分けられなかった部分（{String(left.length)} か所。どの見方にも出ていません。文には残っています）</summary>
+          <ul>
+            {left.map((u) => (
+              <li key={`${String(u.start)}-${String(u.end)}`}>「{source.text.slice(u.start, u.end)}」</li>
+            ))}
+          </ul>
+          <p className="note">「整理し直す」で、もう一度 AI に振り分けさせられます。</p>
+        </details>
+      )}
       {unread.length > 0 && (
         <div className="unread" data-testid="unread">
           <span className="unread-title">値として読めなかった部分（文には残っています）</span>

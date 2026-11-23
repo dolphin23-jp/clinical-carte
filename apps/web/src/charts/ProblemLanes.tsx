@@ -1,6 +1,7 @@
-// 問題の帯（段K。CA-058）：問題ごとに、「書かれた日時」を同じ時間の軸に並べる。計算は core の problemLanes（純関数）。
-// 帯は、最初に書かれた日時から最後に書かれた日時までだけ（その先へは伸ばさない：続いているかは書かれていないので、補わない）。
-// 判定しない：色は1つ。線の形（実線＝活動中・点線＝それ以外）と、点の形（中が白＝日だけ分かる）で分け、状態は字でも添える。
+// 問題ごとの、書かれた日の点（段L。CA-080）：問題ごとに、「書かれた日時」を同じ時間の軸に点で並べる。計算は core の problemLanes（純関数）。
+// どの問題が、どの日に書かれたか（どの日から書かれていないか）を見るための図。**線で結ばない**：問題が続いている期間の帯は、
+// 経過表のボードの「問題の帯」（CA-061）の役目で、ここは書かれた日時の点だけ（期間を、もう1つの決まりで描かない）。
+// 判定しない：色は1つ。点の形（中が白＝日だけ分かる）と、名前の字の濃さ・状態の字（活動中でないもの）で分ける。
 import { axisTicks, type ProblemLane, laneDomain } from '@clinical-carte/core';
 import { useRef, useState } from 'react';
 
@@ -39,7 +40,7 @@ export function ProblemLanes({ lanes, inpatientStart }: { lanes: readonly Proble
 
   return (
     <div className="lanes" ref={box} data-testid="problem-lanes">
-      <svg width={width} height={height} role="img" aria-label={`問題の帯：${lanes.map((l) => `${l.no === null ? '' : `#${String(l.no)} `}${l.name}`).join('・')}`}>
+      <svg width={width} height={height} role="img" aria-label={`問題ごとの、書かれた日の点：${lanes.map((l) => `${l.no === null ? '' : `#${String(l.no)} `}${l.name}`).join('・')}`}>
         {ticks.map((tk) => (
           <g key={tk.t}>
             <line x1={x(tk.t)} x2={x(tk.t)} y1={AXIS_H - 4} y2={height - 2} className={tk.kind === 'day' ? 'gridline' : 'gridline faint'} />
@@ -59,11 +60,9 @@ export function ProblemLanes({ lanes, inpatientStart }: { lanes: readonly Proble
         {lanes.map((lane, i) => {
           const top = AXIS_H + i * rowH;
           const cy = top + LABEL_H + LANE_H / 2;
-          const first = lane.marks[0];
-          const last = lane.marks.at(-1);
           const on = lane.key === picked;
           return (
-            <g key={lane.key} className={on ? 'lane-row on' : 'lane-row'} data-testid="problem-lane">
+            <g key={lane.key} className={lane.active ? 'lane-row' : 'lane-row closed'} data-testid="problem-lane">
               {on && <rect x={0} y={top - 2} width={width} height={rowH} rx={6} className="lane-picked" />}
               <text x={GUTTER} y={top + 12} className="lane-title">
                 {lane.no !== null && <tspan className="lane-no">{`#${String(lane.no)} `}</tspan>}
@@ -72,9 +71,8 @@ export function ProblemLanes({ lanes, inpatientStart }: { lanes: readonly Proble
                 {lane.undated > 0 && <tspan className="panel-unit">{`\u3000日時不明 ${String(lane.undated)}`}</tspan>}
               </text>
               <line x1={GUTTER} x2={GUTTER + plotW} y1={cy} y2={cy} className="lane" />
-              {first !== undefined && last !== undefined && last.t > first.t && <line x1={x(first.t)} x2={x(last.t)} y1={cy} y2={cy} className={lane.active ? 'problem-span' : 'problem-span closed'} />}
               {lane.marks.map((m) => (
-                <circle key={m.t} cx={x(m.t)} cy={cy} r={4} className={m.dateOnly ? 'problem-mark hollow' : 'problem-mark'} />
+                <circle key={m.t} cx={x(m.t)} cy={cy} r={4} className={m.dateOnly ? 'written-mark hollow' : 'written-mark'} />
               ))}
               <rect
                 x={0}
@@ -93,7 +91,7 @@ export function ProblemLanes({ lanes, inpatientStart }: { lanes: readonly Proble
       </svg>
       <div className="readout lanes-readout" data-testid="problem-lanes-readout" aria-live="polite">
         {pickedLane === null ? (
-          <span className="note">点は、その問題が書かれた日時。線は、最初から最後に書かれた日時まで（その先は、続いているか書かれていないので、描いていません）。実線は活動中、点線はそれ以外。押すと、書かれた日時が出ます。</span>
+          <span className="note">点は、その問題が書かれた日時（中が白い点は、日だけ分かる記載）。書かれていない日には、何も置いていません。問題が続いている期間の帯は、経過の「経過表」にあります。押すと、書かれた日時が出ます。</span>
         ) : (
           <>
             <div className="readout-when">
