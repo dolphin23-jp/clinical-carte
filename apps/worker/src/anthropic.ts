@@ -48,22 +48,31 @@ export function createAnthropicSelector(options: AnthropicOptions): Selector {
   };
 }
 
+/** 整理の答えの上限（2026-11-23。16000 では長い記載で切れた） */
+export const ORGANIZE_MAX_TOKENS = 64000;
+
 /** 整理（段2）。選別と同じ鍵・モデル。答えが長くなりうるので、待つ時間を長めにとる */
 export function createAnthropicOrganizer(options: AnthropicOptions): Organizer {
   const client = new Anthropic({ apiKey: options.apiKey, maxRetries: 2, timeout: 180_000 });
   return {
+    // 2026-11-23：時刻つきの処置・投薬・値・指示が多い長い記載で、答えが 16000 の上限で切れて整理できなかった。
+    // 上限を 64000 に広げ、長い答えでも切れずに受け取れるよう、流して受け取る（stream。待つ時間は 600 秒）
     async organize(text: string, prompt: OrganizePromptChoice = 'current'): Promise<OrganizerResult> {
       try {
-        const response = await client.beta.messages.parse({
-          model: options.model,
-          max_tokens: 16000,
-          betas: ['server-side-fallback-2026-07-01'],
-          fallbacks: 'default',
-          cache_control: { type: 'ephemeral' },
-          system: ORGANIZE_PROMPTS[prompt].system,
-          output_config: { effort: 'medium', format: zodOutputFormat(OrganizeAnswerWire) },
-          messages: [{ role: 'user', content: text }],
-        });
+        const stream = client.beta.messages.stream(
+          {
+            model: options.model,
+            max_tokens: ORGANIZE_MAX_TOKENS,
+            betas: ['server-side-fallback-2026-07-01'],
+            fallbacks: 'default',
+            cache_control: { type: 'ephemeral' },
+            system: ORGANIZE_PROMPTS[prompt].system,
+            output_config: { effort: 'medium', format: zodOutputFormat(OrganizeAnswerWire) },
+            messages: [{ role: 'user', content: text }],
+          },
+          { timeout: 600_000 },
+        );
+        const response = await stream.finalMessage();
         if (response.stop_reason === 'refusal') return { ok: false, reason: 'refused' };
         if (response.stop_reason !== 'end_turn') return { ok: false, reason: 'bad_answer' };
         const parsed = OrganizeAnswerWire.safeParse(response.parsed_output);
