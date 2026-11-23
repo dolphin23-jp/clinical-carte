@@ -10,6 +10,7 @@ import {
   checkPending,
   hasPendingCandidates,
   japanDateTime,
+  orderPendingCandidates,
   type PendingBody,
   pendingBasis,
   type PendingInput,
@@ -27,14 +28,16 @@ import { getRecord, type PatientRecord, pendingOf } from './records.ts';
 import type { Runtime } from './runtime.ts';
 import type { SelectorFailure } from './selector.ts';
 
-/** 資料の入力を、記録から作る：外した事実・字に見つからない AI の数は除く */
+/** 資料の入力を、記録から作る：外した事実・字に見つからない AI の数は除く。指示簿の検査の予定（段K11）も候補にする */
 export function pendingInputOf(record: PatientRecord): PendingInput {
+  const at = new Map(record.sources.map((s) => [s.id, s.at]));
   return {
     encounters: record.encounters,
     sources: record.sources,
     events: record.events.filter((e) => !e.excluded),
     course: record.course,
     observations: record.observations.filter((o) => !o.excluded && o.unseen !== true),
+    orders: orderPendingCandidates(record.orders, (id) => at.get(id) ?? null),
   };
 }
 
@@ -57,10 +60,10 @@ export async function generatePending(db: Db, patientId: string, organizer: Orga
   const record = await getRecord(db, patientId);
   if (record === null) return { ok: false, reason: 'not_found' };
   const input = pendingInputOf(record);
-  const basis = pendingBasis(record.sources);
+  const basis = pendingBasis(record.sources, input.orders ?? []);
   // 提出の候補がなければ、AI を呼ばない（空の一覧を、記録の印つきで残す。決定論）
   if (!hasPendingCandidates(input)) {
-    const body: PendingBody = { items: [], notSubmission: 0, rejected: {}, dropped: { candidates: 0, results: 0 } };
+    const body: PendingBody = { items: [], orders: [], notSubmission: 0, rejected: {}, dropped: { candidates: 0, results: 0 } };
     await save(db, patientId, runtime, basis, body);
     return { ok: true, body };
   }
@@ -71,6 +74,7 @@ export async function generatePending(db: Db, patientId: string, organizer: Orga
   const checked = checkPending(answered.answer, material);
   const body: PendingBody = {
     items: carryPendingMarks(checked.items, record.pending?.body.items ?? []),
+    orders: [...checked.orders],
     notSubmission: checked.notSubmission,
     rejected: checked.rejected,
     dropped: material.dropped,

@@ -17,6 +17,8 @@ const SEX_WORDS: Readonly<Record<Sex, string>> = { male: '男性', female: '女�
 
 /** 背景として出す区切り（CA-027） */
 export const BACKGROUND_LABELS: readonly SegmentLabel[] = ['past_history', 'home_medications', 'allergy', 'social_history', 'family_history'];
+/** 最新の所見として出す区切り（2026-11-23。この受診の、いちばん新しい記載のもの。CA-060 の改訂） */
+export const FINDING_LABELS: readonly SegmentLabel[] = ['chief_complaint', 'present_illness', 'review_of_systems', 'physical_exam', 'labs', 'imaging'];
 
 /** 「この期間に入ったこと」の幅（時間） */
 export const RECENT_HOURS = 24;
@@ -132,6 +134,15 @@ export interface BackgroundPart {
   readonly others: number;
 }
 
+/** 最新の所見の1つの区切り（場所だけ。同じ記載に同じ種類の区切りが2つ以上あれば、すべて） */
+export interface FindingPart {
+  readonly label: SegmentLabel;
+  readonly name: string;
+  readonly sourceId: string;
+  readonly at: string | null;
+  readonly parts: readonly { readonly start: number; readonly end: number }[];
+}
+
 export interface PatientState {
   /** 1行の要約（決定論のひな形） */
   readonly oneLiner: string;
@@ -154,6 +165,8 @@ export interface PatientState {
   /** デバイスの入れてから何日目（段K1。できごとの挿入・抜去の字から） */
   readonly devices: readonly DeviceLine[];
   readonly background: readonly BackgroundPart[];
+  /** 最新の所見（主訴・現病歴・システムレビュー・身体所見・検査・画像。この受診の、その区切りがあるいちばん新しい記載のもの） */
+  readonly findings: readonly FindingPart[];
 }
 
 /** 日時のいちばん新しいもの（日時のないものは、日時のあるものがなければ、最後のもの） */
@@ -353,7 +366,29 @@ export function patientState(input: StateInput): PatientState {
     background.push({ label, name: SEGMENT_LABEL_NAMES[label], sourceId: newest.sourceId, at: sourceAt.get(newest.sourceId)?.at ?? null, start: newest.start, end: newest.end, others: sources.size - 1 });
   }
 
+  // 最新の所見（この受診）：区切りごとに、それを持ついちばん新しい記載の、その種類の区切りすべて
+  const findings: FindingPart[] = [];
+  const encounterIds = new Set(encounterSources.map((src) => src.id));
+  for (const label of FINDING_LABELS) {
+    const parts = input.segments.filter((g) => g.label === label && encounterIds.has(g.sourceId));
+    if (parts.length === 0) continue;
+    const newestSource = [...new Set(parts.map((g) => g.sourceId))]
+      .map((id) => sourceAt.get(id))
+      .filter((src): src is StateSource => src !== undefined)
+      .sort((a, b) => compareDateTime(a.at, b.at) || a.enteredAt.localeCompare(b.enteredAt) || a.id.localeCompare(b.id))
+      .at(-1);
+    if (newestSource === undefined) continue;
+    findings.push({
+      label,
+      name: SEGMENT_LABEL_NAMES[label],
+      sourceId: newestSource.id,
+      at: newestSource.at,
+      parts: parts.filter((g) => g.sourceId === newestSource.id).sort((a, b) => a.start - b.start).map((g) => ({ start: g.start, end: g.end })),
+    });
+  }
+
   return {
+    findings,
     oneLiner,
     asOf,
     lastEntered,

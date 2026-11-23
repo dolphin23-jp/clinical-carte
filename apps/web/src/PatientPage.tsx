@@ -18,6 +18,8 @@ import {
   QUOTED_SEGMENT_LABELS,
   medicationTimeline,
   numberedList,
+  plannedInfusions,
+  plannedTests,
   type NoteDiff,
   noteDiff,
   patientState,
@@ -83,6 +85,7 @@ import { nextDayLabel } from './NextDayAsk.tsx';
 import { FluidLine, FluidView } from './FluidView.tsx';
 import { type OpenFocus, Snippet } from './SearchView.tsx';
 import { DocumentView } from './DocumentView.tsx';
+import { OrdersSummary, OrdersView } from './OrdersView.tsx';
 
 // 見方（段H。CA-053）：9つのタブを4つにまとめた。経過・検査・投薬・できごと・記載は、どれも同じ時間の上のものなので、
 // 「経過」の中で、日の帯と表示の範囲を分け合って切り替える。草案は、問題の中。
@@ -93,7 +96,7 @@ const TABS: readonly (readonly [Tab, string])[] = [
   ['problems', '問題'],
   ['notes', '記録'],
 ];
-type CourseView = 'overview' | 'values' | 'fluid' | 'medications' | 'events' | 'chart';
+type CourseView = 'overview' | 'values' | 'fluid' | 'medications' | 'events' | 'chart' | 'orders';
 const COURSE_VIEWS: readonly (readonly [CourseView, string])[] = [
   ['overview', '経過表'],
   ['values', '検査'],
@@ -101,6 +104,7 @@ const COURSE_VIEWS: readonly (readonly [CourseView, string])[] = [
   ['medications', '投薬'],
   ['events', '時系列'],
   ['chart', '記載'],
+  ['orders', '指示簿'],
 ];
 
 /** 広い画面（PC・横向きの iPad）か。2列にするときだけ使う（端末に保存しない。画面の幅を見るだけ） */
@@ -296,6 +300,10 @@ export function PatientPage({ patientId, focus = null, onBack, onLeft }: { patie
   };
   const onDayOf = (at: string | null): boolean => day === null || (at !== null && at.slice(0, 10) === day);
   const hospital = current !== null && current.kind === 'inpatient' && strip.length > 0 ? strip.at(-1)?.hospitalDay ?? null : null;
+
+  // 指示簿（段K11）：この受診の項目。点滴の予定の帯・検査の予定の印を経過表に出す（検査に結びついた結果の数も）
+  const orderItems = current === null ? [] : (record.orders.find((o) => o.encounterId === current.id)?.items ?? []);
+  const testResults = new Map((record.pending?.body.orders ?? []).filter((o) => o.state === 'resulted').map((o) => [o.orderId, o.results.length]));
 
   // カルテ記載（段I。CA-054）：種類と日を選んで「出す」。日の帯で選んだ日が、記載の日の既定になる
   const noteView = (key: string) =>
@@ -524,6 +532,16 @@ export function PatientPage({ patientId, focus = null, onBack, onLeft }: { patie
               support={record.problemList === null ? null : <SupportPanel record={record} builder={supportBuilder} />}
               pending={<PendingPanel patientId={patientId} record={record} builder={pendingBuilder} asOf={state.asOf} onChanged={load} onLeft={onLeft} />}
               plans={<PlansPanel patientId={patientId} record={record} builder={planBuilder} asOf={state.asOf} onChanged={load} onLeft={onLeft} />}
+              orders={
+                <OrdersSummary
+                  record={record}
+                  encounter={current}
+                  onOpen={() => {
+                    setTab('course');
+                    setView('orders');
+                  }}
+                />
+              }
               ask={<AskPanel patientId={patientId} record={record} onLeft={onLeft} />}
               onProblems={() => {
                 setTab('problems');
@@ -551,7 +569,7 @@ export function PatientPage({ patientId, focus = null, onBack, onLeft }: { patie
                 </button>
               ))}
             </div>
-            <div className={wide && view !== 'chart' ? 'course-grid' : 'course-single'}>
+            <div className={wide && view !== 'chart' && view !== 'orders' ? 'course-grid' : 'course-single'}>
               <div className="course-main">
                 {view === 'overview' && (
                   <Timeline
@@ -567,6 +585,9 @@ export function PatientPage({ patientId, focus = null, onBack, onLeft }: { patie
                     course={record.course.filter((c) => c.encounterId === current.id)}
                     devices={state?.devices ?? []}
                     asOf={state?.asOf ?? null}
+                    plannedInfusions={plannedInfusions(orderItems)}
+                    plannedTests={plannedTests(orderItems)}
+                    testResults={testResults}
                   />
                 )}
                 {view === 'values' && (
@@ -608,9 +629,10 @@ export function PatientPage({ patientId, focus = null, onBack, onLeft }: { patie
                   </>
                 )}
                 {view === 'chart' && noteView(current.id)}
+                {view === 'orders' && <OrdersView key={current.id} record={record} encounter={current} onChanged={load} onLeft={onLeft} />}
               </div>
               {/* 広い画面では、右に、その日の記載（段H。PC の2列） */}
-              {wide && view !== 'chart' && (
+              {wide && view !== 'chart' && view !== 'orders' && (
                 <aside className="course-side" aria-label="その日の記載">
                   {noteView(`side-${current.id}`)}
                 </aside>

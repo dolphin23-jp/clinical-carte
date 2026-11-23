@@ -43,6 +43,8 @@ export function errorMessage(error: ApiError, left?: number): string {
       return 'プロブレムリストに活動中の問題がないので、臨床支援を組めません。';
     case 'ask_empty':
       return 'この受診には、まだ聞ける記録がありません。';
+    case 'orders_empty':
+      return 'この受診には、まだ案の資料になる記録がありません（AI の案は、いちばん新しい受診だけに出します）。';
     case 'shape':
       return '記載か頼みに、電話番号・メールなどの形があるので、送りませんでした。消してから、もう一度送ってください。';
     case 'bad_span':

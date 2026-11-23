@@ -18,6 +18,33 @@ describe('振り分けられなかった字（A1）', () => {
     const u = 'S) 咳嗽は軽減。';
     expect(leftovers(u, []).map((x) => u.slice(x.start, x.end))).toEqual(['咳嗽は軽減']);
   });
+  test('2026-11-23 改訂：区切りに入った字・見出し・時の語・項目名・値の横の短い補足は数えない。どこにも入らない字だけ残る', () => {
+    const t = [
+      '0. 救急隊からの連絡（10:05）',
+      '• 68歳女性。高血圧で通院中',
+      '• 現着時：RR 28、SpO₂ 88%（室内気）、HR 110 不整',
+      '• 到着予定は10:30',
+      '1. S（夫からの聴取）',
+      '• 3日前：咳が出始めた',
+      '• 前日夕：食事が取れなかった',
+      '2. O',
+      'バイタル',
+      '項目\t値',
+      '血圧\t150/80 mmHg',
+      '脈拍\t108/分',
+      '• 呼吸：wheezes あり',
+      'ACP：未確認',
+    ].join('\n');
+    const span = (s: string): { start: number; end: number } => ({ start: t.indexOf(s), end: t.indexOf(s) + s.length });
+    const segment = (from: string, to: string): { start: number; end: number } => ({ start: t.indexOf(from), end: t.indexOf(to) });
+    const covered = [
+      ...['RR 28', 'SpO₂ 88%', 'HR 110', '150/80 mmHg', '108/分', '咳が出始めた', '食事が取れなかった'].map(span),
+      // 区切り：S と O（「その他」以外）。ACP の行は区切りの外
+      segment('1. S', '• 3日前'),
+      segment('2. O', 'ACP'),
+    ];
+    expect(leftovers(t, covered).map((x) => t.slice(x.start, x.end))).toEqual(['68歳女性。高血圧で通院中', '到着予定は10:30', 'ACP：未確認']);
+  });
   test('すべて覆われていれば空。覆いが文の外にはみ出しても壊れない', () => {
     expect(leftovers(text, [{ start: -5, end: text.length + 10 }])).toEqual([]);
     expect(leftovers('', [])).toEqual([]);

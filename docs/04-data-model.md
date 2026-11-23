@@ -210,6 +210,9 @@ AI が返すのは、次の3つだけ（構造化した出力）。
 | `plan_checks` | 予定と実施を組んだとき（段K9。CA-071。患者ごとに1つ。確かめた後の一覧だけ。予定の行がなければ AI を呼ばずに空の一覧）・本人が印を付けたとき・患者を消すとき |
 | `plan_check_edits` | 本人が予定と実施に印を付けたとき（段K9。印の前後だけ。**文は入らない**）・患者を消すとき |
 | `casebook_links` | 本人が Casebook へ送る画面を開いたとき（受診ごとに1回、種を作る）・症例コードを入れる・消す・「Casebook が取り込みました」を押す・最初からやり直す・患者を消すとき（段K10。CA-073。**文・日付・時刻は入らない**） |
+| `order_sheets` | 本人が指示簿に足す（先生が打った・テンプレから・AI の案を採用した・記録の文から写した項目。字は選別を通した後の字か、写した記載のその場所の字そのまま）・直す・中止／再開する・体重と段を選ぶ・消すとき・患者を消すとき（段K11。CA-074。受診ごとに1行） |
+| `order_edits` | 本人が指示簿を直したとき（段K11。どの項目に何をしたかと、誰が入れた項目か。**文は入らない**）・患者を消すとき |
+| `order_templates` | 本人がスケールのテンプレを作る・直す・外すとき（段K11。CA-075。**患者に付かない**。字は識別情報の形の検査を通す。外すときは行を消さず `removed_at`） |
 | `sources` の `send_key` | 本人の入力（段K9。CA-072。送るボタンを押したときに画面が作る ULID。同じ受診に同じ鍵の文があれば、保存し直さない） |
 | `devices` | 端末の登録・外すとき・その日はじめて使ったとき（1日に1回） |
 | `entrance_daily` | 合鍵を間違えたとき |
@@ -219,7 +222,7 @@ AI が返すのは、次の3つだけ（構造化した出力）。
 
 - 打った原文・AI へ送った文・AI の答えそのものは、どの表にも書かない。ログにも出さない。
 - 表を足すときは、先にこの一覧を直す。
-- いまある表（段0〜段5）は `devices`・`entrance_daily`・`patients`・`encounters`・`sources`・`observations`・`usage_daily`・`schema_migrations`・`segments`・`medications`・`events`・`problems`・`problem_threads`・`history`・`fact_edits`・`user_edits`・`ap_notes`・`ap_history`・`scale_links`・`documents`・`document_history`・`handoffs`・`course_items`・`problem_lists`・`problem_list_edits`・`clinical_support`・`pending_results`・`pending_result_edits`・`plan_checks`・`plan_check_edits`。記録への質問（段K6。CA-066）と、前の記載との違い（段K7。CA-068）と、水分の出入りの集計・受け持ちを横断する検索（段K8。CA-069・CA-070）は、どの表にも書かない。`apps/worker/test/writes.test.ts` が、migrations が作る表と、ソースの SQL が書く表を、この一覧と突き合わせる。
+- いまある表（段0〜段5）は `devices`・`entrance_daily`・`patients`・`encounters`・`sources`・`observations`・`usage_daily`・`schema_migrations`・`segments`・`medications`・`events`・`problems`・`problem_threads`・`history`・`fact_edits`・`user_edits`・`ap_notes`・`ap_history`・`scale_links`・`documents`・`document_history`・`handoffs`・`course_items`・`problem_lists`・`problem_list_edits`・`clinical_support`・`pending_results`・`pending_result_edits`・`plan_checks`・`plan_check_edits`・`casebook_links`・`order_sheets`・`order_edits`・`order_templates`。記録への質問（段K6。CA-066）と、前の記載との違い（段K7。CA-068）と、水分の出入りの集計・受け持ちを横断する検索（段K8。CA-069・CA-070）は、どの表にも書かない。`apps/worker/test/writes.test.ts` が、migrations が作る表と、ソースの SQL が書く表を、この一覧と突き合わせる。
 
 ## 7. 段1 で作ったものと、案との違い
 
@@ -441,3 +444,18 @@ AI が返すのは、次の3つだけ（構造化した出力）。
 
 - パケットそのもの・項目の文・日付・時刻は、どの表にも書かない（パケットは画面がクリップボードに載せるだけ。サーバーは Casebook へ何も送らない）。
 - 印は、本人が「Casebook が取り込みました」を押したときだけ付く（コピーでは付かない）。
+
+## 23. 指示簿（段K11。CA-074〜CA-079）
+
+作った表は、`apps/worker/migrations/0018_orders.sql`。
+
+| 表 | 列 |
+|---|---|
+| `order_sheets` | encounter_id（受診ごとに1つ）・patient_id・items（項目の JSON。core の `OrderItem`：id・category・text・condition・drug・dose・rate・interval・duration〔字の欄。書かれたとおり〕・action・start・end〔先生が入れたときだけ。なければ null〕・scale〔入れたときのテンプレの中身・体重 kg・いまの段。なければ null〕・origin〔self・ai・transcribed〕・edited・from〔写した元の字の場所：文の id と字の範囲〕・basis〔AI の案の根拠の短い名前。選別を通した後の字〕・unseen〔資料に見つからなかった数の字。※〕・status〔active・stopped〕・addedAt・updatedAt・stoppedAt・history〔日時と、入れた・直した・中止・再開・体重と段〕）・updated_at |
+| `order_edits` | id・patient_id・encounter_id・at・item_id・action（add・edit・stop・restart・scale・delete）・origin（self・ai・transcribed）。**文は入らない** |
+| `order_templates` | id・body（core の `ScaleTemplateBody` の JSON：名前・薬・濃度〔量・単位・mL〕・投与量の単位・段〔名前・量・注〕・注）・created_at・updated_at・removed_at。**患者の列はない** |
+
+- 写す・AI の案の答え（案）は、保存もログもしない（画面のメモリだけ）。先生が「入れる」を押した項目だけを、足す要求で保存する。AI に送った資料・AI の答えそのものは、どの表にも書かない。
+- 字（CA-079）：写した項目の欄のうち、元の記載のその場所の字にそのままあるものは選別を通さない（保存した文の字そのもの）。それ以外の字（打った・直した・AI の案の字・根拠の短い名前）は、まとめて1回の選別を通した後の字。テンプレの字は選別に通さず、識別情報の形があれば断る。
+- 結果待ち（`pending_results`）の body に `orders`（指示簿の検査の予定への結びつけ：orderId・state・results〔場所と短い名前と日時〕）を足した（段K11。前の版の body にはないので、読むときは [] として扱う）。`basis` は、指示簿の検査の項目があるときだけ、その id と直した日時を足す（なければ前の版と同じ印）。
+- 患者を消すと、`order_sheets`・`order_edits` が消える（`PATIENT_TABLES`）。`order_templates` は患者に付かないので残る。

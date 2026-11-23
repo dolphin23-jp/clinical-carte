@@ -128,14 +128,14 @@ describe('整理', () => {
 
   test('振り分けられなかった字（段K1）：どの見方にも出ていない字を、記載の札の数と、開いた字で出す', async () => {
     const page = await openPatient();
-    await send(page, NOTE);
+    // 区切りの前の1行（どの区切りにも、どの事実にも入らない）。S の「咳嗽は軽減」は S の区切りに入っているので数えない（2026-11-23 改訂）
+    await send(page, `家人より電話あり。\n${NOTE}`);
     await expect.poll(() => page.getByTestId('segment-label').count()).toBe(3);
-    // S の「咳嗽は軽減」は、どの事実にも入らず、S の区切りは引用で出す種類ではない
     const left = page.getByTestId('leftovers').first();
     await left.waitFor();
     expect(await page.getByTestId('leftover-count').first().textContent()).toBe('振り分けられなかった字 1');
     await left.locator('summary').click();
-    expect(await left.locator('li').allTextContents()).toEqual(['「咳嗽は軽減」']);
+    expect(await left.locator('li').allTextContents()).toEqual(['「家人より電話あり」']);
     expect(await fits(page)).toBe(true);
   });
 

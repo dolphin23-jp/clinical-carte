@@ -7,6 +7,8 @@ import {
   dayNumber,
   hasPendingCandidates,
   hospitalDay,
+  orderPendingCandidates,
+  type PendingOrder,
   PENDING_REJECT_NAMES,
   PENDING_REJECT_REASONS,
   pendingBasis,
@@ -29,7 +31,14 @@ export interface PendingBuild {
   readonly build: () => void;
 }
 
-const candidatesIn = (record: PatientRecord): boolean => hasPendingCandidates({ encounters: record.encounters, events: record.events.filter((e) => !e.excluded), course: record.course });
+/** 指示簿の検査の予定（段K11）：結果待ちの1回に、候補として一緒に渡す（サーバーと同じ関数） */
+export function pendingOrdersOf(record: PatientRecord): PendingOrder[] {
+  const at = new Map(record.sources.map((s) => [s.id, s.at]));
+  return orderPendingCandidates(record.orders, (id) => at.get(id) ?? null);
+}
+
+const candidatesIn = (record: PatientRecord): boolean =>
+  hasPendingCandidates({ encounters: record.encounters, events: record.events.filter((e) => !e.excluded), course: record.course, orders: pendingOrdersOf(record) });
 
 /** 結果待ちを組む係（患者の画面に1つ）。記録の印が変わり、整理が終わっていれば、自動で1回だけ組み直す（同じ印では二度と自動では呼ばない） */
 export function usePending(patientId: string, record: PatientRecord | null, onChanged: () => void, onLeft: () => void): PendingBuild {
@@ -46,7 +55,7 @@ export function usePending(patientId: string, record: PatientRecord | null, onCh
       else setMessage(`結果待ちを組み直せませんでした（${say(r.error)}）`);
     });
   };
-  const basis = record === null ? null : pendingBasis(record.sources);
+  const basis = record === null ? null : pendingBasis(record.sources, pendingOrdersOf(record));
   useEffect(() => {
     if (record === null || basis === null || busy || tried.current === basis || !candidatesIn(record)) return;
     const stale = record.pending === null || record.pending.basis !== basis;
@@ -72,7 +81,7 @@ function Quote({ p, sources }: { p: Span; sources: PatientRecord['sources'] }) {
 }
 
 /** 結果の記載へのつなぎ（押すと、その字が開く） */
-function ResultLinks({ results, sources }: { results: readonly PendingResult[]; sources: PatientRecord['sources'] }) {
+export function ResultLinks({ results, sources }: { results: readonly PendingResult[]; sources: PatientRecord['sources'] }) {
   const [shown, setShown] = useState<number | null>(null);
   const hit = shown === null ? undefined : results[shown];
   return (
@@ -159,7 +168,7 @@ export function PendingPanel({ patientId, record, builder, asOf, onChanged, onLe
   const [message, setMessage] = useState<string | null>(null);
   const pending = record.pending;
   const body = pending?.body ?? null;
-  const stale = pending === null || pending.basis !== pendingBasis(record.sources);
+  const stale = pending === null || pending.basis !== pendingBasis(record.sources, pendingOrdersOf(record));
   const current = record.encounters.at(-1) ?? null;
   if (body === null && !builder.busy && builder.message === null && !candidatesIn(record)) return null;
 

@@ -140,6 +140,7 @@ export function StateView({
   support = null,
   pending = null,
   plans = null,
+  orders = null,
   ask = null,
 }: {
   state: PatientState;
@@ -158,6 +159,8 @@ export function StateView({
   pending?: ReactNode;
   /** 予定と実施（段K9）の節。結果待ちの下に出す */
   plans?: ReactNode;
+  /** 指示簿（段K11）の、指示中の項目の要約。予定と実施の下に出す */
+  orders?: ReactNode;
   /** 記録に聞く（段K6）の節。右の列の先頭に出す（電話の幅では、左の列の下） */
   ask?: ReactNode;
 }) {
@@ -253,6 +256,8 @@ export function StateView({
       {pending}
 
       {plans}
+
+      {orders}
 
       {(() => {
         const writtenProblems = (
@@ -451,6 +456,25 @@ export function StateView({
             ))}
           </ul>
           <p className="note">できごとの「挿入・留置・確保・入れ替え・抜去・抜管」の字から数えています。抜去の記載がなければ、記録の上で最後の日まで数えています（入っているかは補っていません）。</p>
+        </details>
+      )}
+
+      {state.findings.length > 0 && (
+        <details className="state-section folded" data-testid="state-findings">
+          <summary className="sub-title">最新の所見（{state.findings.map((f) => f.name).join('・')}）</summary>
+          {state.findings.map((f) => (
+            <div key={f.label} className="thread-note" data-testid="state-finding">
+              <span className="part-label">
+                {f.name}・{showDateTime(f.at)}
+              </span>
+              {f.parts.map((p) => (
+                <p key={String(p.start)} className="source-text">
+                  {textOf(f.sourceId, p.start, p.end)}
+                </p>
+              ))}
+            </div>
+          ))}
+          <p className="note">この受診で、その区切りがあるいちばん新しい記載の字をそのまま出しています。</p>
         </details>
       )}
 

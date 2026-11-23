@@ -1,6 +1,6 @@
 // 記録の読み書き（段1：患者・受診・取り込んだ文・測定値）。書く表は、docs/04 の 6 の一覧のとおり。
 // ここは、形を確かめた後の値だけを受け取る（形の確かめは handler.ts、文の選別は intake.ts）。
-import { COURSE_CATEGORIES, type CourseCategory, type SearchInput, DOC_ORIGINS, DOC_TYPES, type DocOrigin, type DocType, isDocOrigin, isHandoffSeverity, latestHandoff, type HandoffSeverity, type SavedHandoff, type ListItem, ListItemShape, roundSummary, type RoundSummary, type SavedDocument, PendingBody, PlanBody, SavedSection, SupportBody } from '@clinical-carte/core';
+import { COURSE_CATEGORIES, type CourseCategory, type SearchInput, DOC_ORIGINS, DOC_TYPES, type DocOrigin, type DocType, isDocOrigin, isHandoffSeverity, latestHandoff, type HandoffSeverity, type SavedHandoff, type ListItem, ListItemShape, roundSummary, type RoundSummary, type SavedDocument, PendingBody, PlanBody, SavedSection, SupportBody, type OrderItem, OrderItems, type ScaleTemplate, ScaleTemplateBody } from '@clinical-carte/core';
 import { z } from 'zod';
 import { ApRef, type ApOrigin, type ApPart, type FactField, type FactKind, type PlanKind, USER_EDIT_FIELDS, USER_EDIT_TARGETS, type UserEditField, type UserEditTarget } from '@clinical-carte/core';
 import type { AuthorRole, Comparator, EncounterKind, EventKind, HistoryAction, LabRow, MedicationAction, OrganizeReport, ProblemActivity, ProblemStatus, SegmentLabel, Sex, SourceKind } from '@clinical-carte/core';
@@ -818,6 +818,49 @@ export interface PatientRecord {
   readonly plans: PlanRow | null;
   /** Casebook へ送る印（段K10。CA-073。受診ごと。種・症例コード・取り込んだ項目の印だけ） */
   readonly casebook: CasebookLinkRow[];
+  /** 指示簿（段K11。CA-074。受診ごとに1つ） */
+  readonly orders: OrderSheetRow[];
+  /** スケールのテンプレ（段K11。CA-075。全患者に共通。外したものは入れない） */
+  readonly orderTemplates: ScaleTemplate[];
+}
+
+export interface OrderSheetRow {
+  readonly encounterId: string;
+  readonly items: OrderItem[];
+  readonly updatedAt: string;
+}
+
+/** 指示簿の行を読む（中身が読めなければ null） */
+export function orderSheetOf(row: Row | null): OrderSheetRow | null {
+  const encounterId = text(row, 'encounter_id');
+  const updatedAt = text(row, 'updated_at');
+  if (row === null || encounterId === null || updatedAt === null) return null;
+  try {
+    const parsed = OrderItems.safeParse(JSON.parse(text(row, 'items') ?? 'null'));
+    return parsed.success ? { encounterId, items: parsed.data, updatedAt } : null;
+  } catch {
+    return null;
+  }
+}
+
+/** テンプレの行を読む（中身が読めなければ null） */
+export function orderTemplateOf(row: Row | null): ScaleTemplate | null {
+  const id = text(row, 'id');
+  const createdAt = text(row, 'created_at');
+  const updatedAt = text(row, 'updated_at');
+  if (row === null || id === null || createdAt === null || updatedAt === null) return null;
+  try {
+    const parsed = ScaleTemplateBody.safeParse(JSON.parse(text(row, 'body') ?? 'null'));
+    return parsed.success ? { id, body: parsed.data, createdAt, updatedAt } : null;
+  } catch {
+    return null;
+  }
+}
+
+/** 使っているテンプレ（外したものは除く。作った順） */
+export async function listOrderTemplates(db: Db): Promise<ScaleTemplate[]> {
+  const rows = await db.prepare('SELECT id, body, created_at, updated_at FROM order_templates WHERE removed_at IS NULL ORDER BY created_at, id').all();
+  return rows.results.map(orderTemplateOf).filter(present);
 }
 
 export interface ScaleLinkRow {
@@ -849,7 +892,7 @@ export const PROBLEM_COLUMNS = 'id, source_id, encounter_id, name, status, activ
 export async function getRecord(db: Db, id: string): Promise<PatientRecord | null> {
   const patient = await getPatient(db, id);
   if (patient === null) return null;
-  const [encounters, sources, observations, segments, medications, events, problems, threads, history, factEdits, userEdits, apNotes, scaleLinks, documents, course, problemList, support, pending, handoffs, plans, casebook] = await Promise.all([
+  const [encounters, sources, observations, segments, medications, events, problems, threads, history, factEdits, userEdits, apNotes, scaleLinks, documents, course, problemList, support, pending, handoffs, plans, casebook, orders, orderTemplates] = await Promise.all([
     db.prepare('SELECT id, patient_id, kind, started, ended FROM encounters WHERE patient_id = ? ORDER BY started, id').bind(id).all(),
     db.prepare('SELECT id, patient_id, encounter_id, kind, author_role, at, entered_at, text, replaced, organized, organized_version, organize_report, next_day_from FROM sources WHERE patient_id = ? ORDER BY id').bind(id).all(),
     db
@@ -874,6 +917,8 @@ export async function getRecord(db: Db, id: string): Promise<PatientRecord | nul
     db.prepare(`SELECT ${HANDOFF_COLUMNS} FROM handoffs WHERE patient_id = ? ORDER BY day DESC, updated_at DESC, id DESC`).bind(id).all(),
     db.prepare('SELECT made_at, prompt_version, basis, body FROM plan_checks WHERE patient_id = ?').bind(id).first(),
     casebookLinks(db, id),
+    db.prepare('SELECT encounter_id, items, updated_at FROM order_sheets WHERE patient_id = ? ORDER BY encounter_id').bind(id).all(),
+    listOrderTemplates(db),
   ]);
   return {
     patient,
@@ -898,6 +943,8 @@ export async function getRecord(db: Db, id: string): Promise<PatientRecord | nul
     pending: pendingOf(pending),
     plans: planOf(plans),
     casebook,
+    orders: orders.results.map(orderSheetOf).filter(present),
+    orderTemplates,
   };
 }
 
@@ -943,7 +990,7 @@ export async function setEncounterEnd(db: Db, id: string, end: string | null): P
 export const FACT_TABLES = ['observations', 'segments', 'medications', 'events', 'problems', 'course_items'] as const;
 
 /** 患者に付く、文からではない行の表（患者を消すと、一緒に消える。文を消しても残る：筋は、記載がなくなると見えなくなるだけ） */
-export const PATIENT_TABLES = ['problem_threads', 'history', 'fact_edits', 'user_edits', 'ap_notes', 'ap_history', 'documents', 'document_history', 'handoffs', 'problem_lists', 'problem_list_edits', 'clinical_support', 'pending_results', 'pending_result_edits', 'plan_checks', 'plan_check_edits', 'casebook_links'] as const;
+export const PATIENT_TABLES = ['problem_threads', 'history', 'fact_edits', 'user_edits', 'ap_notes', 'ap_history', 'documents', 'document_history', 'handoffs', 'problem_lists', 'problem_list_edits', 'clinical_support', 'pending_results', 'pending_result_edits', 'plan_checks', 'plan_check_edits', 'casebook_links', 'order_sheets', 'order_edits'] as const;
 
 /** 問題の行を、表から読む */
 export function problemOf(row: Record<string, unknown>): Problem | null {

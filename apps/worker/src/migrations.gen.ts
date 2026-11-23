@@ -179,5 +179,15 @@ export const MIGRATIONS: readonly Migration[] = [
       "CREATE TABLE IF NOT EXISTS casebook_links ( encounter_id TEXT PRIMARY KEY REFERENCES encounters (id) ON DELETE CASCADE, patient_id TEXT NOT NULL REFERENCES patients (id) ON DELETE CASCADE, seed TEXT NOT NULL CHECK (length(seed) = 10), case_code TEXT CHECK (case_code IS NULL OR length(case_code) = 6), sent TEXT NOT NULL, packets INTEGER NOT NULL CHECK (packets >= 0) )",
       "CREATE INDEX IF NOT EXISTS casebook_links_by_patient ON casebook_links (patient_id)"
     ]
+  },
+  {
+    "name": "0018_orders",
+    "statements": [
+      "CREATE TABLE IF NOT EXISTS order_sheets ( encounter_id TEXT PRIMARY KEY REFERENCES encounters (id) ON DELETE CASCADE, patient_id TEXT NOT NULL REFERENCES patients (id) ON DELETE CASCADE, items TEXT NOT NULL, updated_at TEXT NOT NULL CHECK (length(updated_at) = 16) )",
+      "CREATE INDEX IF NOT EXISTS order_sheets_by_patient ON order_sheets (patient_id)",
+      "CREATE TABLE IF NOT EXISTS order_edits ( id TEXT PRIMARY KEY, patient_id TEXT NOT NULL REFERENCES patients (id) ON DELETE CASCADE, encounter_id TEXT NOT NULL, at TEXT NOT NULL CHECK (length(at) = 16), item_id TEXT NOT NULL, action TEXT NOT NULL CHECK (action IN ('add', 'edit', 'stop', 'restart', 'scale', 'delete')), origin TEXT NOT NULL CHECK (origin IN ('self', 'ai', 'transcribed')) )",
+      "CREATE INDEX IF NOT EXISTS order_edits_by_patient ON order_edits (patient_id, at)",
+      "CREATE TABLE IF NOT EXISTS order_templates ( id TEXT PRIMARY KEY, body TEXT NOT NULL, created_at TEXT NOT NULL CHECK (length(created_at) = 16), updated_at TEXT NOT NULL CHECK (length(updated_at) = 16), removed_at TEXT CHECK (removed_at IS NULL OR length(removed_at) = 16) )"
+    ]
   }
 ];
