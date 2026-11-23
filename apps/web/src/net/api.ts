@@ -56,6 +56,13 @@ import type {
   PlanMark,
   CasebookLink,
   CasebookPatch,
+  OrderCategory,
+  OrderFields,
+  OrderItem,
+  OrderNew,
+  OrderProposal,
+  ScaleTemplate,
+  ScaleTemplateBody,
 } from '@clinical-carte/core';
 
 export interface DeviceView {
@@ -88,6 +95,7 @@ export type ApiError =
   | 'list_empty'
   | 'support_empty'
   | 'ask_empty'
+  | 'orders_empty'
   | 'shape'
   | 'bad_span'
   | 'too_long';
@@ -115,6 +123,7 @@ const KNOWN: readonly ApiError[] = [
   'list_empty',
   'support_empty',
   'ask_empty',
+  'orders_empty',
   'shape',
   'bad_span',
 ];
@@ -458,8 +467,18 @@ export interface PatientRecord {
   readonly plans: PlanView | null;
   /** Casebook へ送る印（段K10。受診ごと。種・症例コード・取り込んだ項目の印だけ） */
   readonly casebook: readonly CasebookLinkView[];
+  /** 指示簿（段K11。受診ごとに1つ） */
+  readonly orders: readonly OrderSheetView[];
+  /** スケールのテンプレ（段K11。全患者に共通） */
+  readonly orderTemplates: readonly ScaleTemplate[];
   /** サーバーの、今日（日本の日） */
   readonly today: string;
+}
+
+export interface OrderSheetView {
+  readonly encounterId: string;
+  readonly items: readonly OrderItem[];
+  readonly updatedAt: string;
 }
 
 /** 答えの中の欄を、決めた型として読む（欄がなければ、つながらないのと同じ扱い） */
@@ -483,7 +502,7 @@ export async function createPatient(input: NewPatient): Promise<Result<Patient>>
 export async function getRecord(patientId: string): Promise<Result<PatientRecord>> {
   const result = await call('GET', `patients/${encodeURIComponent(patientId)}`);
   if (!result.ok) return result;
-  const { patient, encounters, sources, observations, segments, medications, events, problems, problemThreads, history, factEdits, userEdits, apNotes, scaleLinks, documents, handoffs, course, problemList, support, pending, plans, casebook, today } = result.value;
+  const { patient, encounters, sources, observations, segments, medications, events, problems, problemThreads, history, factEdits, userEdits, apNotes, scaleLinks, documents, handoffs, course, problemList, support, pending, plans, casebook, orders, orderTemplates, today } = result.value;
   const lists = [encounters, sources, observations, segments, medications, events, problems, problemThreads, history, factEdits, userEdits, apNotes, scaleLinks, documents, handoffs, course];
   if (!isRecord(patient) || lists.some((l) => !Array.isArray(l)) || typeof today !== 'string') return { ok: false, error: 'network' };
   return {
@@ -511,6 +530,8 @@ export async function getRecord(patientId: string): Promise<Result<PatientRecord
       pending: isRecord(pending) && isRecord(pending['body']) ? (pending as unknown as PendingView) : null,
       plans: isRecord(plans) && isRecord(plans['body']) ? (plans as unknown as PlanView) : null,
       casebook: Array.isArray(casebook) ? (casebook as CasebookLinkView[]) : [],
+      orders: Array.isArray(orders) ? (orders as OrderSheetView[]) : [],
+      orderTemplates: Array.isArray(orderTemplates) ? (orderTemplates as ScaleTemplate[]) : [],
       today,
     },
   };
@@ -901,4 +922,55 @@ export async function ensureCasebookLink(encounterId: string): Promise<Result<Ca
 /** 症例コード・Casebook が取り込んだ項目の印・最初からやり直す（段K10） */
 export async function patchCasebookLink(encounterId: string, patch: CasebookPatch): Promise<Result<CasebookLinkView>> {
   return field<CasebookLinkView>(await call('PATCH', `encounters/${encodeURIComponent(encounterId)}/casebook`, patch), 'casebook');
+}
+
+// --- 指示簿（段K11。CA-074〜CA-079）。病院のカルテへ戻す向き（コピー）はない
+
+/** 写す・案を出すの答え（保存しない。画面のメモリだけ） */
+export interface OrderProposals {
+  readonly proposals: readonly OrderProposal[];
+  readonly counts: { readonly notOrder: number; readonly cleared: number; readonly shapes: number; readonly rejected: Readonly<Record<string, number>> };
+}
+
+function proposalsOf(result: Result<Record<string, unknown>>): Result<OrderProposals> {
+  if (!result.ok) return result;
+  const { proposals, counts } = result.value;
+  return Array.isArray(proposals) && isRecord(counts) ? { ok: true, value: { proposals: proposals as OrderProposal[], counts: counts as unknown as OrderProposals['counts'] } } : { ok: false, error: 'network' };
+}
+
+/** 記録の文から写す（AI の 1 回。保存しない） */
+export async function transcribeOrders(encounterId: string, sourceId: string): Promise<Result<OrderProposals>> {
+  return proposalsOf(await call('POST', `encounters/${encodeURIComponent(encounterId)}/orders/transcribe`, { sourceId }));
+}
+
+/** AI の案を出す（AI の 1 回。保存しない）。categories が空なら、すべての欄 */
+export async function proposeOrders(encounterId: string, categories: readonly OrderCategory[]): Promise<Result<OrderProposals>> {
+  return proposalsOf(await call('POST', `encounters/${encodeURIComponent(encounterId)}/orders/propose`, { categories }));
+}
+
+/** 指示簿に足す（先生が打った字・AI の案の字は、サーバーで選別を通す） */
+export async function addOrders(encounterId: string, items: readonly OrderNew[]): Promise<Result<null>> {
+  return done(await call('POST', `encounters/${encodeURIComponent(encounterId)}/orders`, { items }));
+}
+
+/** 欄を直す・中止／再開・スケールの体重と段 */
+export async function patchOrder(encounterId: string, itemId: string, patch: { fields: OrderFields } | { status: 'active' | 'stopped' } | { weightKg: number | null; step: number | null }): Promise<Result<null>> {
+  return done(await call('PATCH', `encounters/${encodeURIComponent(encounterId)}/orders/${encodeURIComponent(itemId)}`, patch));
+}
+
+export async function deleteOrder(encounterId: string, itemId: string): Promise<Result<null>> {
+  return done(await call('DELETE', `encounters/${encodeURIComponent(encounterId)}/orders/${encodeURIComponent(itemId)}`));
+}
+
+/** スケールのテンプレ（全患者に共通。患者の情報を書かない） */
+export async function addTemplate(body: ScaleTemplateBody): Promise<Result<null>> {
+  return done(await call('POST', 'order-templates', body));
+}
+
+export async function patchTemplate(id: string, body: ScaleTemplateBody): Promise<Result<null>> {
+  return done(await call('PATCH', `order-templates/${encodeURIComponent(id)}`, body));
+}
+
+export async function removeTemplate(id: string): Promise<Result<null>> {
+  return done(await call('DELETE', `order-templates/${encodeURIComponent(id)}`));
 }

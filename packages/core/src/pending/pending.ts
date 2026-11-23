@@ -11,10 +11,13 @@
 // - AI の答えの形（PendingAnswer。構造化出力の上限の中：null になりうる欄・必須でない欄は 0）
 // - 確かめ（checkPending）：記号が資料にある・候補の記号である・同じ候補は1回・結果は提出より前でない・自分自身でない。通らないものは理由ごとに数える。
 //   「結果あり」と言ったのに確かめられる結果が1つもない候補と、AI が振り分けなかった候補は、「振り分けられなかった」として名前を残す（黙って捨てない）
+// - 指示簿の検査の予定（段K11。CA-078）：指示簿の候補 O… も、同じ1回で渡し、後の記録の結果の記載を結びつける。結びつけは PendingBody.orders に分けて持ち、
+//   結果待ちの一覧（items）には出さない（提出の記載ではなく、指示の予定なので。指示簿の項目の下に出す）
 // - 先生の印（結果を確かめた・外す）：組み直しても、同じ記載の同じ場所の項目に引き継ぐ（carryPendingMarks）
 import { z } from 'zod';
 
 import { COURSE_CATEGORY_NAMES, type CourseCategory, EVENT_KIND_NAMES, type EventKind } from '../organize/answer.ts';
+import type { PendingOrder } from '../orders/board.ts';
 import { listBasis } from '../problems/list.ts';
 import { type EncounterKind, SOURCE_KIND_LABELS, type SourceKind } from '../record/schema.ts';
 import { compareDateTime, daysBetween } from '../time/datetime.ts';
@@ -50,6 +53,8 @@ export const PENDING_CANDIDATES_MAX = 60;
 export const PENDING_RESULTS_MAX = 6;
 /** 資料に入れる引用の長さ */
 export const PENDING_QUOTE_MAX = 160;
+/** 指示簿の検査の候補の数（段K11。予定の日時の新しいものから） */
+export const PENDING_ORDERS_MAX = 40;
 
 // ---------------------------------------------------------------------------
 // 資料
@@ -105,6 +110,8 @@ export interface PendingInput {
   readonly events: readonly PendingEvent[];
   readonly course: readonly PendingCourse[];
   readonly observations: readonly PendingObservation[];
+  /** 指示簿の検査の予定（段K11。なければ []） */
+  readonly orders?: readonly PendingOrder[];
 }
 
 /** 記録の中の場所（文の id と字の範囲。整理し直すと事実の id が変わるので、場所で持つ） */
@@ -132,6 +139,8 @@ export interface PendingMaterial {
   readonly candidates: ReadonlyMap<string, Candidate>;
   /** 結果になりうるもの（E…・C…・V…。候補も含む） */
   readonly items: ReadonlyMap<string, PendingResult>;
+  /** 指示簿の検査の候補（O…。段K11） */
+  readonly orderCandidates: ReadonlyMap<string, PendingOrder>;
   /** 長さ・数の上限で落とした数 */
   readonly dropped: { readonly candidates: number; readonly results: number };
 }
@@ -183,6 +192,11 @@ export function pendingMaterial(input: PendingInput): PendingMaterial {
   const events = input.events.filter((e) => ids.has(e.encounterId)).sort((a, b) => compareDateTime(a.at, b.at) || a.start - b.start);
   const course = input.course.filter((c) => ids.has(c.encounterId)).sort((a, b) => compareDateTime(a.at, b.at) || a.start - b.start);
   const values = valueGroups(input.observations.filter((o) => ids.has(o.encounterId)));
+  const orderList = (input.orders ?? [])
+    .filter((o) => ids.has(o.encounterId))
+    .sort((a, b) => compareDateTime(a.at, b.at) || a.id.localeCompare(b.id))
+    .slice(-PENDING_ORDERS_MAX);
+  const orderRefs = new Map(orderList.map((o, i) => [`O${String(i + 1)}`, o]));
 
   // 提出の候補：できごとの「検査の実施」と、経過の出来事の「検査」（新しいものから決まった数）
   const allCandidates = [
@@ -210,6 +224,8 @@ export function pendingMaterial(input: PendingInput): PendingMaterial {
       events: [...eventRefs].map(([ref, e]) => ({ ref, at: show(e.at), approx: e.atApprox ?? null, kind: EVENT_KIND_NAMES[e.kind], title: e.title, quote: quote(e), from: from(e.sourceId) })),
       course: [...courseRefs].map(([ref, c]) => ({ ref, at: show(c.at), approx: c.atApprox, category: COURSE_CATEGORY_NAMES[c.category], summary: c.summary, quote: quote(c), from: from(c.sourceId) })),
       values: [...valueRefs].map(([ref, v]) => ({ ref, name: v.name, day: v.day ?? '日時不明', values: v.values.join('、') })),
+      // 指示簿の検査の予定（段K11）：あるときだけ
+      ...(orderRefs.size === 0 ? {} : { orders: [...orderRefs].map(([ref, o]) => ({ ref, name: o.name, interval: o.interval, at: show(o.at) })) }),
     };
     return { payload, eventRefs, courseRefs, valueRefs };
   };
@@ -239,7 +255,7 @@ export function pendingMaterial(input: PendingInput): PendingMaterial {
     if (c.category === 'test') candidates.set(ref, { kind: 'course', sourceId: c.sourceId, start: c.start, end: c.end, name: c.summary, at: c.at, atApprox: c.atApprox });
   }
   for (const [ref, v] of built.valueRefs) items.set(ref, { kind: 'value', sourceId: v.sourceId, start: v.start, end: v.end, label: `値 ${v.name}（${v.day ?? '日時不明'}）${v.values.join('、')}`, at: v.at });
-  return { payload: built.payload, candidates, items, dropped: { candidates: droppedCandidates, results: droppedResults } };
+  return { payload: built.payload, candidates, items, orderCandidates: orderRefs, dropped: { candidates: droppedCandidates, results: droppedResults } };
 }
 
 // ---------------------------------------------------------------------------
@@ -301,8 +317,18 @@ export const PENDING_REJECT_NAMES: Readonly<Record<PendingRejectReason, string>>
   too_many: '結果が多すぎた',
 };
 
+/** 指示簿の検査の予定への結びつけ（段K11）。結果待ちの一覧とは分けて、指示簿の項目の下に出す */
+export const PendingOrderLink = z.object({
+  orderId: z.string(),
+  state: z.enum(PENDING_ITEM_STATES),
+  results: z.array(PendingResult),
+});
+export type PendingOrderLink = z.infer<typeof PendingOrderLink>;
+
 export const PendingBody = z.object({
   items: z.array(PendingItem),
+  /** 指示簿の検査の予定への結びつけ（段K11。前の版の一覧にはないので、ないときは []） */
+  orders: z.array(PendingOrderLink).default([]),
   /** 「提出ではない」と振り分けた候補の数（名前は出さない：検査をその場で行った記載などで、結果待ちではない） */
   notSubmission: z.number(),
   rejected: z.partialRecord(z.enum(PENDING_REJECT_REASONS), z.number()),
@@ -321,6 +347,7 @@ export function notBefore(result: string | null, submitted: string | null): bool
 
 export interface CheckedPending {
   readonly items: readonly PendingItem[];
+  readonly orders: readonly PendingOrderLink[];
   readonly notSubmission: number;
   readonly rejected: Partial<Record<PendingRejectReason, number>>;
 }
@@ -332,8 +359,41 @@ export function checkPending(answer: PendingAnswer, material: PendingMaterial): 
     rejected[r] = (rejected[r] ?? 0) + 1;
   };
   const decided = new Map<string, { state: PendingItemState | 'not_submission'; results: PendingResult[] }>();
+  const orderDecided = new Map<string, { state: PendingItemState; results: PendingResult[] }>();
   let notSubmission = 0;
   for (const a of answer.items) {
+    // 指示簿の検査の予定（O…）：結果の記載があるか、まだないか（「提出ではない」は、まだないと同じに扱う）
+    const order = material.orderCandidates.get(a.id);
+    if (order !== undefined) {
+      if (orderDecided.has(a.id)) {
+        count('duplicate');
+        continue;
+      }
+      if (a.status !== 'resulted') {
+        orderDecided.set(a.id, { state: 'pending', results: [] });
+        continue;
+      }
+      const results: PendingResult[] = [];
+      for (const r of [...new Set(a.results)]) {
+        const item = material.items.get(r);
+        if (item === undefined) {
+          count('unknown_result');
+          continue;
+        }
+        if (!notBefore(item.at, order.at)) {
+          count('earlier_result');
+          continue;
+        }
+        if (results.length >= PENDING_RESULTS_MAX) {
+          count('too_many');
+          continue;
+        }
+        results.push(item);
+      }
+      if (results.length === 0) count('no_result');
+      orderDecided.set(a.id, results.length === 0 ? { state: 'unsorted', results: [] } : { state: 'resulted', results: results.sort((x, y) => compareDateTime(x.at, y.at)) });
+      continue;
+    }
     const candidate = material.candidates.get(a.id);
     if (candidate === undefined) {
       count(material.items.has(a.id) ? 'not_candidate' : 'unknown_ref');
@@ -389,7 +449,8 @@ export function checkPending(answer: PendingAnswer, material: PendingMaterial): 
   }
   // 日時の順。同じ日時は、書かれた順（同じ記載なら前の字から）
   items.sort((a, b) => compareDateTime(a.at, b.at) || a.sourceId.localeCompare(b.sourceId) || a.start - b.start || a.kind.localeCompare(b.kind));
-  return { items, notSubmission, rejected };
+  const orders: PendingOrderLink[] = [...material.orderCandidates].map(([ref, o]) => ({ orderId: o.id, ...(orderDecided.get(ref) ?? { state: 'unsorted' as const, results: [] }) }));
+  return { items, orders, notSubmission, rejected };
 }
 
 /** 組み直した一覧に、前の一覧の先生の印を引き継ぐ（同じ鍵：同じ記載の同じ場所の、同じ種類の候補） */
@@ -412,13 +473,20 @@ export function applyPendingMark(items: readonly PendingItem[], patch: PendingPa
   return next;
 }
 
-/** 一覧の元になった記録の印（プロブレムリストと同じ：記載の数・整理の終わった数・最後の記載） */
-export function pendingBasis(sources: Parameters<typeof listBasis>[0]): string {
-  return listBasis(sources);
+/** 一覧の元になった記録の印（プロブレムリストと同じ：記載の数・整理の終わった数・最後の記載）。
+ *  指示簿の検査の予定（段K11）があれば、その id と直した日時も（入れた・直したら組み直す）。なければ、前の版と同じ印 */
+export function pendingBasis(sources: Parameters<typeof listBasis>[0], orders: readonly Pick<PendingOrder, 'id' | 'stamp'>[] = []): string {
+  const base = listBasis(sources);
+  if (orders.length === 0) return base;
+  return `${base}|o:${[...orders].map((o) => `${o.id}@${o.stamp}`).sort().join(',')}`;
 }
 
-/** 提出の候補が範囲にあるか（ないときは、AI を呼ばない） */
-export function hasPendingCandidates(input: Pick<PendingInput, 'encounters' | 'events' | 'course'>): boolean {
+/** 提出の候補（指示簿の検査の予定を含む）が範囲にあるか（ないときは、AI を呼ばない） */
+export function hasPendingCandidates(input: Pick<PendingInput, 'encounters' | 'events' | 'course' | 'orders'>): boolean {
   const ids = new Set(recentEncounters(input.encounters).map((e) => e.id));
-  return input.events.some((e) => ids.has(e.encounterId) && e.kind === 'test') || input.course.some((c) => ids.has(c.encounterId) && c.category === 'test');
+  return (
+    input.events.some((e) => ids.has(e.encounterId) && e.kind === 'test') ||
+    input.course.some((c) => ids.has(c.encounterId) && c.category === 'test') ||
+    (input.orders ?? []).some((o) => ids.has(o.encounterId))
+  );
 }

@@ -10,7 +10,7 @@ import type { Db, Statement } from '../src/db.ts';
 import { handle, type HandlerDeps } from '../src/handler.ts';
 import { MIGRATIONS as MIGRATION_LIST } from '../src/migrations.gen.ts';
 import { type Runtime, webRuntime } from '../src/runtime.ts';
-import type { AskResult, DocumentResult, LinkerResult, Organizer, OrganizerResult, PendingResultAnswer, PlanResultAnswer, ProblemListResult, ResearchResult, ReviseResult, SupportResult } from '../src/organizer.ts';
+import type { AskResult, DocumentResult, LinkerResult, Organizer, OrganizerResult, PendingResultAnswer, PlanResultAnswer, ProblemListResult, ProposeResult, ResearchResult, ReviseResult, SupportResult, TranscribeResult } from '../src/organizer.ts';
 import type { OrganizePromptChoice } from '../src/prompt.ts';
 import type { Selector, SelectorResult } from '../src/selector.ts';
 
@@ -181,6 +181,9 @@ export interface FakeOrganizer extends Organizer {
   readonly asked: string[];
   /** 予定と実施に渡された資料（JSON） */
   readonly planned: string[];
+  /** 指示簿を写す・案を出すに渡された資料（JSON。段K11） */
+  readonly transcribed: string[];
+  readonly proposed: string[];
 }
 
 export interface FakeDocAnswers {
@@ -192,6 +195,8 @@ export interface FakeDocAnswers {
   readonly pending?: (message: string) => PendingResultAnswer;
   readonly plans?: (message: string) => PlanResultAnswer;
   readonly ask?: (message: string) => AskResult;
+  readonly orderTranscribe?: (message: string) => TranscribeResult;
+  readonly orderPropose?: (message: string) => ProposeResult;
 }
 
 /** AI の整理の代役：文を受け取り、決めた答えを返す（既定は、何も見つけない）。つなぎは、既定では何もつながない */
@@ -208,6 +213,8 @@ export function fakeOrganizer(
   const pended: string[] = [];
   const asked: string[] = [];
   const planned: string[] = [];
+  const transcribed: string[] = [];
+  const proposed: string[] = [];
   const seen: string[] = [];
   const prompts: OrganizePromptChoice[] = [];
   const linked: string[] = [];
@@ -223,6 +230,16 @@ export function fakeOrganizer(
     pended,
     asked,
     planned,
+    transcribed,
+    proposed,
+    orderTranscribe: (message) => {
+      transcribed.push(message);
+      return Promise.resolve(docs.orderTranscribe?.(message) ?? { ok: true, answer: { items: [] } });
+    },
+    orderPropose: (message) => {
+      proposed.push(message);
+      return Promise.resolve(docs.orderPropose?.(message) ?? { ok: true, answer: { items: [] } });
+    },
     plans: (message) => {
       planned.push(message);
       return Promise.resolve(docs.plans?.(message) ?? { ok: true, answer: { items: [] } });

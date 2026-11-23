@@ -32,6 +32,11 @@ import {
   searchRecords,
   PendingPatch,
   PlanPatch,
+  OrderAdd,
+  OrderPatch,
+  OrderProposeRequest,
+  OrderTranscribeRequest,
+  ScaleTemplateBody,
   FACT_KINDS,
   type FactKind,
   FactPatch,
@@ -65,6 +70,7 @@ import type { Organizer } from './organizer.ts';
 import type { BookSearcher } from './references.ts';
 import { type EditOutcome, type LinkOutcome, linkPatient, moveMention, patchThread, setTypedName } from './problems.ts';
 import { generatePending, markPending } from './pending.ts';
+import { addOrders, addTemplate, deleteOrder, type OrderOutcome, patchOrder, patchTemplate, type ProposalOutcome, proposeOrders, removeTemplate, transcribeOrders } from './orders.ts';
 import { generatePlans, markPlan } from './plans.ts';
 import { generateList, patchList } from './problemlist.ts';
 import { ORGANIZE_PROMPTS, SELECT_PROMPT_VERSION } from './prompt.ts';
@@ -78,6 +84,7 @@ import {
   getPatient,
   getRecord,
   latestHandoffs,
+  listOrderTemplates,
   listPatients,
   listScaleLinks,
   searchInput,
@@ -162,6 +169,25 @@ const docReply = (r: SaveOutcome): Reply => {
 };
 
 const newId = (runtime: Runtime): string => ulid(runtime.now(), runtime.randomBytes(ULID_RANDOM_BYTES));
+
+const orderReply = (r: OrderOutcome): Reply => {
+  if (r.ok) return reply(200, { ids: r.ids });
+  if (r.error === 'not_found') return missing();
+  if (r.error === 'bad_request') return bad();
+  if (r.error === 'too_many') return reply(400, { error: 'too_long' });
+  if (r.error === 'no_ai') return reply(503, { error: 'no_ai' });
+  if (r.error === 'ai_limit') return reply(429, { error: 'ai_limit' });
+  if (r.error === 'ai') return aiFailed(r.failure);
+  return reply(422, { error: 'selection_failed' });
+};
+
+const proposalReply = (r: ProposalOutcome): Reply => {
+  if (r.ok) return reply(200, { proposals: r.proposals, counts: r.counts });
+  if (r.reason === 'not_found') return missing();
+  if (r.reason === 'empty') return reply(422, { error: 'orders_empty' });
+  if (r.reason === 'ai') return aiFailed(r.failure);
+  return reply(429, { error: 'ai_limit' });
+};
 
 /** 記録の API。当てはまる道がなければ null（呼ぶ側が 404 にする）。 */
 export async function recordApi(request: Request, path: string, deps: RecordDeps): Promise<Reply | null> {
@@ -527,6 +553,63 @@ export async function recordApi(request: Request, path: string, deps: RecordDeps
     const body = await readBody(request, PlanPatch);
     if (body === null) return bad();
     return (await markPlan(db, patientId, body, runtime)) ? reply(200, { ok: true }) : missing();
+  }
+
+  // 指示簿（段K11。CA-074〜CA-079）：足す・直す（中止・再開・スケールの体重と段）・消す。字は選別を通す（写した字そのままの欄を除く。選別が要るときだけ AI の 1 回）。
+  // 写す・案を出すは、AI の 1 回で、保存しない（案を返すだけ。先生が採用した項目だけを、足す要求で保存する）。病院のカルテへ戻す向きはない
+  const orderAi = /^\/api\/encounters\/([^/]+)\/orders\/(transcribe|propose)$/.exec(path);
+  if (orderAi && method === 'POST') {
+    const encounterId = orderAi[1] ?? '';
+    if (!isUlid(encounterId)) return bad();
+    if (deps.organizer === null) return reply(503, { error: 'no_ai' });
+    if (orderAi[2] === 'transcribe') {
+      const body = await readBody(request, OrderTranscribeRequest);
+      if (body === null || !isUlid(body.sourceId)) return bad();
+      return proposalReply(await transcribeOrders(db, encounterId, body.sourceId, { organizer: deps.organizer, gate }));
+    }
+    const body = await readBody(request, OrderProposeRequest);
+    if (body === null) return bad();
+    return proposalReply(await proposeOrders(db, encounterId, body.categories, { organizer: deps.organizer, gate, today }));
+  }
+  const orderNew = /^\/api\/encounters\/([^/]+)\/orders$/.exec(path);
+  if (orderNew && method === 'POST') {
+    const encounterId = orderNew[1] ?? '';
+    if (!isUlid(encounterId)) return bad();
+    const body = await readBody(request, OrderAdd);
+    if (body === null) return bad();
+    return orderReply(await addOrders(db, encounterId, body, { selector: deps.selector, gate, runtime }));
+  }
+  const oneOrder = /^\/api\/encounters\/([^/]+)\/orders\/([^/]+)$/.exec(path);
+  if (oneOrder && (method === 'PATCH' || method === 'DELETE')) {
+    const encounterId = oneOrder[1] ?? '';
+    const itemId = oneOrder[2] ?? '';
+    if (!isUlid(encounterId) || !isUlid(itemId)) return bad();
+    if (method === 'DELETE') return (await deleteOrder(db, encounterId, itemId, runtime)) ? reply(200, { removed: itemId }) : missing();
+    const body = await readBody(request, OrderPatch);
+    if (body === null) return bad();
+    return orderReply(await patchOrder(db, encounterId, itemId, body, { selector: deps.selector, gate, runtime }));
+  }
+
+  // スケールのテンプレ（段K11。CA-075。全患者に共通。患者に付かない）：字は選別に通さず、識別情報の形があれば断る（CA-079）。AI を使わない
+  if (path === '/api/order-templates') {
+    if (method === 'GET') return reply(200, { templates: await listOrderTemplates(db) });
+    if (method === 'POST') {
+      const body = await readBody(request, ScaleTemplateBody);
+      if (body === null) return bad();
+      const r = await addTemplate(db, body, runtime);
+      return r.ok ? reply(200, { id: r.id }) : reply(422, { error: 'shape' });
+    }
+    return null;
+  }
+  const oneTemplate = /^\/api\/order-templates\/([^/]+)$/.exec(path);
+  if (oneTemplate && (method === 'PATCH' || method === 'DELETE')) {
+    const id = oneTemplate[1] ?? '';
+    if (!isUlid(id)) return bad();
+    if (method === 'DELETE') return (await removeTemplate(db, id, runtime)) ? reply(200, { removed: id }) : missing();
+    const body = await readBody(request, ScaleTemplateBody);
+    if (body === null) return bad();
+    const r = await patchTemplate(db, id, body, runtime);
+    return r.ok ? reply(200, { id: r.id }) : r.error === 'not_found' ? missing() : reply(422, { error: 'shape' });
   }
 
   // 記録への質問（段K6。CA-066）：保存しない（問い・答えとも）。問いに識別情報の形があれば送らない（相談の頼みと同じ）。AI の 1 回

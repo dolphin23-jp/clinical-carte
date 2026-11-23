@@ -32,6 +32,8 @@ import {
   type DeviceLine,
   type EventKind,
   medicationDays,
+  type PlannedInfusion,
+  type PlannedTest,
 } from '@clinical-carte/core';
 import { type PointerEvent, useEffect, useId, useRef, useState } from 'react';
 
@@ -71,6 +73,12 @@ interface Props {
   readonly devices?: readonly DeviceLine[];
   /** 記録の上で最後の日時（薬の「開始から何日目」を数える。数えるだけ） */
   readonly asOf?: string | null;
+  /** 段K11：指示簿の点滴の予定（記録の投薬の帯と分けて、予定の帯で出す） */
+  readonly plannedInfusions?: readonly PlannedInfusion[];
+  /** 段K11：指示簿の検査の予定（予定の印） */
+  readonly plannedTests?: readonly PlannedTest[];
+  /** 段K11：検査の予定に結びついた結果の記載の数（指示の id ごと） */
+  readonly testResults?: ReadonlyMap<string, number>;
 }
 
 export interface BoardProblem {
@@ -160,7 +168,23 @@ interface HoverRow {
   readonly cls?: string;
 }
 
-export function Timeline({ panels, medications, events, encounterStart, encounterEnd, inpatient, range: rangeProp, onRange, problems = [], course = [], devices = [], asOf = null }: Props) {
+export function Timeline({
+  panels,
+  medications,
+  events,
+  encounterStart,
+  encounterEnd,
+  inpatient,
+  range: rangeProp,
+  onRange,
+  problems = [],
+  course = [],
+  devices = [],
+  asOf = null,
+  plannedInfusions = [],
+  plannedTests = [],
+  testResults = new Map(),
+}: Props) {
   const box = useRef<HTMLDivElement>(null);
   const svgRef = useRef<SVGSVGElement>(null);
   const width = useWidth(box);
@@ -197,6 +221,8 @@ export function Timeline({ panels, medications, events, encounterStart, encounte
   const cos = course.map((c) => ({ c, time: chartTime(c.at) }));
   const devs = devices.map((d) => ({ d, from: chartTime(d.placedAt), to: d.removedAt === null ? null : chartTime(d.removedAt) }));
   const probs = problems.map((p) => ({ p, from: p.since === null ? null : chartTime(p.since) }));
+  const pins = plannedInfusions.map((p) => ({ p, from: chartTime(p.from), to: p.to === null ? null : chartTime(p.to) }));
+  const ptests = plannedTests.map((t) => ({ t, time: chartTime(t.at) }));
 
   const timeSet = new Set<number>();
   for (const p of shown) for (const pt of p.points) timeSet.add(pt.t);
@@ -207,6 +233,13 @@ export function Timeline({ panels, medications, events, encounterStart, encounte
     if (from !== null) timeSet.add(from.t);
     if (to !== null) timeSet.add(to.t);
   }
+  // 記録の上で最後（帯の終わり・既定の範囲の右端）は、記録の時刻だけで決める（指示簿の予定の日時では動かさない）
+  const recordTimes = [...timeSet].sort((a, b) => a - b);
+  for (const { from, to } of pins) {
+    if (from !== null) timeSet.add(from.t);
+    if (to !== null) timeSet.add(to.t);
+  }
+  for (const { time } of ptests) if (time !== null) timeSet.add(time.t);
   const times = [...timeSet].sort((a, b) => a - b);
 
   const raw = timeDomain(times, encounterStart, encounterEnd);
@@ -215,7 +248,7 @@ export function Timeline({ panels, medications, events, encounterStart, encounte
   if (full === null || times.length === 0) {
     return <p className="note">この受診には、まだグラフにできる記録がありません。バイタル・検査値・投薬が入ると、ここに時間の順に並びます。</p>;
   }
-  const anchor = times.at(-1) ?? full[1];
+  const anchor = recordTimes.at(-1) ?? times.at(-1) ?? full[1];
   const domain: Window = 'preset' in range ? presetWindow(range.preset, full, anchor) : clampWindow(range.window, full);
   const span = domain[1] - domain[0];
   const plotW = Math.max(120, width - GUTTER - RIGHT);
@@ -255,6 +288,9 @@ export function Timeline({ panels, medications, events, encounterStart, encounte
   const lastT = anchor;
   const devsIn = devs.filter(({ from, to }) => from !== null && from.t <= domain[1] && (to?.t ?? lastT) >= domain[0]);
   const probsIn = probs.filter(({ from }) => from !== null && from.t <= domain[1] && lastT >= domain[0]);
+  // 指示簿の点滴の予定：予定の終わり・中止がなければ、記録の上で最後まで（破線。続いているとは補わない）
+  const pinsIn = pins.filter(({ from, to }) => from !== null && from.t <= domain[1] && (to?.t ?? Math.max(lastT, from.t)) >= domain[0]);
+  const ptestsIn = ptests.filter(({ time }) => time !== null && inWindow(domain, time.t));
   // 段の位置：問題の帯を、いちばん上に（何が起きているか → バイタル → 何が投与されているか の順）
   let y = AXIS_H;
   const problemTop = y;
@@ -272,6 +308,10 @@ export function Timeline({ panels, medications, events, encounterStart, encounte
   });
   const medTop = y;
   if (medsIn.length > 0) y += SECTION_H + medsIn.length * (LANE_LABEL_H + LANE_H);
+  const planTop = y;
+  if (pinsIn.length > 0) y += SECTION_H + pinsIn.length * (LANE_LABEL_H + LANE_H);
+  const planTestTop = y;
+  if (ptestsIn.length > 0) y += SECTION_H + LANE_H;
   const deviceTop = y;
   if (devsIn.length > 0) y += SECTION_H + devsIn.length * (LANE_LABEL_H + LANE_H);
   const eventTop = y;
@@ -311,6 +351,22 @@ export function Timeline({ panels, medications, events, encounterStart, encounte
     for (const { d, from, to } of devs) {
       if (from?.t === hover) rows.push({ label: 'デバイス', value: `${d.name} ${d.replaced ? '入れ替え' : '挿入・留置'}` });
       if (to?.t === hover) rows.push({ label: 'デバイス', value: `${d.name} 抜去` });
+    }
+    for (const { p, from, to } of pins) {
+      if (from?.t === hover) {
+        hoverLabel ||= shortWhen(p.from, from);
+        rows.push({ label: '点滴の予定（指示簿）', value: `${p.name} 開始の予定${p.detail === '' ? '' : ` ${p.detail}`}` });
+      }
+      if (to !== null && to.t === hover && p.to !== null) {
+        hoverLabel ||= shortWhen(p.to, to);
+        rows.push({ label: '点滴の予定（指示簿）', value: `${p.name} ${p.stopped ? '中止した（指示簿）' : '予定の終わり'}` });
+      }
+    }
+    for (const { t, time } of ptests) {
+      if (time?.t !== hover) continue;
+      hoverLabel ||= shortWhen(t.at, time);
+      const n = testResults.get(t.id) ?? 0;
+      rows.push({ label: '検査の予定（指示簿）', value: `${t.name}${t.interval === '' ? '' : `（${t.interval}）`}${t.stopped ? '・中止した' : ''}${n > 0 ? `・結果の記載 ${String(n)}（AI の整理）` : ''}` });
     }
   }
 
@@ -409,7 +465,7 @@ export function Timeline({ panels, medications, events, encounterStart, encounte
       <p className="range-label" data-testid="range-label">
         {rangeText(domain)}
       </p>
-      <svg ref={svgRef} width={width} height={height} role="img" aria-label={`経過表：${probsIn.length > 0 ? '問題・' : ''}${inRange.map((p) => p.name).join('・')}${medsIn.length > 0 ? '・投薬' : ''}${devsIn.length > 0 ? '・デバイス' : ''}${evsIn.length > 0 ? '・できごと' : ''}${cosIn.length > 0 ? '・経過の出来事' : ''}`}>
+      <svg ref={svgRef} width={width} height={height} role="img" aria-label={`経過表：${probsIn.length > 0 ? '問題・' : ''}${inRange.map((p) => p.name).join('・')}${medsIn.length > 0 ? '・投薬' : ''}${pinsIn.length > 0 ? '・点滴の予定' : ''}${ptestsIn.length > 0 ? '・検査の予定' : ''}${devsIn.length > 0 ? '・デバイス' : ''}${evsIn.length > 0 ? '・できごと' : ''}${cosIn.length > 0 ? '・経過の出来事' : ''}`}>
         {/* 日の目盛り（縦の細線）と、日付・病日 */}
         {ticks.map((tk) => (
           <g key={tk.t}>
@@ -523,6 +579,53 @@ export function Timeline({ panels, medications, events, encounterStart, encounte
           </g>
         )}
 
+        {pinsIn.length > 0 && (
+          <g data-testid="timeline-planned-infusions">
+            <text x={0} y={planTop + 14} className="section-title">
+              点滴の予定（指示簿）
+            </text>
+            {pinsIn.map(({ p, from, to }, i) => {
+              const laneTop = planTop + SECTION_H + i * (LANE_LABEL_H + LANE_H);
+              const cy = laneTop + LANE_LABEL_H + LANE_H / 2;
+              const start = from?.t ?? domain[0];
+              const end = to?.t ?? Math.max(lastT, start);
+              return (
+                <g key={p.id} data-testid="timeline-planned-infusion">
+                  <text x={0} y={laneTop + 12} className="lane-title">
+                    {p.name}
+                    <tspan className="panel-unit">{`\u3000${p.detail === '' ? '' : `${p.detail}・`}${p.stopped ? '中止した' : p.to === null ? '予定の終わりの記載なし' : '予定'}`}</tspan>
+                  </text>
+                  <line x1={GUTTER} x2={GUTTER + plotW} y1={cy} y2={cy} className="lane" />
+                  <g clipPath={`url(#${clipId})`}>
+                    <line x1={x(start)} x2={x(end)} y1={cy} y2={cy} className={`plan-span${p.to === null ? ' open' : ''}${p.stopped ? ' stopped' : ''}`} />
+                    <path d={actionShape('start', x(start), cy)} className="mark-med hollow" />
+                    {to !== null && <path d={actionShape('stop', x(to.t), cy)} className="mark-med hollow" />}
+                  </g>
+                </g>
+              );
+            })}
+          </g>
+        )}
+
+        {ptestsIn.length > 0 && (
+          <g data-testid="timeline-planned-tests">
+            <text x={0} y={planTestTop + 14} className="section-title">
+              検査の予定（指示簿）
+            </text>
+            <line x1={GUTTER} x2={GUTTER + plotW} y1={planTestTop + SECTION_H + LANE_H / 2} y2={planTestTop + SECTION_H + LANE_H / 2} className="lane" />
+            {ptestsIn.map(({ t, time }) =>
+              time === null ? null : (
+                <path
+                  key={t.id}
+                  d={actionShape('stop', x(time.t), planTestTop + SECTION_H + LANE_H / 2)}
+                  className={(testResults.get(t.id) ?? 0) > 0 ? 'mark-plan resulted' : 'mark-plan'}
+                  data-testid="timeline-planned-test"
+                />
+              ),
+            )}
+          </g>
+        )}
+
         {devsIn.length > 0 && (
           <g data-testid="timeline-devices">
             <text x={0} y={deviceTop + 14} className="section-title">
@@ -628,6 +731,11 @@ export function Timeline({ panels, medications, events, encounterStart, encounte
         </>
       )}
       {(evs.length > 0 || cos.length > 0) && <ToneKey />}
+      {(pins.length > 0 || ptests.length > 0) && (
+        <p className="note" data-testid="timeline-plan-note">
+          点滴の予定（破線の帯）と検査の予定（白抜きの四角）は、指示簿に入れた予定で、記録の投薬・できごととは別です（行ったとは補っていません）。予定の終わり・中止のない点滴の帯は、記録の上で最後まで。検査の予定の四角が塗られているのは、後の記録に結果の記載が結びついたもの（AI の整理）。
+        </p>
+      )}
       {(probs.length > 0 || devs.length > 0 || cos.length > 0) && (
         <p className="note">
           問題の帯は、AI のプロブレムリストの始まりから、記録の上で最後まで（解決は書かれたときだけ）。デバイスの破線は、抜去の記載がないもの（入っているとは補っていません）。経過の出来事の薄い印は、おおよその日時（ごろ）。タップすると、その時刻の中身が下に出ます。

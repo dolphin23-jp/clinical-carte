@@ -71,7 +71,7 @@ describe('結果待ち（段K6）', () => {
 
     const rec = await s.record();
     const body = rec.pending?.body;
-    expect(rec.pending?.promptVersion).toBe('pending-1');
+    expect(rec.pending?.promptVersion).toBe('pending-2');
     expect(rec.pending?.basis).toBe(pendingBasis(rec.sources as never));
     expect(body?.items.map((i) => [i.name, i.state])).toEqual([
       ['血液培養2セット提出', 'resulted'],
