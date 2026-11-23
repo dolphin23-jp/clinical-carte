@@ -19,6 +19,7 @@ import {
 import { Fragment, useEffect, useRef, useState } from 'react';
 
 import { showDateTime } from './format.ts';
+import { Icon } from './Icon.tsx';
 import { errorMessage } from './messages.ts';
 import { type ApiError, generateSupport, type PatientRecord } from './net/api.ts';
 
@@ -251,7 +252,8 @@ export function SupportPanel({ record, builder }: { record: PatientRecord; build
   return (
     <section className="state-section support" data-testid="support" aria-labelledby="support-title">
       <div className="plist-head">
-        <h3 id="support-title" className="sub-title">
+        <h3 id="support-title" className="sub-title with-icon">
+          <Icon name="finding" />
           AI の臨床支援 <span className="tag support-tag">臨床支援</span> <span className="tag ai-tag">AI</span>
         </h3>
         <button type="button" className="button small" disabled={busy} onClick={build} data-testid="support-build">

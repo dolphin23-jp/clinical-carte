@@ -29,6 +29,7 @@ export * from './notes/document.ts';
 export * from './notes/handoff.ts';
 export * from './notes/diff.ts';
 export * from './problems/list.ts';
+export * from './views/lanes.ts';
 export * from './presets/index.ts';
 export * from './support/support.ts';
 export * from './pending/pending.ts';

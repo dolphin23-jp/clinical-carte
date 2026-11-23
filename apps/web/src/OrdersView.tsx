@@ -38,6 +38,7 @@ import {
 import { type SyntheticEvent, useState } from 'react';
 
 import { joinDateTime, showDateTime } from './format.ts';
+import { Icon } from './Icon.tsx';
 import { errorMessage } from './messages.ts';
 import { addOrders, type ApiError, deleteOrder, type Encounter, type OrderProposals, type PatientRecord, patchOrder, proposeOrders, transcribeOrders } from './net/api.ts';
 import { OrderTemplates, ScaleTable } from './OrderTemplates.tsx';
@@ -886,7 +887,8 @@ export function OrdersSummary({ record, encounter, onOpen }: { record: PatientRe
   return (
     <section className="state-section orders-summary" data-testid="orders-summary" aria-labelledby="orders-summary-title">
       <div className="plist-head">
-        <h3 id="orders-summary-title" className="sub-title">
+        <h3 id="orders-summary-title" className="sub-title with-icon">
+          <Icon name="orders" />
           指示中の指示簿（{String(items.length)}）
         </h3>
         <button type="button" className="button small" onClick={onOpen} data-testid="orders-summary-open">

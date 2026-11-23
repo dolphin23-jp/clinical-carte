@@ -7,6 +7,7 @@ import { ASK_QUESTION_MAX, ASK_REJECT_NAMES, ASK_REJECT_REASONS, type AskRef, ty
 import { useState } from 'react';
 
 import { showDateTime } from './format.ts';
+import { Icon } from './Icon.tsx';
 import { errorMessage } from './messages.ts';
 import { askRecord, type PatientRecord } from './net/api.ts';
 import { Marked } from './SupportView.tsx';
@@ -50,7 +51,8 @@ export function AskPanel({ patientId, record, onLeft }: { patientId: string; rec
 
   return (
     <section className="state-section ask" data-testid="ask" aria-labelledby="ask-title">
-      <h3 id="ask-title" className="sub-title">
+      <h3 id="ask-title" className="sub-title with-icon">
+        <Icon name="search" />
         記録に聞く <span className="tag ai-tag">AI</span>
       </h3>
       <p className="support-caution" data-testid="ask-caution">

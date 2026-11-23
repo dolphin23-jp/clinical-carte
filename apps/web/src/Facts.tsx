@@ -12,7 +12,9 @@ import {
   SOURCE_KIND_LABELS,
 } from '@clinical-carte/core';
 
+import { actionShape } from './charts/Timeline.tsx';
 import { showDateTime } from './format.ts';
+import { Icon } from './Icon.tsx';
 import type { ClinicalEvent, Medication, Source } from './net/api.ts';
 
 const notOrganized = (sources: readonly Source[]): number => sources.filter((s) => s.organized !== 'done').length;
@@ -42,7 +44,12 @@ export function MedicationView({ medications, sources }: { medications: readonly
       ) : (
         lines.map((line) => (
           <section key={line.name} className="fact-group" data-testid="medication-line">
-            <h3 className="fact-title">{line.name}</h3>
+            <h3 className="fact-title with-icon">
+              <span className="cat-mark cat-med" aria-hidden="true">
+                <Icon name="med" />
+              </span>
+              {line.name}
+            </h3>
             <ul className="fact-list">
               {line.entries
                 .filter((m) => !folded.has(m.id))
@@ -76,6 +83,10 @@ function MedicationRow({ m, sources }: { m: MedicationFact; sources: readonly So
     <li className="fact-row">
       <span className="fact-when">{showDateTime(m.at)}</span>
       <span className="fact-main">
+        {/* 動きの印：経過表と同じ形（色ではなく、形で分ける） */}
+        <svg className="action-mark" width="14" height="14" viewBox="0 0 14 14" aria-hidden="true">
+          <path d={actionShape(m.action, 7, 7)} className={m.action === null ? 'mark-med hollow' : 'mark-med'} />
+        </svg>
         {m.action === null ? '（動きの記載なし）' : MEDICATION_ACTION_NAMES[m.action]}
         {m.doseText !== null && <span className="fact-dose">{m.doseText}</span>}
       </span>

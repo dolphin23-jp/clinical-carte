@@ -4,6 +4,7 @@ import { type DeviceLine, EVENT_KIND_NAMES, type MedicationDays, LIST_ACTIVITY_N
 import { type ReactNode, useState } from 'react';
 
 import { showDateTime } from './format.ts';
+import { Icon, type IconName } from './Icon.tsx';
 import type { Source } from './net/api.ts';
 import { markFor, refLetter, type RefPatient } from './refmark.ts';
 import { ScoresView } from './ScoresView.tsx';
@@ -129,12 +130,38 @@ function recentCounts(items: readonly RecentItem[]): string {
     .join('・');
 }
 
+/** 24時間の動きの数の札（種類ごとの数だけ。畳んでいても、何があったかが絵と数で分かる。値は見ない） */
+function RecentTiles({ items }: { items: readonly RecentItem[] }) {
+  const g = recentGroups(items);
+  const tiles: readonly (readonly [string, string, IconName, number])[] = [
+    ['problem', '問題', 'problem', g.problems.length],
+    ['med', '投薬の動き', 'med', g.medications.length],
+    ['event', 'できごと', 'event', g.events.length],
+    ['lab', '検査の項目', 'lab', g.labs.length],
+  ];
+  return (
+    <div className="recent-tiles" data-testid="state-recent-tiles">
+      {tiles.map(([cat, name, icon, n]) => (
+        <span key={cat} className={n === 0 ? 'recent-tile none' : 'recent-tile'}>
+          <span className={`cat-mark cat-${cat}`} aria-hidden="true">
+            <Icon name={icon} />
+          </span>
+          <span className="recent-num">{String(n)}</span>
+          <span className="recent-name">{name}</span>
+        </span>
+      ))}
+    </div>
+  );
+}
+
 export function StateView({
   state,
   sources,
   onProblems,
   list = [],
   listBusy = false,
+  map = null,
+  vitals = null,
   patient = null,
   scores = null,
   support = null,
@@ -149,6 +176,10 @@ export function StateView({
   /** AI のプロブレムリスト（CA-057。外したものを除いた項目）。あれば、いまの問題の主な見方にする */
   list?: readonly ListItem[];
   listBusy?: boolean;
+  /** 記録の地図（段L。どの日に、どの種類の記録が入っているか） */
+  map?: ReactNode;
+  /** 最新のバイタルの札（1行の要約のすぐ下に置く） */
+  vitals?: ReactNode;
   /** 基準範囲の印（段K3）に使う年齢と性別 */
   patient?: RefPatient | null;
   /** スコア・診断基準（段K4）の計算に使う記録（患者・受診・この受診の測定値・いまの問題の名前） */
@@ -180,17 +211,37 @@ export function StateView({
         {state.oneLiner}
       </p>
       <p className="state-asof" data-testid="state-asof">
-        {state.asOf === null ? 'この受診には、まだ記録がありません。' : `記録の上で最後：${showDateTime(state.asOf)}`}
+        <Icon name="clock" />
+        {state.asOf === null ? 'この受診には、まだ記録がありません' : `記録の上で最後：${showDateTime(state.asOf)}`}
         {state.lastEntered !== null && `（最後に入れた日時：${showDateTime(state.lastEntered)}）`}
         。病院のカルテの写しで、最新とは限りません。
       </p>
+
+      <div className="state-top">
+      {vitals}
+
+      {map !== null && (
+        <section className="state-section map-section" aria-labelledby="map-title">
+          <h3 id="map-title" className="sub-title with-icon">
+            <Icon name="calendar" />
+            記録の地図（どの日に、何が入っているか）
+          </h3>
+          {map}
+        </section>
+      )}
+      </div>
 
       <div className="state-cols">
       <div className="state-col">
       {list.length > 0 && (
         <section className="state-section" data-testid="state-plist">
-          <h3 className="sub-title">
-            プロブレムリスト <span className="tag ai-tag">AI の整理</span>
+          <h3 className="sub-title with-icon">
+            <Icon name="problems" />
+            プロブレムリスト{' '}
+            <span className="tag ai-tag">
+              <Icon name="ai" />
+              AI の整理
+            </span>
             {listBusy && <span className="note">（組み直しています）</span>}
           </h3>
           <ul className="threads compact">
@@ -210,14 +261,16 @@ export function StateView({
                         toggle(`plist-${item.key}`);
                       }}
                     >
-                      <span className="fold-mark" aria-hidden="true">
-                        {on ? '▾' : '▸'}
+                      <span className="problem-no" aria-hidden="true">
+                        {String(no)}
                       </span>
                       <strong className="thread-name">
-                        #{String(no)} {item.name}
+                        <span className="sr-only">#{String(no)} </span>
+                        {item.name}
                       </strong>
                       <span className="tag">{LIST_CERTAINTY_NAMES[item.certainty]}</span>
                       {item.since !== null && <span className="thread-when">{showDateTime(item.since)}〜</span>}
+                      <Icon name={on ? 'down' : 'chevron'} className="fold-mark" />
                     </button>
                     {on && (
                       <>
@@ -262,7 +315,12 @@ export function StateView({
       {(() => {
         const writtenProblems = (
           <>
-        {list.length === 0 && <h3 className="sub-title">いまの問題（{String(state.current.length)}）</h3>}
+        {list.length === 0 && (
+          <h3 className="sub-title with-icon">
+            <Icon name="problems" />
+            いまの問題（{String(state.current.length)}）
+          </h3>
+        )}
         {state.current.length === 0 ? (
           <p className="note">いまの問題として書かれたものはありません。</p>
         ) : (
@@ -294,12 +352,10 @@ export function StateView({
                       }}
                       data-testid="state-problem-head"
                     >
-                      <span className="fold-mark" aria-hidden="true">
-                        {on ? '▾' : '▸'}
-                      </span>
                       <strong className="thread-name">{thread.name}</strong>
                       <span className="tag">{PROBLEM_STATUS_NAMES[thread.status]}</span>
                       <span className="thread-when">{showDateTime(notes[0]?.at ?? thread.last)}</span>
+                      <Icon name={on ? 'down' : 'chevron'} className="fold-mark" />
                     </button>
                     {on && (
                       <>
@@ -345,12 +401,10 @@ export function StateView({
               }}
               data-testid="state-shared-head"
             >
-              <span className="fold-mark" aria-hidden="true">
-                {open.has('shared') ? '▾' : '▸'}
-              </span>
               <strong className="thread-name">記載全体の方針</strong>
               <span className="tag">問題に分けて書かれていない P</span>
               <span className="thread-when">{showDateTime(state.sharedPlan.at)}</span>
+              <Icon name={open.has('shared') ? 'down' : 'chevron'} className="fold-mark" />
             </button>
             {open.has('shared') && (
               <div className="thread-note" data-testid="state-shared-plan">
@@ -371,8 +425,9 @@ export function StateView({
           </p>
         )}
         {state.unlinked > 0 && <p className="note">問題の筋につないでいない記載が {String(state.unlinked)} 件あります。</p>}
-        <button type="button" className="button small" onClick={onProblems} data-testid="state-to-problems">
+        <button type="button" className="button small with-icon" onClick={onProblems} data-testid="state-to-problems">
           問題のタブで、くわしく見る・直す
+          <Icon name="chevron" />
         </button>
           </>
         );
@@ -395,6 +450,7 @@ export function StateView({
 
       {scores !== null && <ScoresView input={scores} fallbackDay={state.asOf} />}
 
+      {state.recent !== null && <RecentTiles items={state.recent.items} />}
       {state.recent !== null && (
         <details className="state-section folded" data-testid="state-recent">
           <summary className="sub-title">

@@ -3,11 +3,13 @@
 // 受け持ち全員の申し送り（段K7。CA-067）：患者ごとに、1行の要約と、残した申し送りのいちばん新しいもの（先生が選んだ重症度・日）を読むだけ。
 // AI は呼ばない（全員の分を自動で出さない）。申し送りを出す・直すのは、患者の画面の「記載」。
 // 受け持ちから探す（段K8。CA-070）：保存した記録から字で探す（AI を使わない。探す字は保存しない）。当たりを押すと、その患者の記載を開く。
-import { AGE_MAX, DOC_ORIGIN_NAMES, DOC_SECTIONS, dayOnRecord, ENCOUNTER_KIND_LABELS, ENCOUNTER_KINDS, type EncounterKind, headline, oneLinerOf, SEX_LABELS, SEXES, type SavedHandoff, type Sex } from '@clinical-carte/core';
+import { AGE_MAX, ageNow, DOC_ORIGIN_NAMES, DOC_SECTIONS, dayOnRecord, ENCOUNTER_KIND_LABELS, ENCOUNTER_KINDS, type EncounterKind, headline, oneLinerOf, SEX_LABELS, SEXES, type SavedHandoff, type Sex } from '@clinical-carte/core';
 import { type SyntheticEvent, useCallback, useEffect, useState } from 'react';
 
 import { SeverityTag } from './DocumentView.tsx';
 import { joinDateTime, nowLocal, showDateTime } from './format.ts';
+import { Icon } from './Icon.tsx';
+import { PatientBadge } from './PatientBadge.tsx';
 import { errorMessage } from './messages.ts';
 import { createPatient, listHandoffs, listPatients, type PatientSummary } from './net/api.ts';
 import { type OpenFocus, SearchPanel } from './SearchView.tsx';
@@ -29,12 +31,15 @@ export function Patients({ onOpen, onLeft }: { onOpen: (patientId: string, focus
   useEffect(load, [load]);
 
   return (
-    <section className="card" aria-labelledby="patients-title">
+    <section className="card rounds" aria-labelledby="patients-title">
       <div className="card-head">
-        <h2 id="patients-title">患者</h2>
+        <h2 id="patients-title" className="section-head">
+          <Icon name="list" />
+          回診リスト
+        </h2>
         {list !== null && list.patients.length > 0 && (
           <button
-            className="button"
+            className="button with-icon"
             type="button"
             aria-expanded={handoffs !== null}
             onClick={() => {
@@ -54,22 +59,40 @@ export function Patients({ onOpen, onLeft }: { onOpen: (patientId: string, focus
             }}
             data-testid="handoff-all-toggle"
           >
+            <Icon name="text" />
             {handoffs === null ? '受け持ち全員の申し送り' : '申し送りを閉じる'}
           </button>
         )}
         {!adding && (
           <button
-            className="button primary"
+            className="button primary with-icon"
             type="button"
             onClick={() => {
               setAdding(true);
             }}
             data-testid="new-patient"
           >
+            <Icon name="plus" />
             新しい患者
           </button>
         )}
       </div>
+      {list !== null && list.patients.length > 0 && (
+        <div className="round-counts" data-testid="round-counts">
+          <span className="count-tile">
+            <span className="count-num">{String(list.patients.filter((p) => p.latest !== null && p.latest.end === null).length)}</span>
+            <span className="count-label">受け持ち中</span>
+          </span>
+          <span className="count-tile">
+            <span className="count-num">{String(list.patients.filter((p) => !(p.latest !== null && p.latest.end === null)).length)}</span>
+            <span className="count-label">受診が終わった</span>
+          </span>
+          <span className="count-tile">
+            <span className="count-num">{String(list.patients.reduce((n, p) => n + p.sources, 0))}</span>
+            <span className="count-label">記録（件）</span>
+          </span>
+        </div>
+      )}
       {message !== null && (
         <p className="alert" role="alert">
           {message}
@@ -89,7 +112,13 @@ export function Patients({ onOpen, onLeft }: { onOpen: (patientId: string, focus
       {list === null ? (
         <p className="note">読み込んでいます…</p>
       ) : list.patients.length === 0 ? (
-        <p className="note">まだ、患者はいません。</p>
+        <div className="empty-state" data-testid="patients-empty">
+          <span className="empty-art" aria-hidden="true">
+            <Icon name="user" />
+          </span>
+          <p className="empty-title">まだ、患者はいません。</p>
+          <p className="note">「新しい患者」から、年齢・性別・受診の日を入れて始めます（氏名・ID の欄はありません）。</p>
+        </div>
       ) : (
         <>
           {(['active', 'ended'] as const).map((which) => {
@@ -118,32 +147,56 @@ function RoundRow({ summary, today, onOpen }: { summary: PatientSummary; today: 
   const { patient, latest, sources, round } = summary;
   const day = latest === null ? null : dayOnRecord(latest, round.asOf);
   return (
-    <li className="row">
+    <li className="row round-row">
       <button
-        className="row-button"
+        className="row-button round-card"
         type="button"
         onClick={() => {
           onOpen(patient.id);
         }}
         data-testid="patient"
       >
-        <span className="row-title">{headline({ ...patient, encounter: latest }, today)}</span>
-        <span className="round-problems" data-testid="round-problems">
-          {day !== null && <span className="tag">{`${String(day)}病日（記録の上で）`}</span>}
-          {round.listed && <span className="tag ai-tag">AI の整理</span>}
-          {round.problems.length === 0 ? 'いまの問題の記載なし' : round.problems.join('、')}
-        </span>
-        {summary.handoff !== null && (
-          <span className="round-handoff" data-testid="round-handoff">
-            <span className="tag">申し送り {summary.handoff.day.slice(5).replace('-', '/')}</span>
-            <SeverityTag severity={summary.handoff.severity} />
+        <PatientBadge age={ageNow(patient.age, patient.ageOn, today)} sex={patient.sex} />
+        <span className="round-main">
+          <span className="row-title">{headline({ ...patient, encounter: latest }, today)}</span>
+          <span className="round-problems" data-testid="round-problems">
+            {day !== null && <span className="tag day-tag" data-testid="round-day">{`${String(day)}病日（記録の上で）`}</span>}
+            {round.listed && (
+              <span className="tag ai-tag">
+                <Icon name="ai" />
+                AI の整理
+              </span>
+            )}
+            {round.problems.length === 0 ? (
+              <span className="round-none">いまの問題の記載なし</span>
+            ) : (
+              round.problems.map((name) => (
+                <span key={name} className="problem-chip" data-testid="round-problem">
+                  {name}
+                </span>
+              ))
+            )}
           </span>
-        )}
-        <span className="row-sub">
-          {round.asOf === null ? '記録の上の日時なし' : `記録の上で最後：${showDateTime(round.asOf)}`}・記録 {String(sources)} 件
-          {round.otherProblems > 0 && `・解決などと書かれた問題 ${String(round.otherProblems)}`}
-          {round.unlinked > 0 && `・つないでいない問題の記載 ${String(round.unlinked)}`}
+          {summary.handoff !== null && (
+            <span className="round-handoff" data-testid="round-handoff">
+              <span className="tag">申し送り {summary.handoff.day.slice(5).replace('-', '/')}</span>
+              <SeverityTag severity={summary.handoff.severity} />
+            </span>
+          )}
+          <span className="row-sub round-meta">
+            <span className="meta-item">
+              <Icon name="clock" />
+              {round.asOf === null ? '記録の上の日時なし' : `記録の上で最後：${showDateTime(round.asOf)}`}
+            </span>
+            <span className="meta-item">
+              <Icon name="notes" />
+              記録 {String(sources)} 件
+            </span>
+            {round.otherProblems > 0 && <span className="meta-item">解決などと書かれた問題 {String(round.otherProblems)}</span>}
+            {round.unlinked > 0 && <span className="meta-item">つないでいない問題の記載 {String(round.unlinked)}</span>}
+          </span>
         </span>
+        <Icon name="chevron" className="round-go" />
       </button>
     </li>
   );

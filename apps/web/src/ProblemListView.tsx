@@ -7,6 +7,7 @@ import { COURSE_CATEGORY_NAMES, LIST_ACTIVITIES, LIST_ACTIVITY_NAMES, LIST_CERTA
 import { useEffect, useRef, useState } from 'react';
 
 import { showDateTime } from './format.ts';
+import { Icon } from './Icon.tsx';
 import { errorMessage } from './messages.ts';
 import { type ApiError, type CourseItem, generateProblemList, patchProblemList, type PatientRecord } from './net/api.ts';
 
@@ -76,10 +77,16 @@ export function ProblemListView({ patientId, record, builder, onChanged, onLeft 
   return (
     <section className="plist" data-testid="plist" aria-labelledby="plist-title">
       <div className="plist-head">
-        <h3 id="plist-title" className="sub-title">
-          プロブレムリスト <span className="tag ai-tag">AI の整理</span>
+        <h3 id="plist-title" className="sub-title with-icon">
+          <Icon name="problems" />
+          プロブレムリスト{' '}
+          <span className="tag ai-tag">
+            <Icon name="ai" />
+            AI の整理
+          </span>
         </h3>
-        <button type="button" className="button small" disabled={busy} onClick={build} data-testid="plist-build">
+        <button type="button" className="button small with-icon" disabled={busy} onClick={build} data-testid="plist-build">
+          <Icon name="refresh" />
           {busy ? '組んでいます…' : 'AI で組み直す'}
         </button>
       </div>
@@ -111,21 +118,26 @@ export function ProblemListView({ patientId, record, builder, onChanged, onLeft 
                   }}
                   data-testid="plist-item-head"
                 >
-                  <span className="fold-mark" aria-hidden="true">
-                    {on ? '▾' : '▸'}
+                  <span className={item.activity === 'active' ? 'problem-no' : 'problem-no closed'} aria-hidden="true">
+                    {String(no)}
                   </span>
                   <strong className="thread-name">
-                    #{String(no)} {item.name}
+                    <span className="sr-only">#{String(no)} </span>
+                    {item.name}
                   </strong>
                   <span className="tag">{LIST_CERTAINTY_NAMES[item.certainty]}</span>
-                  {item.activity !== 'active' && <span className="tag">{LIST_ACTIVITY_NAMES[item.activity]}</span>}
+                  {item.activity !== 'active' && <span className="tag state-tag">{LIST_ACTIVITY_NAMES[item.activity]}</span>}
                   {item.since !== null && <span className="thread-when">{showDateTime(item.since)}〜</span>}
+                  <Icon name={on ? 'down' : 'chevron'} className="fold-mark" />
                 </button>
                 {on && (
                   <div className="plist-body">
                     {item.basis !== '' && (
                       <p className="thread-sub" data-testid="plist-basis">
-                        <span className="tag ai-tag">AI</span>
+                        <span className="tag ai-tag">
+                          <Icon name="ai" />
+                          AI
+                        </span>
                         {item.basis}
                       </p>
                     )}

@@ -20,6 +20,7 @@ import {
 import { useEffect, useRef, useState } from 'react';
 
 import { showDateTime } from './format.ts';
+import { Icon } from './Icon.tsx';
 import { errorMessage } from './messages.ts';
 import { type ApiError, generatePending, markPending, type PatientRecord } from './net/api.ts';
 
@@ -208,7 +209,8 @@ export function PendingPanel({ patientId, record, builder, asOf, onChanged, onLe
   return (
     <section className="state-section pending" data-testid="pending" aria-labelledby="pending-title">
       <div className="plist-head">
-        <h3 id="pending-title" className="sub-title">
+        <h3 id="pending-title" className="sub-title with-icon">
+          <Icon name="clock" />
           結果待ち（提出の記載があり、結果の記載がまだないもの） <span className="tag ai-tag">AI の整理</span>
         </h3>
         <button type="button" className="button small" disabled={builder.busy} onClick={builder.build} data-testid="pending-build">

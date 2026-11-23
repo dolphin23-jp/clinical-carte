@@ -2,6 +2,7 @@
 // 送るのは、いつも文の欄の文（同じ選別・同じ読み取りを通る）。空の欄は書かない（補わない）。
 import { useState } from 'react';
 
+import { Icon } from './Icon.tsx';
 import { composeValues, LAB_SETS, type QuickField, VITAL_FIELDS } from './templates.ts';
 
 export function QuickValues({ kind, disabled, onCompose }: { kind: 'vital' | 'lab'; disabled: boolean; onCompose: (text: string) => void }) {
@@ -35,7 +36,11 @@ export function QuickValues({ kind, disabled, onCompose }: { kind: 'vital' | 'la
         }}
         data-testid="quick-open"
       >
-        {open ? '▾' : '▸'} {kind === 'vital' ? 'バイタルを欄で入れる' : '検査値を欄で入れる'}
+        <span className="with-icon">
+          <Icon name={kind === 'vital' ? 'vital' : 'lab'} />
+          {kind === 'vital' ? 'バイタルを欄で入れる' : '検査値を欄で入れる'}
+        </span>
+        <Icon name={open ? 'down' : 'chevron'} className="fold-mark" />
       </button>
       {open && (
         <div className="quick-body">

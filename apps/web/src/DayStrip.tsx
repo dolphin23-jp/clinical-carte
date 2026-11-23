@@ -4,6 +4,8 @@
 import type { StripDay } from '@clinical-carte/core';
 import { useEffect, useRef } from 'react';
 
+import { Icon } from './Icon.tsx';
+
 export function DayStrip({ days, selected, onSelect }: { days: readonly StripDay[]; selected: string | null; onSelect: (day: string | null) => void }) {
   const row = useRef<HTMLDivElement>(null);
   // はじめは、いちばん新しい日が見えるように、右の端へ（DOM の scrollLeft。style は使わない：CSP）
@@ -48,18 +50,56 @@ export function DayStrip({ days, selected, onSelect }: { days: readonly StripDay
                 {d.weekday}
                 {d.hospitalDay !== null && `・${String(d.hospitalDay)}病日`}
               </span>
+              {/* 印は「あるか」だけ（記載・値・薬・できごと）。絵と色は種類を見分けるためで、値では変えない */}
               <span className="day-marks" aria-hidden="true">
-                <span className={d.sources > 0 ? 'day-mark has' : 'day-mark'}>記</span>
-                <span className={d.vitals + d.labs > 0 ? 'day-mark has' : 'day-mark'}>値</span>
-                <span className={d.medications > 0 ? 'day-mark has' : 'day-mark'}>薬</span>
+                <span className={d.sources > 0 ? 'day-mark has cat-note' : 'day-mark'}>
+                  <Icon name="notes" />
+                </span>
+                <span className={d.vitals + d.labs > 0 ? 'day-mark has cat-vital' : 'day-mark'}>
+                  <Icon name="vital" />
+                </span>
+                <span className={d.medications > 0 ? 'day-mark has cat-med' : 'day-mark'}>
+                  <Icon name="med" />
+                </span>
+                <span className={d.events > 0 ? 'day-mark has cat-event' : 'day-mark'}>
+                  <Icon name="event" />
+                </span>
               </span>
             </button>
           );
         })}
       </div>
+      <p className="day-key" aria-hidden="true">
+        <span className="day-key-item">
+          <span className="day-mark has cat-note">
+            <Icon name="notes" />
+          </span>
+          記録
+        </span>
+        <span className="day-key-item">
+          <span className="day-mark has cat-vital">
+            <Icon name="vital" />
+          </span>
+          値
+        </span>
+        <span className="day-key-item">
+          <span className="day-mark has cat-med">
+            <Icon name="med" />
+          </span>
+          薬
+        </span>
+        <span className="day-key-item">
+          <span className="day-mark has cat-event">
+            <Icon name="event" />
+          </span>
+          できごと
+        </span>
+        <span className="day-key-note">（あるか、だけ）</span>
+      </p>
       <div className="day-strip-actions">
-        <button type="button" className="chip small" disabled={index === 0} onClick={() => { move(-1); }} data-testid="day-prev">
-          ◀ 前の日
+        <button type="button" className="chip small with-icon" disabled={index === 0} onClick={() => { move(-1); }} data-testid="day-prev">
+          <Icon name="back" />
+          前の日
         </button>
         <span className="note" data-testid="day-selected">
           {selected === null ? '日を押すと、その日（0〜24時）を見ます' : `${days[index]?.label ?? selected} を見ています`}
@@ -69,8 +109,9 @@ export function DayStrip({ days, selected, onSelect }: { days: readonly StripDay
             日を外す
           </button>
         )}
-        <button type="button" className="chip small" disabled={index === days.length - 1} onClick={() => { move(1); }} data-testid="day-next">
-          次の日 ▶
+        <button type="button" className="chip small with-icon" disabled={index === days.length - 1} onClick={() => { move(1); }} data-testid="day-next">
+          次の日
+          <Icon name="chevron" />
         </button>
       </div>
     </div>

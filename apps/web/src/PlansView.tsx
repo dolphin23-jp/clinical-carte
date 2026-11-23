@@ -21,6 +21,7 @@ import {
 import { useEffect, useRef, useState } from 'react';
 
 import { showDateTime } from './format.ts';
+import { Icon } from './Icon.tsx';
 import { errorMessage } from './messages.ts';
 import { type ApiError, generatePlans, markPlan, type PatientRecord } from './net/api.ts';
 
@@ -230,7 +231,8 @@ export function PlansPanel({ patientId, record, builder, asOf, onChanged, onLeft
   return (
     <section className="state-section pending plans" data-testid="plans" aria-labelledby="plans-title">
       <div className="plist-head">
-        <h3 id="plans-title" className="sub-title">
+        <h3 id="plans-title" className="sub-title with-icon">
+          <Icon name="check" />
           予定と実施（A/P に書いた予定と、その後の記録） <span className="tag ai-tag">AI の整理</span>
         </h3>
         <button type="button" className="button small" disabled={builder.busy} onClick={builder.build} data-testid="plans-build">
