@@ -454,6 +454,25 @@ export function StateView({
         </details>
       )}
 
+      {state.findings.length > 0 && (
+        <details className="state-section folded" data-testid="state-findings">
+          <summary className="sub-title">最新の所見（{state.findings.map((f) => f.name).join('・')}）</summary>
+          {state.findings.map((f) => (
+            <div key={f.label} className="thread-note" data-testid="state-finding">
+              <span className="part-label">
+                {f.name}・{showDateTime(f.at)}
+              </span>
+              {f.parts.map((p) => (
+                <p key={String(p.start)} className="source-text">
+                  {textOf(f.sourceId, p.start, p.end)}
+                </p>
+              ))}
+            </div>
+          ))}
+          <p className="note">この受診で、その区切りがあるいちばん新しい記載の字をそのまま出しています。</p>
+        </details>
+      )}
+
       {state.background.length > 0 && (
         <details className="state-section folded" data-testid="state-background">
           <summary className="sub-title">背景（{state.background.map((b) => b.name).join('・')}）</summary>
