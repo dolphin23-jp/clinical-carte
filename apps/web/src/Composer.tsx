@@ -16,6 +16,7 @@ import {
 import { type SyntheticEvent, useRef, useState } from 'react';
 
 import { joinDateTime, nowLocal, replacedSummary, showDateTime } from './format.ts';
+import { Icon } from './Icon.tsx';
 import { NextDayAsk, type NextDayAnswer, nextDayKey } from './NextDayAsk.tsx';
 import { errorMessage } from './messages.ts';
 import { addSource, type Observation, organizeSource, type Source } from './net/api.ts';
@@ -152,7 +153,12 @@ export function Composer({
   return (
     <form className="form composer" onSubmit={submit} data-testid="composer">
       <fieldset className="field">
-        <legend className="field-label">種類</legend>
+        <legend className="field-label">
+          <span className="step-no" aria-hidden="true">
+            1
+          </span>
+          種類
+        </legend>
         <div className="chips row" role="radiogroup" aria-label="種類">
           {COMMON_KINDS.map((k) => (
             <button
@@ -190,7 +196,12 @@ export function Composer({
       </fieldset>
 
       <fieldset className="field">
-        <legend className="field-label">書いた人</legend>
+        <legend className="field-label">
+          <span className="step-no" aria-hidden="true">
+            2
+          </span>
+          書いた人
+        </legend>
         <div className="chips row" role="radiogroup" aria-label="書いた人">
           {AUTHOR_ROLES.map((r) => (
             <button
@@ -212,7 +223,12 @@ export function Composer({
       </fieldset>
 
       <fieldset className="field">
-        <legend className="field-label">記載・測定の日時</legend>
+        <legend className="field-label">
+          <span className="step-no" aria-hidden="true">
+            3
+          </span>
+          記載・測定の日時
+        </legend>
         <div className="chips row">
           <button type="button" className="chip small" onClick={() => { setWhen('now'); }} disabled={busy} data-testid="when-now">
             今
@@ -239,7 +255,10 @@ export function Composer({
         </div>
         {candidates.length > 0 && (
           <div className="chips row" aria-label="文に書かれた日時" data-testid="when-candidates">
-            <span className="note">文に書かれた日時：</span>
+            <span className="note with-icon">
+              <Icon name="clock" />
+              文に書かれた日時：
+            </span>
             {candidates.map((c, i) => (
               <button
                 key={c}
@@ -286,7 +305,12 @@ export function Composer({
       {(kind === 'vital' || kind === 'lab') && <QuickValues kind={kind} disabled={busy} onCompose={insert} />}
 
       <label className="field">
-        <span className="field-label">文</span>
+        <span className="field-label">
+          <span className="step-no" aria-hidden="true">
+            4
+          </span>
+          文
+        </span>
         {templates.length > 0 && (
           <span className="chips">
             {templates.map((t, i) => (
@@ -321,7 +345,8 @@ export function Composer({
         </p>
       )}
       {done !== null && (
-        <p className="done" role="status" data-testid="composer-done">
+        <p className="done with-icon" role="status" data-testid="composer-done">
+          <Icon name="check" />
           {done}
         </p>
       )}
@@ -330,12 +355,15 @@ export function Composer({
           {organizing}
         </p>
       )}
-      <p className="target" data-testid="target">
-        入れる先：<strong>{target}</strong>
-      </p>
-      <button className="button primary block" type="submit" disabled={busy || !ready} data-testid="send">
-        {busy ? '識別情報を選別しています…' : 'この患者に入れる'}
-      </button>
+      <div className="send-bar">
+        <p className="target" data-testid="target">
+          <Icon name="user" />
+          入れる先：<strong>{target}</strong>
+        </p>
+        <button className="button primary block big" type="submit" disabled={busy || !ready} data-testid="send">
+          {busy ? '識別情報を選別しています…' : 'この患者に入れる'}
+        </button>
+      </div>
     </form>
   );
 }

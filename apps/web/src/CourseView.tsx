@@ -1,10 +1,11 @@
 // 時系列（段J。CA-056）：経過の出来事（病歴・経過から AI が振り分けたもの）・できごと・投薬・バイタル・検査値を、日ごと・時刻の順に1本に並べる。
 // 「この日に何があったか・何を飲んだか・何時にどの処置・何の検査・何時のバイタル」を、記載を開かずに読めるようにする。
 // 判定しない（色・正常範囲なし）。AI の要約・AI が読んだ値には印。おおよその日時には「ごろ」の印。押すと、元の文の字と、どの記載からかが開く。
-import { COURSE_CATEGORY_NAMES, EVENT_KIND_NAMES, hospitalDay, MEDICATION_ACTION_NAMES, SOURCE_KIND_LABELS } from '@clinical-carte/core';
+import { COURSE_CATEGORY_NAMES, type CourseCategory, EVENT_KIND_NAMES, type EventKind, hospitalDay, MEDICATION_ACTION_NAMES, SOURCE_KIND_LABELS } from '@clinical-carte/core';
 import { useState } from 'react';
 
 import { showDateTime } from './format.ts';
+import { Icon, type IconName } from './Icon.tsx';
 import type { ClinicalEvent, CourseItem, Encounter, Medication, Observation, Source } from './net/api.ts';
 
 type Row = {
@@ -12,6 +13,8 @@ type Row = {
   readonly at: string | null;
   readonly approx: string | null;
   readonly tag: string;
+  /** 絵の印と、種類の色（段K。種類を見分けるためだけ。中身・値では変えない） */
+  readonly mark: Mark;
   readonly text: string;
   /** AI の要約・AI が読んだ値 */
   readonly ai: boolean;
@@ -21,6 +24,32 @@ type Row = {
   readonly start: number;
   readonly end: number;
 };
+
+type Mark = readonly [icon: IconName, cat: 'symptom' | 'med' | 'event' | 'lab' | 'vital' | 'note'];
+const COURSE_MARKS: Readonly<Record<CourseCategory, Mark>> = {
+  onset: ['symptom', 'symptom'],
+  change: ['symptom', 'symptom'],
+  intake: ['med', 'med'],
+  visit: ['visit', 'note'],
+  test: ['lab', 'lab'],
+  treatment: ['procedure', 'event'],
+  finding: ['finding', 'vital'],
+  other: ['dot', 'note'],
+};
+const EVENT_MARKS: Readonly<Record<EventKind, Mark>> = {
+  procedure: ['procedure', 'event'],
+  surgery: ['procedure', 'event'],
+  test: ['lab', 'lab'],
+  consult: ['user', 'note'],
+  transfer: ['visit', 'note'],
+  deterioration: ['event', 'event'],
+  explanation: ['text', 'note'],
+  other: ['event', 'event'],
+};
+
+const VITAL_MARK: Mark = ['vital', 'vital'];
+const LAB_MARK: Mark = ['lab', 'lab'];
+const MED_MARK: Mark = ['med', 'med'];
 
 /** 値の1行に並べる項目の数 */
 const VALUES_SHOWN = 8;
@@ -71,6 +100,7 @@ function valueRows(observations: readonly Observation[]): Row[] {
       at: first.at,
       approx: first.atApprox ?? null,
       tag: first.kind === 'vital' ? 'バイタル' : first.kind === 'lab' ? '検査値' : '値',
+      mark: first.kind === 'vital' ? VITAL_MARK : LAB_MARK,
       // 検査値の多い行は、はじめの 8 項目と残りの数（押すと元の字がすべて開く）
       text: shown.length > VALUES_SHOWN ? `${shown.slice(0, VALUES_SHOWN).join('・')}・ほか ${String(shown.length - VALUES_SHOWN)} 項目` : shown.join('・'),
       ai: list.some((o) => o.readBy === 'ai'),
@@ -111,13 +141,14 @@ export function CourseView({
     .filter((c, i, all) => !all.some((d, j) => j < i && d.sourceId !== c.sourceId && d.category === c.category && (d.at ?? '').slice(0, 10) === (c.at ?? '').slice(0, 10) && similar(d.summary, c.summary)));
   const coveredByCourse = (f: { sourceId: string; start: number; end: number }): boolean => courseShown.some((c) => overlaps(c, f));
   const rows: Row[] = [
-    ...courseShown.map((c) => ({ key: `c-${c.id}`, at: c.at, approx: c.atApprox, tag: COURSE_CATEGORY_NAMES[c.category], text: c.summary, ai: true, unseen: false, sourceId: c.sourceId, start: c.start, end: c.end })),
-    ...events.filter((e) => !coveredByCourse(e)).map((e) => ({ key: `e-${e.id}`, at: e.at, approx: e.atApprox ?? null, tag: EVENT_KIND_NAMES[e.kind], text: e.title, ai: false, unseen: false, sourceId: e.sourceId, start: e.start, end: e.end })),
+    ...courseShown.map((c) => ({ key: `c-${c.id}`, at: c.at, approx: c.atApprox, tag: COURSE_CATEGORY_NAMES[c.category], mark: COURSE_MARKS[c.category], text: c.summary, ai: true, unseen: false, sourceId: c.sourceId, start: c.start, end: c.end })),
+    ...events.filter((e) => !coveredByCourse(e)).map((e) => ({ key: `e-${e.id}`, at: e.at, approx: e.atApprox ?? null, tag: EVENT_KIND_NAMES[e.kind], mark: EVENT_MARKS[e.kind], text: e.title, ai: false, unseen: false, sourceId: e.sourceId, start: e.start, end: e.end })),
     ...medications.filter((m) => !coveredByCourse(m)).map((m) => ({
       key: `m-${m.id}`,
       at: m.at,
       approx: m.atApprox ?? null,
       tag: m.action === null ? '投薬' : `投薬・${MEDICATION_ACTION_NAMES[m.action]}`,
+      mark: MED_MARK,
       text: `${m.name}${m.doseText === null ? '' : ` ${m.doseText}`}`,
       ai: false,
       unseen: false,
@@ -172,7 +203,7 @@ export function CourseView({
           return (
             <li key={r.key} className="tl-item" data-testid="timeline-row">
               {d !== prevDay && (
-                <div className="tl-day" data-testid="timeline-day">
+                <div className={d !== '日時不明' && d < start ? 'tl-day before' : 'tl-day'} data-testid="timeline-day">
                   {d === '日時不明' ? d : dayHead(d)}
                 </div>
               )}
@@ -185,11 +216,19 @@ export function CourseView({
                 }}
               >
                 <span className="tl-time">{r.at !== null && r.at.length > 10 ? r.at.slice(11) : ''}</span>
+                <span className={`tl-node cat-mark cat-${r.mark[1]}`} aria-hidden="true">
+                  <Icon name={r.mark[0]} />
+                </span>
                 <span className="tl-main">
-                  <span className="tag">{r.tag}</span>
+                  <span className={`tag cat-tag cat-${r.mark[1]}`}>{r.tag}</span>
                   {r.approx !== null && <span className="tag">{r.approx}</span>}
                   {r.text}
-                  {r.ai && <span className="tag ai-tag">AI</span>}
+                  {r.ai && (
+                    <span className="tag ai-tag">
+                      <Icon name="ai" />
+                      AI
+                    </span>
+                  )}
                 </span>
               </button>
               {on && (

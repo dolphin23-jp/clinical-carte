@@ -47,6 +47,30 @@ describe('通信の境界', () => {
   });
 });
 
+describe('見た目の境界（段K。CA-058）', () => {
+  test('インラインの style を使わない（CSP：style-src は自分のオリジンだけ）。見た目は style.css のクラスで決める', () => {
+    for (const f of files) expect(code(f.text), f.rel).not.toMatch(/\bstyle=|\.style\.|setAttribute\(\s*['"]style/);
+  });
+
+  test('絵の印（Icon）は、この中の SVG だけ（画像・フォント・外の読み込みを使わない）', () => {
+    const icon = files.find((f) => f.rel === 'Icon.tsx');
+    const text = code(icon?.text ?? '');
+    expect(text).toContain('<svg');
+    expect(text).not.toMatch(/<img|<image|<use|href=|url\(|@import|font-face/);
+    // 飾りなので、読み上げには出さない（隣に、いつも字の名前がある）
+    expect(text).toContain('aria-hidden="true"');
+  });
+
+  test('値で色を変えない：グラフの部品は、値を比べて class を選ばない（色の class は、項目・種類の名前からだけ）', () => {
+    for (const rel of ['charts/Sparkline.tsx', 'charts/RecordMap.tsx', 'charts/ProblemLanes.tsx', 'LatestStrip.tsx']) {
+      const text = code(files.find((f) => f.rel === rel)?.text ?? '');
+      expect(text, rel).not.toBe('');
+      // 判定の語と、判定の色（赤・緑の名前、警告）を class・文に持たない
+      expect(text, rel).not.toMatch(/異常|正常|高値|低値|警告|danger|warning|alert|abnormal/);
+    }
+  });
+});
+
 describe('常時表示の帯', () => {
   test('帯は、画面の全体（App）に1つ置き、どの状態でも出す（状態の分岐の外にある）', () => {
     const app = files.find((f) => f.rel === 'App.tsx');

@@ -31,6 +31,7 @@ import {
 import { type PointerEvent, useEffect, useId, useRef, useState } from 'react';
 
 import type { ClinicalEvent } from '../net/api.ts';
+import { Icon } from '../Icon.tsx';
 import { shortWhen, tickText } from './format.ts';
 import { useWidth } from './useWidth.ts';
 
@@ -64,6 +65,8 @@ interface Props {
 const DAY_MS = 86_400_000;
 /** 縮小図の高さ */
 const MINI_H = 26;
+/** 日の縞を描く、いちばん長い範囲（日） */
+const BAND_DAYS_MAX = 45;
 /** ドラッグとみなす動きの幅（px）。これより小さい動きは、タップ */
 const DRAG_PX = 6;
 
@@ -205,6 +208,17 @@ export function Timeline({ panels, medications, events, encounterStart, encounte
   if (evsIn.length > 0) y += SECTION_H + LANE_H;
   const height = y + 6;
 
+  // 日の縞：日の番号（時刻を1日の長さで割った数）が奇数の日だけ。横に動かしても、同じ日は同じ地のまま
+  const dayBands: { from: number; to: number }[] = [];
+  if (span <= BAND_DAYS_MAX * DAY_MS) {
+    for (let d = Math.floor(domain[0] / DAY_MS); d * DAY_MS < domain[1]; d += 1) {
+      if (d % 2 === 0) continue;
+      const from = Math.max(GUTTER, x(d * DAY_MS));
+      const to = Math.min(GUTTER + plotW, x((d + 1) * DAY_MS));
+      if (to > from) dayBands.push({ from, to });
+    }
+  }
+
   const hoverX = hover === null ? null : x(hover);
   const rows: HoverRow[] = [];
   let hoverLabel = '';
@@ -307,33 +321,42 @@ export function Timeline({ panels, medications, events, encounterStart, encounte
             {RANGE_PRESET_NAMES[p]}
           </button>
         ))}
+      </div>
+      <div className="range-row">
+        <p className="range-label" data-testid="range-label">
+          {rangeText(domain)}
+        </p>
         <span className="range-steps">
-          <button type="button" className="chip small" aria-label="前へ" onClick={() => { step(-1); }} data-testid="range-prev">
-            ◀
+          <button type="button" className="chip small icon-only" aria-label="前へ" onClick={() => { step(-1); }} data-testid="range-prev">
+            <Icon name="back" />
           </button>
-          <button type="button" className="chip small" aria-label="縮小（広く）" onClick={() => { zoom(2); }} data-testid="range-out">
+          <button type="button" className="chip small icon-only" aria-label="縮小（広く）" onClick={() => { zoom(2); }} data-testid="range-out">
             －
           </button>
-          <button type="button" className="chip small" aria-label="拡大（狭く）" onClick={() => { zoom(0.5); }} data-testid="range-in">
+          <button type="button" className="chip small icon-only" aria-label="拡大（狭く）" onClick={() => { zoom(0.5); }} data-testid="range-in">
             ＋
           </button>
-          <button type="button" className="chip small" aria-label="次へ" onClick={() => { step(1); }} data-testid="range-next">
-            ▶
+          <button type="button" className="chip small icon-only" aria-label="次へ" onClick={() => { step(1); }} data-testid="range-next">
+            <Icon name="chevron" />
           </button>
         </span>
       </div>
-      <p className="range-label" data-testid="range-label">
-        {rangeText(domain)}
-      </p>
       <svg ref={svgRef} width={width} height={height} role="img" aria-label={`経過表：${inRange.map((p) => p.name).join('・')}${medsIn.length > 0 ? '・投薬' : ''}${evsIn.length > 0 ? '・できごと' : ''}`}>
+        {/* 日の縞（段K）：日の境を見やすくするだけの、1日おきの薄い地。値・時間帯の意味はない。日数の多い範囲では描かない */}
+        {dayBands.map((b) => (
+          <rect key={b.from} x={b.from} y={AXIS_H - 4} width={b.to - b.from} height={height - AXIS_H - 2} className="day-band" />
+        ))}
         {/* 日の目盛り（縦の細線）と、日付・病日 */}
         {ticks.map((tk) => (
           <g key={tk.t}>
             <line x1={x(tk.t)} x2={x(tk.t)} y1={AXIS_H - 4} y2={height - 6} className={tk.kind === 'day' ? 'gridline' : 'gridline faint'} />
-            <text x={x(tk.t) + 3} y={13} className="axis-text">
-              {tk.label}
-            </text>
-            {tk.hospitalDay !== null && (
+            {/* 右の端の目盛りは、字が枠の外へ出るので、線だけ */}
+            {x(tk.t) <= GUTTER + plotW - 28 && (
+              <text x={x(tk.t) + 3} y={13} className="axis-text">
+                {tk.label}
+              </text>
+            )}
+            {tk.hospitalDay !== null && x(tk.t) <= GUTTER + plotW - 28 && (
               <text x={x(tk.t) + 3} y={26} className="axis-text muted">
                 {`${String(tk.hospitalDay)}病日`}
               </text>
@@ -352,7 +375,8 @@ export function Timeline({ panels, medications, events, encounterStart, encounte
           const path = points.map((pt, i) => `${i === 0 ? 'M' : 'L'}${String(x(pt.t))},${String(yOf(pt.value))}`).join(' ');
           return (
             <g key={p.key} data-testid={`panel-${p.key}`}>
-              <text x={0} y={top - 11} className="panel-title">
+              <circle cx={5} cy={top - 15} r={4.5} className={`dot ${cls}`} />
+              <text x={15} y={top - 11} className="panel-title">
                 {p.name}
                 <tspan className="panel-unit">{` ${p.unit}`}</tspan>
                 {latest !== null && <tspan className="panel-latest">{`\u3000最新 ${latest.text}（${shortWhen(latest.at, latest)}${untimedSameDay(p.points, latest) ? '・同じ日に時刻のない値あり' : ''}）`}</tspan>}
@@ -366,7 +390,11 @@ export function Timeline({ panels, medications, events, encounterStart, encounte
                   </text>
                 </g>
               ))}
-              <g clipPath={`url(#${clipId})`}>
+              {/* 段ごとの切り抜き：範囲の外の点へ伸びる線が、上下の段・見出しに重ならないように */}
+              <clipPath id={`${clipId}-${p.key.replace(/[^a-zA-Z0-9_-]/g, '')}`}>
+                <rect x={GUTTER - 6} y={top - 6} width={plotW + 12} height={PLOT_H + 12} />
+              </clipPath>
+              <g clipPath={`url(#${clipId}-${p.key.replace(/[^a-zA-Z0-9_-]/g, '')})`}>
               {p.id === 'bp' ? (
                 points.map((pt) =>
                   pt.low === undefined ? (

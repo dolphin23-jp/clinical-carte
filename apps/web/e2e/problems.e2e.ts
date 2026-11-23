@@ -301,7 +301,9 @@ describe('問題の記載に書かれた値・薬（段3c）と、回診リス�
     await page.getByTestId('back').click();
     const row = page.getByTestId('patient').first();
     await row.waitFor();
-    expect(await row.getByTestId('round-problems').textContent()).toBe('3病日（記録の上で）#1 市中肺炎、#2 低Na血症');
+    // 段K：病日の札と、問題ごとの札（名前は、これまでどおり）
+    expect(await row.getByTestId('round-day').textContent()).toBe('3病日（記録の上で）');
+    expect(await row.getByTestId('round-problem').allTextContents()).toEqual(['#1 市中肺炎', '#2 低Na血症']);
     expect(await row.textContent()).toContain('記録の上で最後：2026-11-19 09:00');
     expect(await page.getByTestId('round-active').count()).toBe(1);
     expect(await fits(page)).toBe(true);

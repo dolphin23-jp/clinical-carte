@@ -57,7 +57,7 @@ async function register(page: Page, key = TEST_KEY): Promise<void> {
   await page.getByTestId('register').click();
 }
 
-/** 登録した端末の一覧は、患者の一覧の下のボタンで開く */
+/** 登録した端末の一覧は、患者の一覧の下の「道具と設定」のボタンで開く */
 async function showDevices(page: Page): Promise<void> {
   await page.getByTestId('home').waitFor();
   await page.getByTestId('show-devices').click();

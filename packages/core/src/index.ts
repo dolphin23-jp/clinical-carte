@@ -24,3 +24,4 @@ export * from './notes/ap.ts';
 export * from './views/window.ts';
 export * from './notes/document.ts';
 export * from './problems/list.ts';
+export * from './views/lanes.ts';
