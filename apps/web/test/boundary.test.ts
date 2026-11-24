@@ -99,10 +99,25 @@ describe('相談の窓口の境界（段M。CA-081）', () => {
 
   test('送る前に、問い・前のやりとりの識別情報の形を確かめる（サーバーと同じ関数）。「臨床支援の草案・最終判断は先生」をいつも出す', () => {
     expect(text.indexOf('consultHasShapes({ question, turns })')).toBeGreaterThan(-1);
-    expect(text.indexOf('consultHasShapes({ question, turns })')).toBeLessThan(text.indexOf('consultPatient(patientId'));
+    expect(text.indexOf('consultHasShapes({ question, turns })')).toBeLessThan(text.search(/void consultPatient\(/u));
+    expect(text.search(/void consultPatient\(/u)).toBeGreaterThan(-1);
     expect(text).toContain('臨床支援の草案です。最終判断は先生です。');
     // 外へのリンクを作らない（出典は字で出す）
     expect(text).not.toMatch(/<a\b|href=/u);
+  });
+
+  test('答えの文を使う先（段M2。CA-082）：記載へは、画面のメモリの候補に入れるだけ（保存の通信をしない）。指示簿へは、決めた1つの形（AI の案）でだけ足す', () => {
+    // 窓口から呼ぶ保存の通信は、残す・直す・消す（相談の答え）と、指示簿に足す、だけ。カルテ記載の保存は、カルテ記載の画面の「保存する」だけ
+    expect(text).not.toMatch(/\b(saveDocument|patchDocument|saveHandoff|addApNotes|addSource)\b/u);
+    expect(text.match(/addOrders\(/gu)).toHaveLength(1);
+    expect(text).toContain('addOrders(encounterId, [consultOrderNew(statement, category, text)])');
+    // 途中の文（確かめた後の文）には、入れるボタンを出さない
+    expect(text).toContain('onOpenSource={onOpenSource} targets={null} />');
+    // カルテ記載の画面：候補を足すのは下書き（setWork）だけで、足すときに保存の通信をしない
+    const doc = code(files.find((f) => f.rel === 'DocumentView.tsx')?.text ?? '');
+    const insert = doc.slice(doc.indexOf('const insertPick ='), doc.indexOf('const save = () =>'));
+    expect(insert).toContain("origin: 'ai', edited: true, dirty: true");
+    expect(insert).not.toMatch(/saveDocument|patchDocument|fetch|await /u);
   });
 });
 

@@ -3,6 +3,8 @@
 //   「（推論）」・※・答えられなかったこと・出さなかった数・検索に渡した語が出る。続けて相談すると、前のやりとりを踏まえる。
 //   「この答えを残す」を押した答えだけが残る（問いは、どの表にも残らない）。残した答えは消せる。横にはみ出さない
 // - 広い画面：右に並ぶ（記録を見ながら相談する）。根拠の記載の札を押すと、記録のタブでその記載が開く。窓口は開いたまま
+// - 段M2（CA-082〜CA-085）：答えの文を「記載へ」（カルテ記載の下書きの見出しに足す。残るのは「保存する」を押したとき）・「指示簿へ」（欄を選び、字を確かめて。AI の案の印）。
+//   残した答えを直す（「先生が直した」の印）。前の受診の記録も資料にする。答えは、確かめた文から順に届く
 // AI と RAG は試験の代役。文はすべて架空（synthetic）
 import type { OrganizeAnswer } from '@clinical-carte/core';
 import type { Browser, BrowserContext, Page } from 'playwright-core';
@@ -305,6 +307,142 @@ describe('相談の窓口（段M）：広い画面', () => {
     // 閉じると、中身は元の幅に戻る
     await dock.getByTestId('consult-close').click();
     expect(await page.getByTestId('consult-dock').count()).toBe(0);
+    expect(problems).toEqual([]);
+  });
+});
+
+describe('相談の窓口（段M2）：答えを使う', () => {
+  test('「記載へ」：候補にためて、カルテ記載の下書きの見出しに足す。足しただけでは残らず、「保存する」を押すと「AI が書いて先生が直した」で残る', async () => {
+    const page = await openWithNote(false);
+    await page.getByTestId('fab-consult').click();
+    const panel = page.getByTestId('consult');
+    await panel.getByTestId('consult-question').fill('全体の方針をまとめて');
+    await panel.getByTestId('consult-send').click();
+    const statements = panel.getByTestId('consult-statement');
+    await expect.poll(() => statements.count(), { timeout: 10_000 }).toBe(5);
+    // 書籍の出典つきの文（確かめる検査）と、※のある文（注意すること）を、候補に入れる
+    await statements.nth(2).getByTestId('consult-to-note').click();
+    await statements.nth(4).getByTestId('consult-to-note').click();
+    expect(await statements.nth(2).getByTestId('consult-to-note').getAttribute('aria-pressed')).toBe('true');
+    expect(await panel.getByTestId('consult-tray').textContent()).toContain('2 件');
+    expect(server.db.raw.prepare('SELECT count(*) AS n FROM documents').get()).toEqual({ n: 0 });
+    if (SHOTS !== undefined) await page.screenshot({ path: `${SHOTS}/consult-to-note.png` });
+
+    // カルテ記載を開く（狭い画面では、窓口は閉じる。候補は残る）
+    await panel.getByTestId('consult-open-document').click();
+    await page.getByTestId('doc-view').first().waitFor();
+    expect(await page.getByTestId('doc-pick-tray').textContent()).toContain('2 件');
+    // 見出しだけで書き始め、見出しを選んで足す
+    await page.getByTestId('doc-blank').click();
+    const sections = page.getByTestId('doc-section');
+    const last = sections.last();
+    await last.getByTestId('doc-picks').locator('summary').click();
+    await last.getByTestId('doc-pick-insert').first().click();
+    expect(await last.textContent()).toContain('胸部画像で浸潤影の有無を確かめる。');
+    expect(await last.textContent()).toContain('書籍 架空の内科学');
+    // AI の文が入ったので、印は「AI が書いて先生が直した」。足しただけでは、どの表にも残らない
+    expect(await page.getByTestId('doc-origin').textContent()).toBe('AI が書いて先生が直した');
+    expect(await page.getByTestId('doc-pick-tray').textContent()).toContain('1 件');
+    expect(server.db.raw.prepare('SELECT count(*) AS n FROM documents').get()).toEqual({ n: 0 });
+    // もう1つは、候補から外す
+    await page.getByTestId('doc-pick-drop').click();
+    expect(await page.getByTestId('doc-pick-tray').count()).toBe(0);
+    expect(await fits(page)).toBe(true);
+    if (SHOTS !== undefined) await page.getByTestId('doc').screenshot({ path: `${SHOTS}/consult-in-document.png` });
+
+    // 保存する：選別を通して残る（AI が書いて先生が直した・出典の参照つき）
+    await page.getByTestId('doc-save').click();
+    await expect.poll(() => page.getByTestId('doc-state').textContent(), { timeout: 10_000 }).toBe('保存しました');
+    const rows = server.db.raw.prepare('SELECT origin, sections FROM documents').all() as { origin: string; sections: string }[];
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.origin).toBe('ai_edited');
+    expect(rows[0]?.sections).toContain('胸部画像で浸潤影の有無を確かめる。');
+    expect(rows[0]?.sections).toContain('架空の内科学');
+    expect(problems).toEqual([]);
+  });
+
+  test('「指示簿へ」：欄を選び、字を確かめてから入れる。「AI の案」の印と根拠が付く。残した答えは直せる（「先生が直した」の印）', async () => {
+    const page = await openWithNote(false);
+    await page.getByTestId('fab-consult').click();
+    const panel = page.getByTestId('consult');
+    await panel.getByTestId('consult-question').fill('全体の方針をまとめて');
+    await panel.getByTestId('consult-send').click();
+    const statements = panel.getByTestId('consult-statement');
+    await expect.poll(() => statements.count(), { timeout: 10_000 }).toBe(5);
+
+    // 注意すること（※のある文）を、医師コール基準の欄へ
+    const caution = statements.nth(4);
+    await caution.getByTestId('consult-to-order').click();
+    const form = caution.getByTestId('consult-order-form');
+    expect(await form.getByTestId('consult-order-category').inputValue()).toBe('call');
+    expect(await form.getByTestId('consult-order-text').inputValue()).toBe('呼吸数が 30 回を超えるようなら、再評価する。');
+    await form.getByTestId('consult-order-text').fill('呼吸数 30 回/分 以上で医師コール');
+    expect(server.db.raw.prepare('SELECT count(*) AS n FROM order_sheets').get()).toEqual({ n: 0 });
+    if (SHOTS !== undefined) await caution.screenshot({ path: `${SHOTS}/consult-to-order.png` });
+    await form.getByTestId('consult-order-add').click();
+    await expect.poll(() => caution.getByTestId('consult-ordered').count(), { timeout: 10_000 }).toBe(1);
+    const sheet = server.db.raw.prepare('SELECT items FROM order_sheets').get() as { items: string };
+    const items = JSON.parse(sheet.items) as { category: string; text: string; origin: string; unseen: string[]; basis: unknown[] }[];
+    expect(items).toHaveLength(1);
+    expect(items[0]).toMatchObject({ category: 'call', text: '呼吸数 30 回/分 以上で医師コール', origin: 'ai', unseen: ['30'] });
+    // 指示簿で、AI の案の印が付いて見える
+    await page.getByTestId('tab-course').click();
+    await page.getByTestId('tab-orders').click();
+    await page.getByTestId('orders').waitFor();
+    // 資料・出典に見つからなかった数（30）には、指示簿でも ※ が付く（消さない）
+    expect(await page.getByTestId('order-item').first().textContent()).toContain('呼吸数 30※ 回/分 以上で医師コール');
+    expect(await page.getByTestId('order-origin').first().textContent()).toContain('AI の案');
+
+    // 答えを残して、直す
+    await page.getByTestId('fab-consult').click();
+    await panel.getByTestId('consult-keep').click();
+    const kept = panel.getByTestId('consult-kept');
+    await expect.poll(() => kept.count(), { timeout: 10_000 }).toBe(1);
+    expect(await kept.getByTestId('consult-kept-label').textContent()).toBe('AI の相談');
+    await kept.locator('summary').click();
+    await kept.getByTestId('consult-kept-edit').click();
+    await kept.getByTestId('consult-kept-edit-text').fill('・まず胸部画像を確かめ、重症度を評価する（架空・先生が直した字）');
+    await kept.getByTestId('consult-kept-edit-save').click();
+    await expect.poll(() => kept.getByTestId('consult-kept-label').textContent(), { timeout: 10_000 }).toBe('AI の相談（先生が直した）');
+    expect(await kept.getByTestId('consult-kept-text').textContent()).toContain('先生が直した字');
+    expect(server.db.raw.prepare('SELECT edited FROM consult_notes').all()).toEqual([{ edited: 1 }]);
+    expect(server.db.raw.prepare('SELECT action FROM consult_note_history ORDER BY id').all()).toEqual([{ action: 'add' }, { action: 'edit' }]);
+    expect(await fits(page)).toBe(true);
+    expect(problems).toEqual([]);
+  });
+
+  test('前の受診があれば、その記録も資料にできる（既定は入れる。外せる）。資料の範囲を、答えの下に出す', async () => {
+    const page = await openWithNote(false);
+    // 架空の前の受診と記載を、API から足す（画面の操作は、ほかの E2E が確かめている）
+    const patientId = (server.db.raw.prepare('SELECT id FROM patients').get() as { id: string }).id;
+    await page.evaluate(async (id) => {
+      const post = async (path: string, body: unknown): Promise<Record<string, { id: string }>> => {
+        const r = await fetch(path, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+        return (await r.json()) as Record<string, { id: string }>;
+      };
+      const made = await post(`/api/patients/${id}/encounters`, { kind: 'outpatient', start: '2026-10-01T09:00' });
+      await post(`/api/encounters/${made['encounter']?.id ?? ''}/sources`, { kind: 'outpatient_first', authorRole: 'self', at: '2026-10-01T09:30', text: '健診で胸部異常影を指摘された（架空の前の受診）。' });
+    }, patientId);
+    // 読み込み直すと、患者の一覧に戻る（端末に、開いていた患者を覚えさせていない）
+    await page.reload();
+    await page.getByTestId('patient').first().click();
+    await page.getByTestId('patient-page').waitFor();
+    await page.getByTestId('fab-consult').click();
+    const panel = page.getByTestId('consult');
+    expect(await panel.getByTestId('consult-past').isChecked()).toBe(true);
+    await panel.getByTestId('consult-question').fill('全体の方針をまとめて');
+    await panel.getByTestId('consult-send').click();
+    await expect.poll(() => panel.getByTestId('consult-scope').count(), { timeout: 10_000 }).toBe(1);
+    expect(await panel.getByTestId('consult-scope').textContent()).toContain('資料にした記載：2 件（前の受診を含む、受診 2 回の分）');
+    expect(organizer.consulted.at(-1)).toContain('胸部異常影');
+
+    await panel.getByTestId('consult-reset').click();
+    await panel.getByTestId('consult-past').uncheck();
+    await panel.getByTestId('consult-question').fill('全体の方針をまとめて');
+    await panel.getByTestId('consult-send').click();
+    await expect.poll(() => panel.getByTestId('consult-scope').count(), { timeout: 10_000 }).toBe(1);
+    expect(await panel.getByTestId('consult-scope').textContent()).toContain('資料にした記載：1 件（いまの受診の分）');
+    expect(organizer.consulted.at(-1)).not.toContain('胸部異常影');
     expect(problems).toEqual([]);
   });
 });

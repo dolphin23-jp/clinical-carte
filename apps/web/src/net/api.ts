@@ -50,10 +50,13 @@ import type {
   SourceKind,
   SupportBody,
   AskReply,
+  ConsultEvent,
   ConsultNote,
   ConsultNoteNew,
   ConsultReply,
   ConsultRequest,
+  ConsultStage,
+  ConsultStatement,
   PendingBody,
   PendingMark,
   PlanBody,
@@ -913,14 +916,73 @@ export async function askRecord(patientId: string, question: string): Promise<Re
 /** 待つ時間の上限：検索の語・ネットの出典・答えの3回を待つ */
 export const CONSULT_TIMEOUT_MS = 420_000;
 
-/** 相談する（保存しない。問い・前のやりとり・答えは、画面のメモリだけ）。書籍・ネットの検索に渡るのは、問題の名前と、問いの一般的な語だけ */
-export async function consultPatient(patientId: string, request: ConsultRequest): Promise<Result<ConsultReply>> {
-  return field<ConsultReply>(await call('POST', `patients/${encodeURIComponent(patientId)}/consult`, request, CONSULT_TIMEOUT_MS), 'answer');
+/**
+ * 相談する（保存しない。問い・前のやりとり・答えは、画面のメモリだけ）。書籍・ネットの検索に渡るのは、問題の名前と、問いの一般的な語だけ。
+ * 答えは、少しずつ受け取る（CA-085）：いま何をしているか（onStage）と、サーバーが確かめた後の文（onStatement。書かれた順）。
+ * 最後の答え（見出しの順に並べ直したもの）が、戻り値。確かめる前の字は、サーバーから届かない
+ */
+export async function consultPatient(
+  patientId: string,
+  request: Omit<ConsultRequest, 'stream'>,
+  on: { readonly onStage: (stage: ConsultStage) => void; readonly onStatement: (statement: ConsultStatement) => void },
+): Promise<Result<ConsultReply>> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => {
+    controller.abort();
+  }, CONSULT_TIMEOUT_MS);
+  try {
+    const response = await fetch(`/api/patients/${encodeURIComponent(patientId)}/consult`, {
+      method: 'POST',
+      credentials: 'same-origin',
+      cache: 'no-store',
+      redirect: 'error',
+      signal: controller.signal,
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ ...request, stream: true }),
+    });
+    const known = (name: unknown): ApiError => KNOWN.find((k) => k === name) ?? 'server';
+    if (!response.ok || response.body === null) {
+      const data: unknown = await response.json().catch(() => null);
+      return { ok: false, error: isRecord(data) ? known(data['error']) : 'server' };
+    }
+    // 1行に1つの JSON（届いた順に読む。行の途中で切れた分は、次の分とつなぐ）
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let rest = '';
+    const got: { result: Result<ConsultReply> | null } = { result: null };
+    const take = (line: string): void => {
+      if (line.trim() === '') return;
+      const event = JSON.parse(line) as ConsultEvent;
+      if ('stage' in event) on.onStage(event.stage);
+      else if ('statement' in event) on.onStatement(event.statement);
+      else if ('done' in event) got.result = { ok: true, value: event.done };
+      else got.result = { ok: false, error: known(event.error) };
+    };
+    for (;;) {
+      const { done, value } = await reader.read();
+      rest += decoder.decode(value ?? new Uint8Array(), { stream: !done });
+      const lines = rest.split('\n');
+      rest = lines.pop() ?? '';
+      for (const line of lines) take(line);
+      if (done) break;
+    }
+    take(rest);
+    return got.result ?? { ok: false, error: 'network' };
+  } catch {
+    return { ok: false, error: 'network' };
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 /** 答えを残す（先生が「残す」を押したものだけ。サーバーで選別を通す。問いの文は送らない） */
 export async function addConsultNote(patientId: string, note: ConsultNoteNew): Promise<Result<null>> {
   return done(await call('POST', `patients/${encodeURIComponent(patientId)}/consult-notes`, note));
+}
+
+/** 残した答えを直す（CA-083。サーバーで選別を通す。「先生が直した」の印が付く） */
+export async function patchConsultNote(id: string, text: string): Promise<Result<null>> {
+  return done(await call('PATCH', `consult-notes/${encodeURIComponent(id)}`, { text }));
 }
 
 export async function deleteConsultNote(id: string): Promise<Result<null>> {

@@ -528,7 +528,7 @@ function toConsultNote(row: Row): ConsultNote | null {
   const body = text(row, 'text');
   const enteredAt = text(row, 'entered_at');
   if (id === null || mode === undefined || body === null || enteredAt === null) return null;
-  return { id, mode, text: body, refs: refsOf(row), enteredAt };
+  return { id, mode, text: body, refs: refsOf(row), enteredAt, edited: int(row, 'edited') === 1, updatedAt: text(row, 'updated_at') ?? enteredAt };
 }
 
 function toApNote(row: Row): ApNote | null {
@@ -936,7 +936,7 @@ export async function getRecord(db: Db, id: string): Promise<PatientRecord | nul
     casebookLinks(db, id),
     db.prepare('SELECT encounter_id, items, updated_at FROM order_sheets WHERE patient_id = ? ORDER BY encounter_id').bind(id).all(),
     listOrderTemplates(db),
-    db.prepare('SELECT id, mode, text, refs, entered_at FROM consult_notes WHERE patient_id = ? ORDER BY entered_at DESC, id DESC LIMIT 100').bind(id).all(),
+    db.prepare('SELECT id, mode, text, refs, entered_at, edited, updated_at FROM consult_notes WHERE patient_id = ? ORDER BY entered_at DESC, id DESC LIMIT 100').bind(id).all(),
   ]);
   return {
     patient,
@@ -1009,7 +1009,7 @@ export async function setEncounterEnd(db: Db, id: string, end: string | null): P
 export const FACT_TABLES = ['observations', 'segments', 'medications', 'events', 'problems', 'course_items'] as const;
 
 /** 患者に付く、文からではない行の表（患者を消すと、一緒に消える。文を消しても残る：筋は、記載がなくなると見えなくなるだけ） */
-export const PATIENT_TABLES = ['problem_threads', 'history', 'fact_edits', 'user_edits', 'ap_notes', 'ap_history', 'documents', 'document_history', 'handoffs', 'problem_lists', 'problem_list_edits', 'clinical_support', 'pending_results', 'pending_result_edits', 'plan_checks', 'plan_check_edits', 'casebook_links', 'order_sheets', 'order_edits', 'consult_notes'] as const;
+export const PATIENT_TABLES = ['problem_threads', 'history', 'fact_edits', 'user_edits', 'ap_notes', 'ap_history', 'documents', 'document_history', 'handoffs', 'problem_lists', 'problem_list_edits', 'clinical_support', 'pending_results', 'pending_result_edits', 'plan_checks', 'plan_check_edits', 'casebook_links', 'order_sheets', 'order_edits', 'consult_notes', 'consult_note_history'] as const;
 
 /** 問題の行を、表から読む */
 export function problemOf(row: Record<string, unknown>): Problem | null {

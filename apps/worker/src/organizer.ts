@@ -46,7 +46,7 @@ export interface Organizer {
   /** 相談の窓口（段M。CA-081）の、外の検索の語：先生の問いと問題の名前（JSON。core の consultTermsMessage が作る）から、一般的な語だけ。記録は送らない。例外を投げない */
   consultTerms(message: string): Promise<ConsultTermsResult>;
   /** 相談の窓口（段M。CA-081）：資料・出典・前のやりとり・先生の問い（JSON。core の consultMessage が作る）から、根拠の記号つきの答え。保存しない。例外を投げない */
-  consult(message: string): Promise<ConsultResult>;
+  consult(message: string, onText?: (snapshot: string) => void): Promise<ConsultResult>;
   /** 指示簿を写す（段K11。CA-074）：保存した記載の字（JSON。core の transcribeMessage が作る）から、指示ごとの欄と引用だけ。文を書かない。例外を投げない */
   orderTranscribe(message: string): Promise<TranscribeResult>;
   /** 指示簿の案（段K11。CA-076）：記録の資料・臨床支援・テンプレ・いまの指示（JSON。core の proposeMessage が作る）から、欄ごとの案と根拠の記号。保存しない。例外を投げない */

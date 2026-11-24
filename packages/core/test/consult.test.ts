@@ -1,4 +1,5 @@
 // 相談の窓口（段M。CA-081）：資料の合成・外の検索に渡す語の確かめ・答えの確かめ（記号・用量と閾値・点数・「（推論）」・※・識別情報の形）・残す文。
+// 段M2（CA-082〜CA-085）：途中の答えからの取り出し・文ごとの確かめ・前の受診の範囲・残した答えの印・記載の下書きと指示簿への項目。
 // AI の答えは試験の代役。架空（synthetic）。
 import fc from 'fast-check';
 import { describe, expect, test } from 'vitest';
@@ -8,6 +9,7 @@ import {
   askNoteRefs,
   askNoteText,
   checkConsult,
+  checkConsultStatement,
   cleanTerms,
   CONSULT_NOTE_MAX,
   CONSULT_STATEMENTS_MAX,
@@ -17,11 +19,18 @@ import {
   consultHasShapes,
   consultMaterial,
   consultMessage,
+  consultNoteLabel,
+  ConsultNotePatch,
+  consultOrderNew,
+  consultOrderText,
+  consultPick,
   ConsultNoteNew,
   consultNoteRefs,
   consultNoteText,
   ConsultRequest,
   consultTermsMessage,
+  OrderNew,
+  partialStatements,
   type ListItem,
   type RefSource,
   type SupportInput,
@@ -179,10 +188,10 @@ describe('確かめ（checkConsult）', () => {
 
 describe('頼みの形と、残す文', () => {
   test('問いは空・長すぎを受けない。前のやりとりは 6 つまで。問い・やりとりに識別情報の形があれば送らない', () => {
-    expect(ConsultRequest.safeParse({ question: ' ', turns: [], web: false }).success).toBe(false);
-    expect(ConsultRequest.safeParse({ question: 'あ'.repeat(801), turns: [], web: false }).success).toBe(false);
-    expect(ConsultRequest.safeParse({ question: '方針は？', turns: Array.from({ length: 7 }, () => ({ question: 'q', answer: 'a' })), web: false }).success).toBe(false);
-    expect(ConsultRequest.safeParse({ question: '方針は？', turns: [], web: true, extra: 1 }).success).toBe(false);
+    expect(ConsultRequest.safeParse({ question: ' ', turns: [], web: false, past: false }).success).toBe(false);
+    expect(ConsultRequest.safeParse({ question: 'あ'.repeat(801), turns: [], web: false, past: false }).success).toBe(false);
+    expect(ConsultRequest.safeParse({ question: '方針は？', turns: Array.from({ length: 7 }, () => ({ question: 'q', answer: 'a' })), web: false, past: false }).success).toBe(false);
+    expect(ConsultRequest.safeParse({ question: '方針は？', turns: [], web: true, past: false, extra: 1 }).success).toBe(false);
     expect(consultHasShapes({ question: '方針は？', turns: [] })).toBe(false);
     expect(consultHasShapes({ question: '方針は？', turns: [{ question: 'q', answer: 'test@example.com に連絡' }] })).toBe(true); // phi-guard: allow 架空のメール（形の検査の試験）
   });
@@ -204,5 +213,117 @@ describe('頼みの形と、残す文', () => {
     expect(askNoteRefs(reply)).toEqual([{ k: 'record', sourceId: '01JD8Q4X2M5N7P9R3T6V8W0Y1Z', start: 3, end: 11 }]); // phi-guard: allow 架空の ULID（患者の番号ではない）
     expect(ConsultNoteNew.safeParse({ mode: 'record', text: askNoteText(reply), refs: askNoteRefs(reply) }).success).toBe(true);
     expect(ConsultNoteNew.safeParse({ mode: 'consult', text: '', refs: [] }).success).toBe(false);
+  });
+});
+
+describe('前の受診の記録も資料にする（CA-084）', () => {
+  const ER = 'enc-er-old';
+  const PAST: AskInput = {
+    ...ASK,
+    encounters: [{ id: ER, kind: 'outpatient', start: '2026-10-01T09:00', end: '2026-10-01T10:00' }, ...ASK.encounters],
+    sources: [{ id: 's0', encounterId: ER, kind: 'outpatient_first', authorRole: 'self', at: '2026-10-01T09:30', text: '【外来】健診で胸部異常影を指摘。喫煙 40 本×30 年。' }, ...ASK.sources],
+    events: [{ sourceId: 's0', encounterId: ER, kind: 'test', title: '胸部X線', at: '2026-10-01T09:30', start: 0, end: 4 }, ...ASK.events],
+  };
+
+  test('選ばなければ、いまの受診（と直前の救急）だけ。選ぶと、すべての受診の記載とできごとが入り、記載に、どの受診かを添える', () => {
+    const now = consultMaterial({ support: SUPPORT, ask: PAST });
+    expect(now.records).toBe(2);
+    expect(now.encounters).toBe(1);
+    expect(JSON.stringify(now.payload)).not.toContain('胸部異常影');
+
+    const all = consultMaterial({ support: SUPPORT, ask: PAST }, { past: true });
+    expect(all.records).toBe(3);
+    expect(all.encounters).toBe(2);
+    const records = all.payload['records'] as { ref: string; text: string; encounter: string }[];
+    expect(records.map((r) => r.ref)).toEqual(['R1', 'R2', 'R3']);
+    expect(records[0]?.text).toContain('胸部異常影');
+    expect(records[0]?.encounter).toBe('外来 2026-10-01 09:00〜');
+    expect(records[2]?.encounter).toContain('入院');
+    expect((all.payload['events'] as unknown[]).length).toBe(2);
+    expect(all.recordSources.get('R1')).toBe('s0');
+    // 前の受診の記載の数も、照らし合わせの数に入る（※が付かない）
+    const r = checkConsult({ statements: [st({ text: '喫煙は 40 本を 30 年と書かれている', support: ['R1'] })], unknown: '' }, all, []);
+    expect(r.statements[0]?.marks).toEqual([]);
+    expect(checkConsult({ statements: [st({ text: '喫煙は 40 本を 30 年と書かれている', support: ['R1'] })], unknown: '' }, now, []).statements[0]?.marks.length).toBeGreaterThan(0);
+  });
+});
+
+describe('少しずつ出す（CA-085）：書き終えた文だけを取り出し、同じ確かめを通す', () => {
+  const answer: ConsultAnswer = {
+    statements: [
+      st({ section: 'summary', text: '発熱と CRP 12.3 の高値。"引用符" や { かっこ } ] \\ も字として読む', support: ['V1', 'R1'] }),
+      st({ section: 'treatment', text: 'セフトリアキソン 4 g/日 に増やす', support: ['M1'] }),
+      st({ section: 'workup', text: '臨床の改善を見て、経口へ切り替える', citations: ['B1'] }),
+    ],
+    unknown: '培養の結果は、記載がない',
+  };
+  const json = JSON.stringify(answer);
+
+  test('途中までの字からは、閉じた文だけ。最後まで届けば、全部。順は書かれたまま', () => {
+    expect(partialStatements('')).toEqual([]);
+    expect(partialStatements('{"statements":[')).toEqual([]);
+    const first = json.indexOf('},{') + 1;
+    expect(partialStatements(json.slice(0, first - 1))).toEqual([]);
+    expect(partialStatements(json.slice(0, first))).toEqual([answer.statements[0]]);
+    expect(partialStatements(json)).toEqual(answer.statements);
+    // 形の合わない文があれば、そこで止める（順を飛ばさない）
+    expect(partialStatements('{"statements":[{"section":"summary","text":"a","support":[],"citations":[]},{"section":"x"},{"section":"summary","text":"b","support":[],"citations":[]}]}')).toHaveLength(1);
+  });
+
+  test('どこで切っても、取り出した文は、答えの文の先頭からの並び（途中の字・あとの字が混ざらない）', () => {
+    const text = fc.string({ maxLength: 40 });
+    const ids = fc.array(fc.constantFrom('V1', 'R1', 'B1', 'X9'), { maxLength: 3 });
+    const statement = fc.record({ section: fc.constantFrom('summary', 'assessment', 'workup', 'treatment', 'caution', 'other'), text, support: ids, citations: ids });
+    fc.assert(
+      fc.property(fc.array(statement, { maxLength: 5 }), text, fc.nat(), fc.boolean(), (statements, unknown, cut, pretty) => {
+        const whole = JSON.stringify({ statements, unknown }, null, pretty ? 2 : 0);
+        const got = partialStatements(whole.slice(0, cut % (whole.length + 1)));
+        expect(got).toEqual(statements.slice(0, got.length));
+        expect(partialStatements(whole)).toEqual(statements);
+      }),
+      { numRuns: 300 },
+    );
+  });
+
+  test('文ごとの確かめは、まとめての確かめと同じ結果（用量のある出典なしの文は出さない・「（推論）」・※）', () => {
+    const whole = checkConsult(answer, material, [BOOK]);
+    const each = answer.statements.map((x) => checkConsultStatement(x, material, [BOOK]));
+    expect(each.map((c) => c.statement === null)).toEqual([false, true, false]);
+    expect(each[1]?.reasons).toEqual(['dose']);
+    expect(each[0]?.statement?.text.endsWith('（推論）')).toBe(true);
+    expect(each[2]?.statement?.inferred).toBe(false);
+    // まとめての確かめは、通った文を見出しの順に並べたもの
+    expect(whole.statements).toEqual([each[0]?.statement, each[2]?.statement]);
+    expect(whole.rejected).toEqual({ dose: 1 });
+  });
+});
+
+describe('残した答えを直す（CA-083）と、記載の下書き・指示簿へ入れる（CA-082）', () => {
+  test('直した答えには「（先生が直した）」。直す字は、空・長すぎを受けない', () => {
+    expect(consultNoteLabel({ mode: 'consult', edited: false })).toBe('AI の相談');
+    expect(consultNoteLabel({ mode: 'consult', edited: true })).toBe('AI の相談（先生が直した）');
+    expect(consultNoteLabel({ mode: 'record', edited: true })).toBe('AI が記録から答えた（先生が直した）');
+    expect(ConsultNotePatch.safeParse({ text: ' ' }).success).toBe(false);
+    expect(ConsultNotePatch.safeParse({ text: 'あ'.repeat(CONSULT_NOTE_MAX + 1) }).success).toBe(false);
+    expect(ConsultNotePatch.safeParse({ text: '直した字', mode: 'record' }).success).toBe(false);
+    expect(ConsultNotePatch.safeParse({ text: '直した字' }).success).toBe(true);
+  });
+
+  test('記載の下書きの候補：※は字に入れ、出典の参照を付ける。指示簿の項目：「AI の案」・根拠の名前・字に残っている※の数だけ', () => {
+    const checked = checkConsult({ statements: [st({ section: 'caution', text: '呼吸数が 30 回を超えたら再評価する', support: ['V1', 'R2'], citations: ['W1'] }), st({ text: '抗菌薬の継続を検討する', support: ['T1'] })] , unknown: '' }, material, [WEB]);
+    const [cited, inferred] = [checked.statements.find((x) => !x.inferred), checked.statements.find((x) => x.inferred)];
+    if (cited === undefined || inferred === undefined) throw new Error('確かめに通らなかった');
+    const pick = consultPick('1-0', cited);
+    expect(pick.text).toBe('呼吸数が 30※ 回を超えたら再評価する');
+    expect(pick.refs).toEqual([WEB.ref]);
+
+    // 指示簿へ：「（推論）」は外す。先生が欄を選び、字を確かめる
+    expect(consultOrderText(inferred)).toBe('抗菌薬の継続を検討する');
+    const order = consultOrderNew(cited, 'call', '呼吸数 30 回/分 以上で医師コール');
+    expect(OrderNew.safeParse(order).success).toBe(true);
+    expect(order).toMatchObject({ category: 'call', text: '呼吸数 30 回/分 以上で医師コール', origin: 'ai', from: null, action: 'none', scale: null, dose: '', unseen: ['30'] });
+    expect(order.basis.map((b) => b.id)).toEqual(['V1', 'R2']);
+    // 字から数を消したら、その印は渡さない
+    expect(consultOrderNew(cited, 'call', '頻呼吸で医師コール').unseen).toEqual([]);
   });
 });

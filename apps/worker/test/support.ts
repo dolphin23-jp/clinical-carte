@@ -261,9 +261,15 @@ export function fakeOrganizer(
       termed.push(message);
       return Promise.resolve(docs.consultTerms?.(message) ?? { ok: true, answer: { terms: [] } });
     },
-    consult: (message) => {
+    // 少しずつ受け取るとき（onText）は、答えの JSON を、3つに切って先頭から渡す（途中で切れた字が、画面に出ないことを確かめるため）
+    consult: (message, onText) => {
       consulted.push(message);
-      return Promise.resolve(docs.consult?.(message) ?? { ok: true, answer: { statements: [], unknown: '' } });
+      const result = docs.consult?.(message) ?? { ok: true, answer: { statements: [], unknown: '' } };
+      if (onText !== undefined && result.ok) {
+        const json = JSON.stringify(result.answer);
+        for (const cut of [Math.floor(json.length / 3), Math.floor((json.length * 2) / 3), json.length]) onText(json.slice(0, cut));
+      }
+      return Promise.resolve(result);
     },
     ask: (message) => {
       asked.push(message);

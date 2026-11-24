@@ -710,7 +710,7 @@ export const ASK_SYSTEM = `あなたは、医師が自分の手で写したカ�
 // （残すのは、先生が「残す」を押した答えだけ。選別を通す）。
 
 /** この版の印。指示を変えたら上げる */
-export const CONSULT_PROMPT_VERSION = 'consult-1';
+export const CONSULT_PROMPT_VERSION = 'consult-2';
 
 const consultSectionLines = CONSULT_SECTIONS.map((x) => `${x}（${CONSULT_SECTION_NAMES[x]}）`).join('・');
 
@@ -726,6 +726,7 @@ export const CONSULT_SYSTEM = `あなたは、医師が自分の手で写した�
 - medications（M1 など）：薬ごとの最後の動きと、開始からの日数。devices（D1 など）：デバイスと、入れてからの日数。
 - scores（S1 など）：取り込んだ表（出典つき）から、記録の値で計算したスコア・診断基準の結果。**点数・結果は、この表の計算のとおりに使います。**
 - records（R1 など）：カルテの記載の全文（医師が自分の手で写した文。識別情報は置き換えてある。古い順。shortened が true の記載は、長さのため評価と方針の部分だけ）。events（E1 など）：できごと。
+- encounters（あるときだけ）：資料にした受診の一覧（古い順。医師が、前の受診の記録も資料にすると選んだとき）。そのとき、records の encounter は、その記載がどの受診のものかです。**前の受診の記載は、その時点の事実として扱います**（いまの受診の状態と混ぜません。いまも続いているかは、いまの受診の記載で確かめ、書かれていなければ「いまの受診の記載にはない」と書きます）。values・medications・devices・scores は、いまの受診の分だけです。
 - references（B1・W1 など）：書籍（kind = 書籍）・ネットの出典（kind = ネット）の抜き出し。
 - conversation：この相談の前のやりとり（医師の問いと、あなたの前の答え）。続きの相談のときは、その流れを踏まえます。
 

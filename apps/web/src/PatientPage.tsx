@@ -1,6 +1,7 @@
 // 患者の画面：自動の見出し・最新のバイタル・受診、経過表（温度板・投薬・できごと）、記録、検査の推移と表、入れる欄。
 import {
   ageNow,
+  type ConsultPick,
   AUTHOR_ROLE_LABELS,
   ENCOUNTER_KIND_LABELS,
   ENCOUNTER_KINDS,
@@ -214,6 +215,11 @@ export function PatientPage({ patientId, focus = null, onBack, onLeft }: { patie
   const planBuilder = usePlans(patientId, record, load, onLeft);
   // 相談の窓口（段M）：問い・前のやりとり・答えは、ここのメモリだけ（残すのは、先生が「残す」を押した答えだけ）
   const consult = useConsult(patientId, load, onLeft);
+  // 相談の答えから、カルテ記載の下書きに足す候補（CA-082。画面のメモリだけ：残るのは、記載の「保存する」を押したとき）
+  const [picks, setPicks] = useState<readonly ConsultPick[]>([]);
+  const dropPick = useCallback((key: string) => {
+    setPicks((list) => list.filter((p) => p.key !== key));
+  }, []);
 
   if (record === null) {
     return (
@@ -329,7 +335,7 @@ export function PatientPage({ patientId, focus = null, onBack, onLeft }: { patie
 
   // カルテ記載（段I。CA-054）：種類と日を選んで「出す」。日の帯で選んだ日が、記載の日の既定になる
   const noteView = (key: string) =>
-    current === null ? null : <DocumentView key={key} record={record} encounter={current} days={strip.map((d) => d.day)} selectedDay={day} onChanged={load} onLeft={onLeft} />;
+    current === null ? null : <DocumentView key={key} record={record} encounter={current} days={strip.map((d) => d.day)} selectedDay={day} onChanged={load} onLeft={onLeft} picks={picks} onPickUsed={dropPick} />;
 
   // 狭い画面では、相談の窓口は見方の1つ（タブの中身の代わりに出す）。広い画面では、右に並べる
   const shown: Tab | 'consult' = consultOpen && !docked ? 'consult' : tab;
@@ -363,6 +369,16 @@ export function PatientPage({ patientId, focus = null, onBack, onLeft }: { patie
         }}
         onChanged={load}
         onLeft={onLeft}
+        picks={picks}
+        onTogglePick={(pick) => {
+          setPicks((list) => (list.some((p) => p.key === pick.key) ? list.filter((p) => p.key !== pick.key) : [...list, pick].slice(-20)));
+        }}
+        onOpenDocument={() => {
+          // カルテ記載（経過のタブ）を開く。狭い画面では、相談の窓口は閉じる（候補とやりとりは残る）
+          setView('chart');
+          setTab('course');
+          if (!docked) setConsultOpen(false);
+        }}
       />
     </div>
   );

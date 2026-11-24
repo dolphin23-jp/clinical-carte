@@ -49,6 +49,39 @@ function json(status: number, body: unknown, setCookie?: string | null): Respons
   return new Response(JSON.stringify(body), { status, headers });
 }
 
+/**
+ * 少しずつ返す答え（相談の窓口。CA-085）：1行に1つの JSON。書く係（run）が終わったら閉じる。
+ * 書く係が失敗したら、誤りの名前だけを1行返す（何が起きたかの文は返さない）。相手が先に閉じていても、落ちない
+ */
+function ndjson(run: (write: (event: unknown) => void) => Promise<void>, setCookie?: string | null): Response {
+  const headers = new Headers({ ...JSON_HEADERS, 'content-type': 'application/x-ndjson; charset=utf-8' });
+  if (typeof setCookie === 'string') headers.append('set-cookie', setCookie);
+  const encoder = new TextEncoder();
+  const body = new ReadableStream<Uint8Array>({
+    start(controller) {
+      const write = (event: unknown): void => {
+        try {
+          controller.enqueue(encoder.encode(`${JSON.stringify(event)}\n`));
+        } catch {
+          // 相手が閉じた後の書き込みは、捨てる
+        }
+      };
+      void run(write)
+        .catch(() => {
+          write({ error: 'server' });
+        })
+        .finally(() => {
+          try {
+            controller.close();
+          } catch {
+            // すでに閉じている
+          }
+        });
+    },
+  });
+  return new Response(body, { status: 200, headers });
+}
+
 const RegisterBody = z.strictObject({
   key: z.string().min(1).max(MAX_KEY_LENGTH),
   kind: z.custom<DeviceKind>(isDeviceKind),
@@ -128,7 +161,7 @@ async function api(request: Request, url: URL, deps: HandlerDeps): Promise<Respo
   }
 
   const record = await recordApi(request, path, { db: deps.db, runtime: deps.runtime, selector: deps.selector, dailyAiLimit: deps.dailyAiLimit, model: deps.model, organizer: deps.organizer, books: deps.books ?? null });
-  if (record !== null) return json(record.status, record.body, entered.renew);
+  if (record !== null) return record.lines === undefined ? json(record.status, record.body, entered.renew) : ndjson(record.lines, entered.renew);
 
   return json(404, { error: 'not_found' }, entered.renew);
 }
