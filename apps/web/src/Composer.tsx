@@ -22,7 +22,8 @@ import { joinDateTime, nowLocal, replacedSummary, showDateTime } from './format.
 import { Icon } from './Icon.tsx';
 import { NextDayAsk, type NextDayAnswer, nextDayKey } from './NextDayAsk.tsx';
 import { errorMessage } from './messages.ts';
-import { addSource, type Observation, organizeSource, type Source } from './net/api.ts';
+import { addSource, type Observation, type Source } from './net/api.ts';
+import { runOrganize } from './organizing.ts';
 import { organizeSummary } from './organizeText.ts';
 import { hasQueued, kick, newSendKey, queueSource, type QueuedSource } from './outbox.ts';
 import { QUEUE_NOTE, QueueCards } from './QueueView.tsx';
@@ -191,7 +192,7 @@ export function Composer({
       onSaved(source, observations);
       // 続けて整理する（段2）。整理に失敗しても、文は保存されている
       setOrganizing('整理しています…（30 秒ほどかかることがあります）');
-      void organizeSource(source.id).then((organized) => {
+      void runOrganize(source.id).then((organized) => {
         if (organized.ok) setOrganizing(organizeSummary(organized.value));
         else if (organized.error === 'unregistered') onLeft();
         else setOrganizing(`整理できませんでした（${errorMessage(organized.error).replace('文は保存していません。', '')}）。文は保存してあります。あとで、記録の「整理する」を押せます。`);

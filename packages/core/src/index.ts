@@ -38,6 +38,7 @@ export * from './views/fluid.ts';
 export * from './search/search.ts';
 export * from './plans/plans.ts';
 export * from './outbox/outbox.ts';
+export * from './outbox/resume.ts';
 export * from './casebook/send.ts';
 export * from './orders/orders.ts';
 export * from './orders/scale.ts';

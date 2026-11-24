@@ -31,7 +31,8 @@ import { useRef, useState } from 'react';
 import { joinDateTime, showDateTime } from './format.ts';
 import { errorMessage } from './messages.ts';
 import { NextDayAsk, type NextDayAnswer, nextDayKey } from './NextDayAsk.tsx';
-import { addFact, organizeSource, patchSegment, patchSource, type Result, retypeSource, type Segment, type Source, type UserEdit } from './net/api.ts';
+import { addFact, patchSegment, patchSource, type Result, retypeSource, type Segment, type Source, type UserEdit } from './net/api.ts';
+import { runOrganize } from './organizing.ts';
 
 const ADD_NAMES: Readonly<Record<AddType, string>> = { problem: '問題', medication: '投薬', event: 'できごと', observation: '値', segment: 'ここから区切り' };
 
@@ -152,7 +153,7 @@ export function SourceEdit({ source, segments, edits, onChanged, onLeft }: { sou
               const r = await retypeSource(source.id, text.body, text.nextDay);
               if (!r.ok) return r;
               // 打ち直した文を、続けて整理し直す（整理に失敗しても、文は保存されている）
-              const organized = await organizeSource(source.id);
+              const organized = await runOrganize(source.id);
               const lost = r.value.lost > 0 ? `前の文で直した・足したもののうち ${String(r.value.lost)} 件は、新しい文に同じ字がなく、引き継げませんでした。` : '';
               setMessage(organized.ok ? `文を直し、整理し直しました。${lost}` : `文を直しました（整理できなかったので、「整理する」で、もう一度整理できます）。${lost}`);
               return { ok: true as const, value: null };

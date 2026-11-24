@@ -40,6 +40,8 @@ import { type SyntheticEvent, useState } from 'react';
 import { joinDateTime, showDateTime } from './format.ts';
 import { Icon } from './Icon.tsx';
 import { errorMessage } from './messages.ts';
+import { useKept } from './kept.ts';
+import { resendAfterReturn } from './lifecycle.ts';
 import { addOrders, type ApiError, deleteOrder, type Encounter, type OrderProposals, type PatientRecord, patchOrder, proposeOrders, transcribeOrders } from './net/api.ts';
 import { OrderTemplates, ScaleTable } from './OrderTemplates.tsx';
 import { ResultLinks } from './PendingView.tsx';
@@ -590,10 +592,16 @@ type Mode = 'none' | 'transcribe' | 'propose' | 'template' | 'add' | 'templates'
 
 export function OrdersView({ record, encounter, onChanged, onLeft }: { record: PatientRecord; encounter: Encounter; onChanged: () => void; onLeft: () => void }) {
   const [mode, setMode] = useState<Mode>('none');
-  const [busy, setBusy] = useState(false);
-  const [message, setMessage] = useState<string | null>(null);
+  // 待っている様子・写した項目と案は、受診ごとのメモリ（CA-086）：ほかのタブ・患者の一覧へ移っても消えず、届いた答えはここに入る。端末には置かない
+  const k = (name: string): string => `orders:${encounter.id}:${name}`;
+  const [busy, setBusy] = useKept(k('busy'), false);
+  const [message, setMessage] = useKept<string | null>(k('message'), null);
   // 写した項目・案（画面のメモリだけ）
-  const [proposals, setProposals] = useState<{ list: readonly OrderProposal[]; counts: OrderProposals['counts']; kind: 'transcribe' | 'propose' } | null>(null);
+  const [proposals, setProposals] = useKept<{ list: readonly OrderProposal[]; counts: OrderProposals['counts']; kind: 'transcribe' | 'propose' } | null>(k('proposals'), null);
+  // 画面を離れているあいだに切れたら、戻ってから同じ頼みを1回だけ送り直す（写しと案は、サーバーにも残さない決まり）
+  const away = () => {
+    setMessage('画面を離れているあいだに、つながりが切れました。画面に戻ったので、もう一度頼んでいます。');
+  };
   const sources = record.sources.filter((s) => s.encounterId === encounter.id).sort((a, b) => (b.at ?? '').localeCompare(a.at ?? '') || b.id.localeCompare(a.id));
   const [sourceId, setSourceId] = useState<string>('');
   const [cats, setCats] = useState<ReadonlySet<OrderCategory>>(new Set());
@@ -614,9 +622,10 @@ export function OrdersView({ record, encounter, onChanged, onLeft }: { record: P
     if (id === '') return;
     setBusy(true);
     setMessage(null);
-    void transcribeOrders(encounter.id, id).then((r) => {
+    void resendAfterReturn(() => transcribeOrders(encounter.id, id), away).then((r) => {
       setBusy(false);
       if (r.ok) {
+        setMessage(null);
         setProposals({ list: r.value.proposals, counts: r.value.counts, kind: 'transcribe' });
         setMode('none');
       } else fail(r.error);
@@ -625,9 +634,10 @@ export function OrdersView({ record, encounter, onChanged, onLeft }: { record: P
   const propose = () => {
     setBusy(true);
     setMessage(null);
-    void proposeOrders(encounter.id, [...cats]).then((r) => {
+    void resendAfterReturn(() => proposeOrders(encounter.id, [...cats]), away).then((r) => {
       setBusy(false);
       if (r.ok) {
+        setMessage(null);
         setProposals({ list: r.value.proposals, counts: r.value.counts, kind: 'propose' });
         setMode('none');
       } else fail(r.error);

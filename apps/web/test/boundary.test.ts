@@ -99,8 +99,8 @@ describe('相談の窓口の境界（段M。CA-081）', () => {
 
   test('送る前に、問い・前のやりとりの識別情報の形を確かめる（サーバーと同じ関数）。「臨床支援の草案・最終判断は先生」をいつも出す', () => {
     expect(text.indexOf('consultHasShapes({ question, turns })')).toBeGreaterThan(-1);
-    expect(text.indexOf('consultHasShapes({ question, turns })')).toBeLessThan(text.search(/void consultPatient\(/u));
-    expect(text.search(/void consultPatient\(/u)).toBeGreaterThan(-1);
+    expect(text.indexOf('consultHasShapes({ question, turns })')).toBeLessThan(text.search(/consultPatient\(\s*patientId/u));
+    expect(text.search(/consultPatient\(\s*patientId/u)).toBeGreaterThan(-1);
     expect(text).toContain('臨床支援の草案です。最終判断は先生です。');
     // 外へのリンクを作らない（出典は字で出す）
     expect(text).not.toMatch(/<a\b|href=/u);
@@ -118,6 +118,26 @@ describe('相談の窓口の境界（段M。CA-081）', () => {
     const insert = doc.slice(doc.indexOf('const insertPick ='), doc.indexOf('const save = () =>'));
     expect(insert).toContain("origin: 'ai', edited: true, dirty: true");
     expect(insert).not.toMatch(/saveDocument|patchDocument|fetch|await /u);
+  });
+});
+
+describe('画面を離れて戻ったとき（CA-086）', () => {
+  const src = (rel: string): string => code(files.find((f) => f.rel === rel)?.text ?? '');
+
+  test('戻ったときの見張り・患者ごとのメモリ・整理の頼みの様子は、メモリだけ（端末の保存先を使わない。通信は net/api.ts を通す）', () => {
+    for (const rel of ['lifecycle.ts', 'kept.ts', 'organizing.ts']) {
+      expect(src(rel), rel).not.toMatch(/localStorage|sessionStorage|indexedDB|document\.cookie|caches\b|serviceWorker|\bfetch\(/u);
+    }
+  });
+
+  test('整理は、みな runOrganize を通す（切れた整理を、戻ったときに続けられるように）', () => {
+    const callers = files.filter((f) => /\borganizeSource\(/u.test(code(f.text))).map((f) => f.rel).sort();
+    expect(callers).toEqual(['net/api.ts', 'organizing.ts']);
+  });
+
+  test('自動で送り直すのは、保存しない答えの頼みだけ（相談・記録に聞く・記載を出す・AI に頼む・指示簿の写しと案）。保存する頼みは、送り直さない（二重に保存しない）', () => {
+    const resent = files.flatMap((f) => [...code(f.text).matchAll(/resendAfterReturn\(\s*\(\)\s*=>\s*(?:\{[^]*?return\s+)?(\w+)\(/gu)].map((m) => m[1] ?? '')).sort();
+    expect(resent).toEqual(['askRecord', 'consultPatient', 'generateDocument', 'proposeOrders', 'reviseDocument', 'transcribeOrders']);
   });
 });
 

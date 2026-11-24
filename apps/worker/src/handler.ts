@@ -32,6 +32,12 @@ export interface HandlerDeps {
   readonly organizer: Organizer | null;
   /** 書籍の検索（段5。本人の clinical-RAG）。設定がなければ null */
   readonly books?: BookSearcher | null;
+  /**
+   * 画面とのつながりが切れても、書き込む要求の仕事（AI の整理・選別と保存など）を続ける（CA-086。本番は Cloudflare の ctx.waitUntil）。
+   * Cloudflare の資料（2026-11 確認）：つながりが切れると、要求の仕事は取り消されることがあり、waitUntil に渡した仕事は、切れたあと 30 秒まで続けられる。
+   * 渡すのは、読むだけの要求（GET）でないものだけ。試験は渡さなくてよい（Node は、切れても仕事を止めない）
+   */
+  readonly keepAlive?: (work: Promise<unknown>) => void;
 }
 
 /** 登録の要求の本文の上限（文字）。合鍵と端末の種類だけなので、小さくてよい */
@@ -53,7 +59,7 @@ function json(status: number, body: unknown, setCookie?: string | null): Respons
  * 少しずつ返す答え（相談の窓口。CA-085）：1行に1つの JSON。書く係（run）が終わったら閉じる。
  * 書く係が失敗したら、誤りの名前だけを1行返す（何が起きたかの文は返さない）。相手が先に閉じていても、落ちない
  */
-function ndjson(run: (write: (event: unknown) => void) => Promise<void>, setCookie?: string | null): Response {
+function ndjson(run: (write: (event: unknown) => void) => Promise<void>, setCookie: string | null | undefined, keepAlive: HandlerDeps['keepAlive']): Response {
   const headers = new Headers({ ...JSON_HEADERS, 'content-type': 'application/x-ndjson; charset=utf-8' });
   if (typeof setCookie === 'string') headers.append('set-cookie', setCookie);
   const encoder = new TextEncoder();
@@ -66,7 +72,7 @@ function ndjson(run: (write: (event: unknown) => void) => Promise<void>, setCook
           // 相手が閉じた後の書き込みは、捨てる
         }
       };
-      void run(write)
+      const running = run(write)
         .catch(() => {
           write({ error: 'server' });
         })
@@ -77,6 +83,8 @@ function ndjson(run: (write: (event: unknown) => void) => Promise<void>, setCook
             // すでに閉じている
           }
         });
+      // 画面が離れても、答えを書く仕事は続ける（CA-086。残す答えではないが、途中で止めると、数えた1回が無駄になる）
+      keepAlive?.(running);
     },
   });
   return new Response(body, { status: 200, headers });
@@ -161,16 +169,22 @@ async function api(request: Request, url: URL, deps: HandlerDeps): Promise<Respo
   }
 
   const record = await recordApi(request, path, { db: deps.db, runtime: deps.runtime, selector: deps.selector, dailyAiLimit: deps.dailyAiLimit, model: deps.model, organizer: deps.organizer, books: deps.books ?? null });
-  if (record !== null) return record.lines === undefined ? json(record.status, record.body, entered.renew) : ndjson(record.lines, entered.renew);
+  if (record !== null) return record.lines === undefined ? json(record.status, record.body, entered.renew) : ndjson(record.lines, entered.renew, deps.keepAlive);
 
   return json(404, { error: 'not_found' }, entered.renew);
 }
+
+const noop = (): void => undefined;
 
 export async function handle(request: Request, deps: HandlerDeps): Promise<Response> {
   const url = new URL(request.url);
   if (url.pathname !== '/api' && !url.pathname.startsWith('/api/')) return deps.assets(request);
   try {
-    return await api(request, url, deps);
+    const work = api(request, url, deps);
+    // 書き込む要求は、画面とのつながりが切れても続ける（CA-086）：iPhone でほかのアプリへ移ると、Safari が止まって、つながりが切れる。
+    // 続けた仕事の結果（整理・保存）は、保存先に残り、画面が戻ったときに読み直す。読むだけの要求は、続けない
+    if (request.method !== 'GET' && request.method !== 'HEAD') deps.keepAlive?.(work.then(noop, noop));
+    return await work;
   } catch {
     // 何が起きたかを、答えにもログにも出さない（中身が混ざりうるため）
     return json(500, { error: 'server' });

@@ -66,7 +66,6 @@ import {
   getRecord,
   type Medication,
   type Observation,
-  organizeSource,
   type PatientRecord,
   type Problem,
   type Segment,
@@ -75,6 +74,7 @@ import {
   type Source,
   type UserEdit,
 } from './net/api.ts';
+import { runOrganize, useResumeOrganize } from './organizing.ts';
 import { organizeSummary, reportText } from './organizeText.ts';
 import { ScaleLinks } from './ScaleLinks.tsx';
 import { SourceAppend } from './SourceAppend.tsx';
@@ -84,6 +84,7 @@ import { SourceText } from './SourceText.tsx';
 import { StateView } from './StateView.tsx';
 import { SupportPanel, useSupport } from './SupportView.tsx';
 import { ConsultPanel, useConsult } from './ConsultPanel.tsx';
+import { useKept } from './kept.ts';
 import { PendingPanel, usePending } from './PendingView.tsx';
 import { PlansPanel, usePlans } from './PlansView.tsx';
 import { useOutbox } from './outbox.ts';
@@ -164,7 +165,8 @@ export function PatientPage({ patientId, focus = null, onBack, onLeft }: { patie
   const screenWide = useMinWidth(1100);
   // 相談の窓口（段M。CA-081）：広い画面では右に並べ（記録を見ながら相談する）、狭い画面では、見方の1つとして開く。やりとりは、この画面のメモリだけ
   const roomy = useMinWidth(1540);
-  const [consultOpen, setConsultOpen] = useState(false);
+  // 開いていたかは、患者ごとのメモリに残す（患者の一覧へ戻って開き直しても、答えを待っている窓口が開いたまま。CA-086）
+  const [consultOpen, setConsultOpen] = useKept(`consult-open:${patientId}`, false);
   const consultRef = useRef<HTMLDivElement>(null);
   const docked = consultOpen && screenWide;
   // 相談を右に並べているあいだ、中身の幅が足りなければ、中身は1列にする
@@ -216,10 +218,15 @@ export function PatientPage({ patientId, focus = null, onBack, onLeft }: { patie
   // 相談の窓口（段M）：問い・前のやりとり・答えは、ここのメモリだけ（残すのは、先生が「残す」を押した答えだけ）
   const consult = useConsult(patientId, load, onLeft);
   // 相談の答えから、カルテ記載の下書きに足す候補（CA-082。画面のメモリだけ：残るのは、記載の「保存する」を押したとき）
-  const [picks, setPicks] = useState<readonly ConsultPick[]>([]);
-  const dropPick = useCallback((key: string) => {
-    setPicks((list) => list.filter((p) => p.key !== key));
-  }, []);
+  const [picks, setPicks] = useKept<readonly ConsultPick[]>(`picks:${patientId}`, []);
+  const dropPick = useCallback(
+    (key: string) => {
+      setPicks((list) => list.filter((p) => p.key !== key));
+    },
+    [setPicks],
+  );
+  // 画面を離れて戻ったとき（CA-086）：記録を読み直し、切れた整理を続ける（サーバーが仕上げる猶予のあいだは待つ）
+  const resume = useResumeOrganize(record?.sources ?? [], load);
 
   if (record === null) {
     return (
@@ -570,6 +577,13 @@ export function PatientPage({ patientId, focus = null, onBack, onLeft }: { patie
           {message}
         </p>
       )}
+      {(resume.waiting > 0 || resume.resuming > 0 || resume.gaveUp > 0) && (
+        <p className="note resume-status" role="status" data-testid="resume-status">
+          {resume.waiting > 0 && `画面を離れているあいだに、整理の通信が切れました。サーバーが続けている整理を待っています（${String(resume.waiting)} 件）。`}
+          {resume.resuming > 0 && `切れた整理を、自動で続けています（${String(resume.resuming)} 件）。`}
+          {resume.gaveUp > 0 && `整理を続けられなかった記載が ${String(resume.gaveUp)} 件あります。記録のタブで、その記載の「整理する」を押してください。`}
+        </p>
+      )}
 
       <section className="card" aria-labelledby="record-title">
         <h2 id="record-title" className="sr-only">
@@ -873,7 +887,7 @@ export function PatientPage({ patientId, focus = null, onBack, onLeft }: { patie
                 void (async () => {
                   let failed = 0;
                   for (const [i, s] of list.entries()) {
-                    const r = await organizeSource(s.id);
+                    const r = await runOrganize(s.id);
                     if (!r.ok) {
                       if (r.error === 'unregistered') {
                         onLeft();
@@ -1110,7 +1124,7 @@ function SourceCard({
   const organize = () => {
     setOrganizing(true);
     setMessage(null);
-    void organizeSource(source.id).then((result) => {
+    void runOrganize(source.id).then((result) => {
       setOrganizing(false);
       if (result.ok) {
         setMessage(organizeSummary(result.value));

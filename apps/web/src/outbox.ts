@@ -10,7 +10,9 @@
 import { enqueue, markSending, type NewSource, nextToSend, type OutboxItem, removeQueued, settle, shouldRetry, ulid, ULID_RANDOM_BYTES } from '@clinical-carte/core';
 import { useSyncExternalStore } from 'react';
 
-import { addSource, organizeSource } from './net/api.ts';
+import { onReturn } from './lifecycle.ts';
+import { addSource } from './net/api.ts';
+import { runOrganize } from './organizing.ts';
 
 /** 送り直す間隔（ミリ秒）。送り待ちがあるあいだだけ */
 export const RETRY_INTERVAL_MS = 30_000;
@@ -32,6 +34,7 @@ export interface OutboxSnapshot {
 let snapshot: OutboxSnapshot = { items: [], delivered: {}, version: 0 };
 const listeners = new Set<() => void>();
 let timer: ReturnType<typeof setInterval> | null = null;
+let stopReturn: (() => void) | null = null;
 let pumping = false;
 
 function onOnline(): void {
@@ -50,11 +53,15 @@ function watch(): void {
     timer = setInterval(kick, RETRY_INTERVAL_MS);
     window.addEventListener('online', onOnline);
     window.addEventListener('beforeunload', onBeforeUnload);
+    // 画面に戻ったときも、すぐ送り直す（CA-086。ほかのアプリから戻っても online は起きないことがある）
+    stopReturn = onReturn(kick);
   } else if (!any && timer !== null) {
     clearInterval(timer);
     timer = null;
     window.removeEventListener('online', onOnline);
     window.removeEventListener('beforeunload', onBeforeUnload);
+    stopReturn?.();
+    stopReturn = null;
   }
 }
 
@@ -105,7 +112,7 @@ async function pump(): Promise<void> {
         set({ items: settle(snapshot.items, next.id, { kind: 'sent' }), delivered: { ...snapshot.delivered, [group]: (snapshot.delivered[group] ?? 0) + 1 }, version: snapshot.version + 1 });
         // いつもと同じく、続けて整理する（整理に失敗しても、文は保存されている。記録の「整理する」で、あとから押せる）
         const sourceId = result.value.source.id;
-        void organizeSource(sourceId).then(() => {
+        void runOrganize(sourceId).then(() => {
           set({ version: snapshot.version + 1 });
         });
         continue;

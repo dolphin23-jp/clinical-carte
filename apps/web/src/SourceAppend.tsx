@@ -4,7 +4,8 @@ import { TEXT_LIMIT } from '@clinical-carte/core';
 import { useState } from 'react';
 
 import { errorMessage } from './messages.ts';
-import { appendSource, organizeSource, type Source } from './net/api.ts';
+import { appendSource, type Source } from './net/api.ts';
+import { runOrganize } from './organizing.ts';
 import { NextDayAsk, type NextDayAnswer, nextDayKey } from './NextDayAsk.tsx';
 
 export function SourceAppend({ source, onChanged, onLeft }: { source: Source; onChanged: () => void; onLeft: () => void }) {
@@ -36,7 +37,7 @@ export function SourceAppend({ source, onChanged, onLeft }: { source: Source; on
       setText('');
       setAnswer(null);
       // 足したあとの文を、続けて整理し直す（整理に失敗しても、文は保存されている）
-      const organized = await organizeSource(source.id);
+      const organized = await runOrganize(source.id);
       setBusy(false);
       setMessage(organized.ok ? '続きを足し、整理し直しました。' : '続きを足しました（整理できなかったので、「整理する」で、もう一度整理できます）。');
       onChanged();
