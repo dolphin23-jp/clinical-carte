@@ -122,10 +122,15 @@ const AP_LABELS: readonly SegmentLabel[] = ['problem_heading', 'assessment', 'pl
 const SHRINKABLE: readonly SourceKind[] = ['progress_note', 'nursing', 'memo', 'unsorted', 'outpatient_revisit'];
 const valueOf = (o: AskObservation): string => `${o.comparator ?? ''}${o.valueText}${o.unit === null ? '' : ` ${o.unit}`}`;
 
-/** max は、資料の長さの上限（相談〔段M〕では、ほかの資料と合わせるので小さくする。既定は ASK_MATERIAL_MAX） */
-export function askMaterial(input: AskInput, options: { readonly max?: number } = {}): AskMaterial {
+/**
+ * max は、資料の長さの上限（相談〔段M〕では、ほかの資料と合わせるので小さくする。既定は ASK_MATERIAL_MAX）。
+ * allEncounters は、相談の窓口で「前の受診の記録も資料にする」を選んだときだけ（CA-084）：範囲を、患者のすべての受診に広げ、記載に、どの受診かを添える
+ */
+export function askMaterial(input: AskInput, options: { readonly max?: number; readonly allEncounters?: boolean } = {}): AskMaterial {
   const max = options.max ?? ASK_MATERIAL_MAX;
-  const scope = recentEncounters(input.encounters);
+  const all = options.allEncounters === true;
+  const scope = all ? [...input.encounters].sort((a, b) => compareDateTime(a.start, b.start) || a.id.localeCompare(b.id)) : recentEncounters(input.encounters);
+  const visitOf = new Map(scope.map((e) => [e.id, `${ENCOUNTER_KIND_LABELS[e.kind]} ${e.start.replace('T', ' ')}〜`]));
   const ids = new Set(scope.map((e) => e.id));
   const current = scope.at(-1);
   const inpatient = current?.kind === 'inpatient';
@@ -162,6 +167,7 @@ export function askMaterial(input: AskInput, options: { readonly max?: number } 
         date: show(r.src.at),
         day: dayOf(r.src.at) === null ? null : `${dayOf(r.src.at) ?? ''}病日`,
         shortened: r.shortened,
+        ...(all ? { encounter: visitOf.get(r.src.encounterId) ?? '' } : {}),
         text: r.text,
       })),
       medications: [...medRefs].map(([ref, m]) => ({ ref, at: show(m.at), name: m.name, action: m.action === null ? '動きの記載なし' : MEDICATION_ACTION_NAMES[m.action], dose: m.doseText ?? '' })),

@@ -7,37 +7,56 @@
 // - 臨床支援の決まり（CA-059）：「臨床支援の草案・最終判断は先生」をいつも出す。出典の引用に基づかない文には「（推論）」、資料・出典にない数には下線と「※」。
 //   出さなかった文は、理由ごとの数で出す（黙って捨てない）。画面の外への知らせは作らない
 // - 問い・前のやりとりに電話番号・メールなどの形があれば、送らない（core の consultHasShapes・findShapes。サーバーも同じ関数で断る）
+// 段M2（CA-082〜CA-085）：
+// - 答えは、確かめた文から順に出る（CA-085。サーバーが確かめた後の文だけが届く。最後に、見出しの順に並べ直す）
+// - 前の受診の記録も資料にできる（CA-084。受診が2つ以上あるとき。既定は入れる）
+// - 残した答えは直せる（CA-083。打った字は、サーバーで選別を通す。「先生が直した」の印が付く）
+// - 答えの文は、1つずつ押して、カルテ記載の下書きの候補（「記載へ」）と、指示簿（「指示簿へ」。欄を選び、字を確かめてから。「AI の案」の印）へ入れられる（CA-082）。
+//   記載の候補は、画面のメモリだけ：残るのは、記載の「保存する」を押したとき。病院のカルテへ戻すコピーは作らない
 import {
   type ApRef,
   ASK_QUESTION_MAX,
   askNoteRefs,
   askNoteText,
   type AskReply,
-  CONSULT_NOTE_MODE_NAMES,
+  CONSULT_NOTE_MAX,
   CONSULT_QUESTION_MAX,
   CONSULT_REJECT_NAMES,
   CONSULT_REJECT_REASONS,
   CONSULT_SECTION_NAMES,
   CONSULT_SECTIONS,
+  CONSULT_STAGE_NAMES,
   CONSULT_TURN_TEXT_MAX,
   CONSULT_TURNS_MAX,
   consultHasShapes,
   type ConsultNote,
+  consultNoteLabel,
   type ConsultNoteMode,
   consultNoteRefs,
   consultNoteText,
+  consultOrderNew,
+  consultOrderText,
+  consultPick,
+  type ConsultPick,
   type ConsultReply,
+  type ConsultSection,
+  type ConsultStage,
+  type ConsultStatement,
   type ConsultTurn,
   findShapes,
+  ORDER_CATEGORIES,
+  ORDER_CATEGORY_SHORT,
+  ORDER_TEXT_MAX,
+  type OrderCategory,
   SOURCE_KIND_LABELS,
 } from '@clinical-carte/core';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
 
 import { AskAnswerView } from './AskView.tsx';
 import { showDateTime } from './format.ts';
 import { Icon } from './Icon.tsx';
 import { errorMessage } from './messages.ts';
-import { addConsultNote, type ApiError, askRecord, consultPatient, deleteConsultNote, type PatientRecord } from './net/api.ts';
+import { addConsultNote, addOrders, type ApiError, askRecord, consultPatient, deleteConsultNote, patchConsultNote, type PatientRecord } from './net/api.ts';
 import { Marked } from './SupportView.tsx';
 
 /** やりとりの1つ（画面のメモリだけ） */
@@ -54,6 +73,11 @@ export interface ConsultState {
   /** ネットの出典も探す（画面のメモリだけ。既定は探す） */
   readonly web: boolean;
   readonly setWeb: (web: boolean) => void;
+  /** 前の受診の記録も資料にする（CA-084。画面のメモリだけ。既定は入れる） */
+  readonly past: boolean;
+  readonly setPast: (past: boolean) => void;
+  /** 相談の途中（CA-085）：いま何をしているかと、届いた文（サーバーが確かめた後の文。書かれた順）。相談していなければ null */
+  readonly progress: { readonly stage: ConsultStage | null; readonly statements: readonly ConsultStatement[] } | null;
   /** 新しいものが先 */
   readonly entries: readonly ConsultEntry[];
   readonly busy: boolean;
@@ -85,6 +109,8 @@ export function useConsult(patientId: string, onChanged: () => void, onLeft: () 
   const [mode, setMode] = useState<ConsultNoteMode>('consult');
   const [draft, setDraft] = useState('');
   const [web, setWeb] = useState(true);
+  const [past, setPast] = useState(true);
+  const [progress, setProgress] = useState<ConsultState['progress']>(null);
   const [entries, setEntries] = useState<readonly ConsultEntry[]>([]);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
@@ -113,8 +139,21 @@ export function useConsult(patientId: string, onChanged: () => void, onLeft: () 
       setDraft('');
     };
     if (mode === 'consult') {
-      void consultPatient(patientId, { question, turns, web }).then((r) => {
+      setProgress({ stage: null, statements: [] });
+      void consultPatient(
+        patientId,
+        { question, turns, web, past },
+        {
+          onStage: (stage) => {
+            setProgress((p) => ({ stage, statements: p?.statements ?? [] }));
+          },
+          onStatement: (statement) => {
+            setProgress((p) => ({ stage: p?.stage ?? 'answer', statements: [...(p?.statements ?? []), statement] }));
+          },
+        },
+      ).then((r) => {
         setBusy(false);
+        setProgress(null);
         if (r.ok) add({ id, mode: 'consult', question, kept: false, reply: r.value });
         else failed(r.error);
       });
@@ -146,7 +185,7 @@ export function useConsult(patientId: string, onChanged: () => void, onLeft: () 
     setEntries([]);
     setMessage(null);
   };
-  return { mode, setMode, draft, setDraft, web, setWeb, entries, busy, message, keeping, send, keep, reset };
+  return { mode, setMode, draft, setDraft, web, setWeb, past, setPast, progress, entries, busy, message, keeping, send, keep, reset };
 }
 
 /** 出典の字（書籍は題と頁、ネットは題と URL。外へのリンクにはしない） */
@@ -156,8 +195,185 @@ function citeText(ref: ApRef): string {
   return '記録';
 }
 
-/** 相談の答え：見出しごとの文・根拠の札・出典・答えられなかったこと・出さなかったものの数・外の検索に渡した語 */
-function ConsultAnswerView({ reply, onOpenSource }: { reply: ConsultReply; onOpenSource: (sourceId: string) => void }) {
+/** 見出しごとの、指示簿の欄の初めの選び（先生が選び直す） */
+const ORDER_CATEGORY_FOR: Readonly<Record<ConsultSection, OrderCategory>> = { summary: 'other', assessment: 'other', workup: 'test', treatment: 'other', caution: 'call', other: 'other' };
+
+/** 答えの文を、記載の下書き・指示簿へ入れる先（CA-082） */
+export interface ConsultTargets {
+  /** 記載の下書きに足す候補（画面のメモリ）と、その出し入れ */
+  readonly picks: readonly ConsultPick[];
+  readonly onTogglePick: (pick: ConsultPick) => void;
+  /** 指示簿に入れる受診（いちばん新しい受診。なければ null） */
+  readonly orderEncounterId: string | null;
+  readonly onChanged: () => void;
+  readonly onLeft: () => void;
+}
+
+/** 答えの文の1つを、指示簿へ入れる（CA-082）：欄を選び、字を確かめて（直せる）から。字はサーバーで選別を通り、「AI の案」の印で入る */
+function OrderFromConsult({ statement, encounterId, onChanged, onLeft }: { statement: ConsultStatement; encounterId: string; onChanged: () => void; onLeft: () => void }) {
+  const [open, setOpen] = useState(false);
+  const [category, setCategory] = useState<OrderCategory>(ORDER_CATEGORY_FOR[statement.section]);
+  const [text, setText] = useState(() => consultOrderText(statement));
+  const [busy, setBusy] = useState(false);
+  const [done, setDone] = useState<OrderCategory | null>(null);
+  const [message, setMessage] = useState<string | null>(null);
+  const textId = useId();
+  if (done !== null) {
+    return (
+      <span className="note consult-ordered" data-testid="consult-ordered">
+        <Icon name="check" />
+        指示簿（{ORDER_CATEGORY_SHORT[done]}）に入れました
+      </span>
+    );
+  }
+  if (!open) {
+    return (
+      <button
+        type="button"
+        className="chip small"
+        onClick={() => {
+          setOpen(true);
+        }}
+        data-testid="consult-to-order"
+      >
+        <Icon name="orders" />
+        指示簿へ
+      </button>
+    );
+  }
+  return (
+    <div className="consult-order-form" data-testid="consult-order-form">
+      <label className="ask-label">
+        欄
+        <select
+          value={category}
+          onChange={(e) => {
+            const picked = ORDER_CATEGORIES.find((c) => c === e.target.value);
+            if (picked !== undefined) setCategory(picked);
+          }}
+          data-testid="consult-order-category"
+        >
+          {ORDER_CATEGORIES.map((c) => (
+            <option key={c} value={c}>
+              {ORDER_CATEGORY_SHORT[c]}
+            </option>
+          ))}
+        </select>
+      </label>
+      <label className="ask-label" htmlFor={textId}>
+        指示の字（確かめて、指示の形に直してください。用量・速度は、指示簿で足します）
+      </label>
+      <textarea
+        id={textId}
+        rows={3}
+        maxLength={ORDER_TEXT_MAX}
+        value={text}
+        onChange={(e) => {
+          setText(e.target.value);
+        }}
+        data-testid="consult-order-text"
+      />
+      <div className="actions">
+        <button
+          type="button"
+          className="button small primary"
+          disabled={busy || text.trim() === ''}
+          onClick={() => {
+            setBusy(true);
+            setMessage(null);
+            void addOrders(encounterId, [consultOrderNew(statement, category, text)]).then((r) => {
+              setBusy(false);
+              if (r.ok) {
+                setDone(category);
+                onChanged();
+              } else if (r.error === 'unregistered') onLeft();
+              else setMessage(`指示簿に入れられませんでした（${errorMessage(r.error).replace('文は保存していません。', '')}）`);
+            });
+          }}
+          data-testid="consult-order-add"
+        >
+          {busy ? '入れています…' : '指示簿に入れる（AI の案の印）'}
+        </button>
+        <button
+          type="button"
+          className="button small"
+          onClick={() => {
+            setOpen(false);
+          }}
+        >
+          やめる
+        </button>
+      </div>
+      {message !== null && (
+        <p className="alert" role="alert">
+          {message}
+        </p>
+      )}
+    </div>
+  );
+}
+
+/** 答えの文の1つ：文（※・「（推論）」）・根拠の札・出典。targets があれば、記載の下書き・指示簿へ入れるボタン */
+function StatementView({ statement: s, pickKey, onOpenSource, targets }: { statement: ConsultStatement; pickKey: string; onOpenSource: (sourceId: string) => void; targets: ConsultTargets | null }) {
+  const picked = targets?.picks.some((p) => p.key === pickKey) ?? false;
+  return (
+    <li className={s.inferred ? 'consult-statement inferred' : 'consult-statement cited'} data-testid="consult-statement">
+      <p className="support-text">
+        <Marked value={{ text: s.text, marks: [...s.marks] }} />
+      </p>
+      {s.support.length > 0 && (
+        <div className="chips consult-refs">
+          {s.support.map((ref) =>
+            ref.sourceId === null ? (
+              <span key={ref.id} className="tag" data-testid="consult-ref">
+                {ref.label}
+              </span>
+            ) : (
+              <button
+                key={ref.id}
+                type="button"
+                className="chip small"
+                onClick={() => {
+                  if (ref.sourceId !== null) onOpenSource(ref.sourceId);
+                }}
+                data-testid="consult-ref-open"
+              >
+                <Icon name="notes" />
+                {ref.label}
+              </button>
+            ),
+          )}
+        </div>
+      )}
+      {s.citations.map((c, j) => (
+        <p key={String(j)} className="thread-sub consult-cite" data-testid="consult-cite">
+          <Icon name="book" />
+          {citeText(c)}
+        </p>
+      ))}
+      {targets !== null && (
+        <div className="chips consult-to" data-testid="consult-to">
+          <button
+            type="button"
+            className={picked ? 'chip small on' : 'chip small'}
+            aria-pressed={picked}
+            onClick={() => {
+              targets.onTogglePick(consultPick(pickKey, s));
+            }}
+            data-testid="consult-to-note"
+          >
+            <Icon name={picked ? 'check' : 'edit'} />
+            {picked ? '記載の候補に入れた' : '記載へ'}
+          </button>
+          {targets.orderEncounterId !== null && <OrderFromConsult statement={s} encounterId={targets.orderEncounterId} onChanged={targets.onChanged} onLeft={targets.onLeft} />}
+        </div>
+      )}
+    </li>
+  );
+}
+
+/** 相談の答え：見出しごとの文・根拠の札・出典・答えられなかったこと・出さなかったものの数・外の検索に渡した語・資料の範囲 */
+function ConsultAnswerView({ entryId, reply, onOpenSource, targets }: { entryId: number; reply: ConsultReply; onOpenSource: (sourceId: string) => void; targets: ConsultTargets }) {
   const rejected = CONSULT_REJECT_REASONS.flatMap((r) => ((reply.rejected[r] ?? 0) > 0 ? [`${CONSULT_REJECT_NAMES[r]} ${String(reply.rejected[r] ?? 0)} 件`] : []));
   const marks = reply.statements.reduce((n, s) => n + s.marks.length, 0);
   const dropped = reply.dropped.records + reply.dropped.shortened + reply.dropped.values + reply.dropped.course;
@@ -165,47 +381,13 @@ function ConsultAnswerView({ reply, onOpenSource }: { reply: ConsultReply; onOpe
   return (
     <div className="consult-answer" data-testid="consult-answer">
       {CONSULT_SECTIONS.map((section) => {
-        const list = reply.statements.filter((s) => s.section === section);
+        const list = reply.statements.map((s, index) => ({ s, index })).filter(({ s }) => s.section === section);
         return list.length === 0 ? null : (
           <section key={section} className="consult-section" data-testid={`consult-section-${section}`}>
             <h4 className="consult-section-title">{CONSULT_SECTION_NAMES[section]}</h4>
             <ul className="support-list">
-              {list.map((s, i) => (
-                <li key={String(i)} className={s.inferred ? 'consult-statement inferred' : 'consult-statement cited'} data-testid="consult-statement">
-                  <p className="support-text">
-                    <Marked value={{ text: s.text, marks: [...s.marks] }} />
-                  </p>
-                  {s.support.length > 0 && (
-                    <div className="chips consult-refs">
-                      {s.support.map((ref) =>
-                        ref.sourceId === null ? (
-                          <span key={ref.id} className="tag" data-testid="consult-ref">
-                            {ref.label}
-                          </span>
-                        ) : (
-                          <button
-                            key={ref.id}
-                            type="button"
-                            className="chip small"
-                            onClick={() => {
-                              if (ref.sourceId !== null) onOpenSource(ref.sourceId);
-                            }}
-                            data-testid="consult-ref-open"
-                          >
-                            <Icon name="notes" />
-                            {ref.label}
-                          </button>
-                        ),
-                      )}
-                    </div>
-                  )}
-                  {s.citations.map((c, j) => (
-                    <p key={String(j)} className="thread-sub consult-cite" data-testid="consult-cite">
-                      <Icon name="book" />
-                      {citeText(c)}
-                    </p>
-                  ))}
-                </li>
+              {list.map(({ s, index }) => (
+                <StatementView key={String(index)} statement={s} pickKey={`${String(entryId)}-${String(index)}`} onOpenSource={onOpenSource} targets={targets} />
               ))}
             </ul>
           </section>
@@ -230,6 +412,9 @@ function ConsultAnswerView({ reply, onOpenSource }: { reply: ConsultReply; onOpe
             資料の長さのため、古い記載 {String(reply.dropped.records)} 件・評価と方針だけにした記載 {String(reply.dropped.shortened)} 件・値 {String(reply.dropped.values)} 件・経過の出来事 {String(reply.dropped.course)} 件は、AI に全文を渡していません。
           </p>
         )}
+        <p className="note" data-testid="consult-scope">
+          資料にした記載：{String(reply.scope.records)} 件（{reply.scope.encounters <= 1 ? 'いまの受診の分' : reply.scope.past ? `前の受診を含む、受診 ${String(reply.scope.encounters)} 回の分` : 'いまの受診と、直前の救急の受診の分'}）。値・薬・スコアは、いまの受診の分です。
+        </p>
         <p className="note" data-testid="consult-research">
           {sent.length === 0
             ? '書籍・ネットは探していません（どの文も、記録からの推論です）。'
@@ -240,10 +425,26 @@ function ConsultAnswerView({ reply, onOpenSource }: { reply: ConsultReply; onOpe
   );
 }
 
-/** 残した答えの1つ（選別を通した後の字。直せない：消して、残し直す） */
+/** 残した答えの1つ（選別を通した後の字）。直せる（CA-083。打った字は、サーバーで選別を通す。「先生が直した」の印が付く）・消せる */
 function KeptNote({ note, record, onChanged, onLeft }: { note: ConsultNote; record: PatientRecord; onChanged: () => void; onLeft: () => void }) {
   const [confirm, setConfirm] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
+  // 直している字（画面のメモリだけ。null は、直していない）
+  const [draft, setDraft] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+  const saveEdit = () => {
+    if (draft === null || draft.trim() === '' || saving) return;
+    setSaving(true);
+    setMessage(null);
+    void patchConsultNote(note.id, draft).then((r) => {
+      setSaving(false);
+      if (r.ok) {
+        setDraft(null);
+        onChanged();
+      } else if (r.error === 'unregistered') onLeft();
+      else setMessage(`直したものを残せませんでした（${errorMessage(r.error).replace('文は保存していません。', '')}）`);
+    });
+  };
   const refText = (ref: ApRef): string => {
     if (ref.k !== 'record') return citeText(ref);
     const s = record.sources.find((x) => x.id === ref.sourceId);
@@ -253,16 +454,51 @@ function KeptNote({ note, record, onChanged, onLeft }: { note: ConsultNote; reco
   return (
     <details className="consult-kept" data-testid="consult-kept">
       <summary>
-        <span className="tag ai-tag">{CONSULT_NOTE_MODE_NAMES[note.mode]}</span>
-        <span className="consult-kept-when">{showDateTime(note.enteredAt)}</span>
+        <span className="tag ai-tag" data-testid="consult-kept-label">
+          {consultNoteLabel(note)}
+        </span>
+        <span className="consult-kept-when">{showDateTime(note.edited ? note.updatedAt : note.enteredAt)}</span>
         <span className="consult-kept-head">{note.text.split('\n').find((l) => !l.startsWith('【')) ?? ''}</span>
       </summary>
-      <p className="source-text consult-kept-text" data-testid="consult-kept-text">
-        {note.text}
-      </p>
+      {draft === null ? (
+        <p className="source-text consult-kept-text" data-testid="consult-kept-text">
+          {note.text}
+        </p>
+      ) : (
+        <>
+          <textarea
+            className="consult-kept-edit"
+            rows={Math.min(16, Math.max(4, draft.split('\n').length + 1))}
+            maxLength={CONSULT_NOTE_MAX}
+            value={draft}
+            aria-label="残した答えを直す"
+            onChange={(e) => {
+              setDraft(e.target.value);
+            }}
+            data-testid="consult-kept-edit-text"
+          />
+          <p className="note">直した字は、選別を通してから残ります（名前などは置き換わります）。「先生が直した」の印が付きます。</p>
+        </>
+      )}
       {refs.length > 0 && <p className="thread-sub">根拠：{refs.join(' ／ ')}</p>}
       <div className="actions">
-        {confirm ? (
+        {draft !== null ? (
+          <>
+            <button type="button" className="button small primary" disabled={saving || draft.trim() === '' || draft === note.text} onClick={saveEdit} data-testid="consult-kept-edit-save">
+              {saving ? '残しています…' : '直したものを残す'}
+            </button>
+            <button
+              type="button"
+              className="button small"
+              disabled={saving}
+              onClick={() => {
+                setDraft(null);
+              }}
+            >
+              やめる
+            </button>
+          </>
+        ) : confirm ? (
           <>
             <button
               type="button"
@@ -289,16 +525,28 @@ function KeptNote({ note, record, onChanged, onLeft }: { note: ConsultNote; reco
             </button>
           </>
         ) : (
-          <button
-            type="button"
-            className="button small"
-            onClick={() => {
-              setConfirm(true);
-            }}
-            data-testid="consult-kept-delete"
-          >
-            消す
-          </button>
+          <>
+            <button
+              type="button"
+              className="button small"
+              onClick={() => {
+                setDraft(note.text);
+              }}
+              data-testid="consult-kept-edit"
+            >
+              直す
+            </button>
+            <button
+              type="button"
+              className="button small"
+              onClick={() => {
+                setConfirm(true);
+              }}
+              data-testid="consult-kept-delete"
+            >
+              消す
+            </button>
+          </>
         )}
       </div>
       {message !== null && (
@@ -317,6 +565,9 @@ export function ConsultPanel({
   onOpenSource,
   onChanged,
   onLeft,
+  picks,
+  onTogglePick,
+  onOpenDocument,
 }: {
   consult: ConsultState;
   record: PatientRecord;
@@ -325,7 +576,13 @@ export function ConsultPanel({
   onOpenSource: (sourceId: string) => void;
   onChanged: () => void;
   onLeft: () => void;
+  /** 記載の下書きに足す候補（CA-082。画面のメモリ）と、その出し入れ・カルテ記載を開く */
+  picks: readonly ConsultPick[];
+  onTogglePick: (pick: ConsultPick) => void;
+  onOpenDocument: () => void;
 }) {
+  // 指示簿に入れる先は、いちばん新しい受診（相談の資料の、値・薬・スコアと同じ受診）
+  const targets: ConsultTargets = { picks, onTogglePick, orderEncounterId: record.encounters.at(-1)?.id ?? null, onChanged, onLeft };
   const { mode, entries, busy } = consult;
   const max = mode === 'consult' ? CONSULT_QUESTION_MAX : ASK_QUESTION_MAX;
   const [latest, ...older] = entries;
@@ -340,7 +597,7 @@ export function ConsultPanel({
   }, [latest?.id]);
   const entryView = (e: ConsultEntry) => (
     <>
-      {e.mode === 'consult' ? <ConsultAnswerView reply={e.reply} onOpenSource={onOpenSource} /> : <AskAnswerView record={record} reply={e.reply} />}
+      {e.mode === 'consult' ? <ConsultAnswerView entryId={e.id} reply={e.reply} onOpenSource={onOpenSource} targets={targets} /> : <AskAnswerView record={record} reply={e.reply} />}
       <div className="consult-keep">
         {e.kept ? (
           <span className="note" data-testid="consult-kept-done">
@@ -453,8 +710,38 @@ export function ConsultPanel({
             ネットの出典も探す（学会・公的機関・主要誌）
           </label>
         )}
+        {mode === 'consult' && record.encounters.length > 1 && (
+          <label className="check">
+            <input
+              type="checkbox"
+              checked={consult.past}
+              onChange={(e) => {
+                consult.setPast(e.target.checked);
+              }}
+              data-testid="consult-past"
+            />
+            前の受診の記録も資料にする（受診 {String(record.encounters.length)} 回）
+          </label>
+        )}
       </div>
-      {busy && mode === 'consult' && <p className="note">1〜2分かかることがあります。閉じても、この患者の画面を開いているあいだは続きます。</p>}
+      {busy && mode === 'consult' && (
+        <div className="consult-progress" data-testid="consult-progress" aria-live="polite">
+          <p className="note" data-testid="consult-stage">
+            {consult.progress?.stage === null || consult.progress === null ? '記録を読んでいます' : CONSULT_STAGE_NAMES[consult.progress.stage]}
+            …（1〜2分かかることがあります。閉じても、この患者の画面を開いているあいだは続きます）
+          </p>
+          {consult.progress !== null && consult.progress.statements.length > 0 && (
+            <>
+              <p className="note">書けた文から出しています（どれも、確かめた後の文です。書き終えたら、見出しの順に並べ直します）。</p>
+              <ul className="support-list">
+                {consult.progress.statements.map((st, i) => (
+                  <StatementView key={String(i)} statement={st} pickKey={`p-${String(i)}`} onOpenSource={onOpenSource} targets={null} />
+                ))}
+              </ul>
+            </>
+          )}
+        </div>
+      )}
       <p className="note consult-privacy">
         問いと答えは保存しません（残るのは「この答えを残す」を押した答えだけ）。
         {mode === 'consult' && '書籍・ネットの検索に渡すのは、問題の名前と、問いの一般的な語だけです（問いの文・値・日付は渡しません）。'}
@@ -465,6 +752,15 @@ export function ConsultPanel({
         </p>
       )}
 
+      {picks.length > 0 && (
+        <div className="consult-tray" data-testid="consult-tray">
+          <span className="note">記載の下書きに足す候補：{String(picks.length)} 件（まだ、どこにも残っていません）</span>
+          <button type="button" className="chip small" onClick={onOpenDocument} data-testid="consult-open-document">
+            <Icon name="edit" />
+            カルテ記載を開いて、見出しに足す
+          </button>
+        </div>
+      )}
       {latest !== undefined && (
         <article className="consult-entry newest" data-testid="consult-entry" ref={newestRef}>
           <p className="consult-asked" data-testid="consult-asked">

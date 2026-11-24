@@ -1,7 +1,8 @@
 // 段M（CA-081）：相談の窓口。記録と、書籍・ネットの出典から答え、確かめて返す。保存しない（問い・前のやりとり・答えの字は、どの表にも残らない）。
 // 外の検索（書籍・ネット）に渡すのは、問題の名前と、問いから取り出して確かめた一般的な語だけ（問いの文・記録の字・数字は渡さない）。
 // 残すのは、先生が「残す」を押した答えだけ（選別を通した後の字）。AI と RAG は試験の代役。文はすべて架空（synthetic）。
-import { type ConsultNote, type ConsultReply, consultNoteRefs, consultNoteText, type OrganizeAnswer } from '@clinical-carte/core';
+// 段M2：前の受診の記録も資料にする（CA-084）・確かめた文から順に返す（CA-085）・残した答えを直す（CA-083）と、その記録（文なし）。
+import { type ConsultEvent, type ConsultNote, type ConsultReply, consultNoteRefs, consultNoteText, type OrganizeAnswer } from '@clinical-carte/core';
 import { describe, expect, test } from 'vitest';
 
 import { createRagSearcher } from '../src/references.ts';
@@ -104,7 +105,7 @@ describe('相談の窓口（段M）', () => {
     );
     const tablesBefore = everything(s);
     const before = usage(s);
-    const res = await s.consult({ question: QUESTION, turns: [{ question: '前の問い（架空）', answer: '前の答え（架空）' }], web: true });
+    const res = await s.consult({ question: QUESTION, turns: [{ question: '前の問い（架空）', answer: '前の答え（架空）' }], web: true, past: false });
     expect(res.status).toBe(200);
     const reply = ((await res.json()) as { answer: ConsultReply }).answer;
     // 1日の上限に数える：検索の語・ネットの検索・答えの 3 回
@@ -159,7 +160,7 @@ describe('相談の窓口（段M）', () => {
   test('書籍の設定がなく、ネットも頼まないときは、外を探さない（語も取り出さない）。答えは、すべて「（推論）」', async () => {
     const s = await setup({ consult: CONSULT });
     const before = usage(s);
-    const res = await s.consult({ question: 'いまの方針をまとめて', turns: [], web: false });
+    const res = await s.consult({ question: 'いまの方針をまとめて', turns: [], web: false, past: false });
     expect(res.status).toBe(200);
     const reply = ((await res.json()) as { answer: ConsultReply }).answer;
     expect(usage(s) - before).toBe(1);
@@ -174,14 +175,14 @@ describe('相談の窓口（段M）', () => {
   test('語の取り出しが失敗しても、問題の名前だけで探して答える。プロブレムリストがなければ、記録に書かれた問題の名前で探す', async () => {
     const rag = ragFake();
     const s = await setup({ consultTerms: () => ({ ok: false, reason: 'unavailable' }), consult: CONSULT }, { books: rag.books });
-    const res = await s.consult({ question: '方針は？', turns: [], web: false });
+    const res = await s.consult({ question: '方針は？', turns: [], web: false, past: false });
     expect(res.status).toBe(200);
     expect(rag.bodies.map((b) => JSON.parse(b) as unknown)).toEqual([{ queries: ['市中肺炎疑い'], parents: 6 }]);
     expect(((await res.json()) as { answer: ConsultReply }).answer.research.terms).toEqual([]);
 
     const rag2 = ragFake();
     const noList = await setup({ consult: CONSULT }, { books: rag2.books }, { list: false });
-    expect((await noList.consult({ question: '方針は？', turns: [], web: false })).status).toBe(200);
+    expect((await noList.consult({ question: '方針は？', turns: [], web: false, past: false })).status).toBe(200);
     const queries = (JSON.parse(rag2.bodies[0] ?? '{}') as { queries: string[] }).queries;
     expect(queries).toHaveLength(1);
     expect(queries[0]).toContain('発熱');
@@ -190,40 +191,41 @@ describe('相談の窓口（段M）', () => {
   test('問い・前のやりとりに識別情報の形があれば、AI に送らない。空・長すぎ・形の違う頼みは 400', async () => {
     const s = await setup();
     const phone = ['090', '1234', '5678'].join('-');
-    const r = await s.consult({ question: `${phone} に連絡する？`, turns: [], web: false });
+    const r = await s.consult({ question: `${phone} に連絡する？`, turns: [], web: false, past: false });
     expect(r.status).toBe(422);
     expect(await r.json()).toEqual({ error: 'shape' });
-    expect((await s.consult({ question: '方針は？', turns: [{ question: '前の問い', answer: `${phone} へ` }], web: false })).status).toBe(422);
-    expect((await s.consult({ question: '', turns: [], web: false })).status).toBe(400);
-    expect((await s.consult({ question: 'あ'.repeat(801), turns: [], web: false })).status).toBe(400);
+    expect((await s.consult({ question: '方針は？', turns: [{ question: '前の問い', answer: `${phone} へ` }], web: false, past: false })).status).toBe(422);
+    expect((await s.consult({ question: '', turns: [], web: false, past: false })).status).toBe(400);
+    expect((await s.consult({ question: 'あ'.repeat(801), turns: [], web: false, past: false })).status).toBe(400);
     expect((await s.consult({ question: '方針は？', turns: [] })).status).toBe(400);
-    expect((await s.consult({ question: '方針は？', turns: [], web: false, patient: 'x' })).status).toBe(400);
+    expect((await s.consult({ question: '方針は？', turns: [], web: false })).status).toBe(400);
+    expect((await s.consult({ question: '方針は？', turns: [], web: false, past: false, patient: 'x' })).status).toBe(400);
     expect(s.organizer.consulted).toEqual([]);
     expect(s.organizer.termed).toEqual([]);
   });
 
   test('記載がなければ AI を呼ばない。1日の上限に数える。鍵がなければ 503', async () => {
     const empty = await setup({}, {}, { note: false });
-    const r = await empty.consult({ question: '方針は？', turns: [], web: false });
+    const r = await empty.consult({ question: '方針は？', turns: [], web: false, past: false });
     expect(r.status).toBe(422);
     expect(await r.json()).toEqual({ error: 'consult_empty' });
     expect(empty.organizer.consulted).toEqual([]);
 
     const limited = await setup({}, { dailyAiLimit: 50 });
     limited.w.db.raw.exec('UPDATE usage_daily SET calls = 50');
-    expect((await limited.consult({ question: '方針は？', turns: [], web: true })).status).toBe(429);
+    expect((await limited.consult({ question: '方針は？', turns: [], web: true, past: false })).status).toBe(429);
     expect(limited.organizer.consulted).toEqual([]);
     expect(limited.organizer.termed).toEqual([]);
 
     const none = world({ organizer: null });
     const { cookie } = await registered(none);
-    expect((await none.call('POST', `/api/patients/${empty.patientId}/consult`, { cookie, body: { question: '方針は？', turns: [], web: false } })).status).toBe(503);
+    expect((await none.call('POST', `/api/patients/${empty.patientId}/consult`, { cookie, body: { question: '方針は？', turns: [], web: false, past: false } })).status).toBe(503);
   });
 
   test('残すのは、先生が「残す」を押した答えだけ：選別を通した後の字と、参照（題・頁・URL・この患者の記録の場所）。消せる。患者を消すと消える', async () => {
     const rag = ragFake();
     const s = await setup({ consult: CONSULT }, { books: rag.books });
-    const reply = ((await (await s.consult({ question: QUESTION, turns: [], web: false })).json()) as { answer: ConsultReply }).answer;
+    const reply = ((await (await s.consult({ question: QUESTION, turns: [], web: false, past: false })).json()) as { answer: ConsultReply }).answer;
     const other = '01HZZZZZZZZZZZZZZZZZZZZZZZ';
     const before = usage(s);
     const kept = await s.keep({
@@ -246,7 +248,7 @@ describe('相談の窓口（段M）', () => {
     expect(note?.refs).toEqual([{ k: 'book', title: '架空の内科学', page: '120', path: '呼吸器 > 肺炎' }, { k: 'record', sourceId: s.sourceId, start: 0, end: 4 }]);
     // 表に入るのは、決めた列だけ（問いの文の列はない）
     const rows = s.w.db.raw.prepare('SELECT * FROM consult_notes').all() as Record<string, unknown>[];
-    expect(Object.keys(rows[0] ?? {}).sort()).toEqual(['entered_at', 'id', 'mode', 'patient_id', 'refs', 'text']);
+    expect(Object.keys(rows[0] ?? {}).sort()).toEqual(['edited', 'entered_at', 'id', 'mode', 'patient_id', 'refs', 'text', 'updated_at']);
     expect(JSON.stringify(rows)).not.toContain('照合用');
 
     // 形の違う頼み（問いの文の欄など）は受け取らない。選別の鍵がなければ 503
@@ -261,11 +263,17 @@ describe('相談の窓口（段M）', () => {
     expect((await s.w.call('DELETE', `/api/consult-notes/${id}`, { cookie: s.cookie })).status).toBe(404);
     expect((await s.record()).consultNotes).toEqual([]);
 
-    // 患者を消すと、残した答えも消える
+    // 残した・消した記録（文は持たない）
+    const log = s.w.db.raw.prepare('SELECT * FROM consult_note_history ORDER BY id').all() as Record<string, unknown>[];
+    expect(log.map((r) => [r['action'], r['mode'], r['note_id']])).toEqual([['add', 'consult', id], ['delete', 'consult', id]]);
+    expect(Object.keys(log[0] ?? {}).sort()).toEqual(['action', 'at', 'id', 'mode', 'note_id', 'patient_id']);
+
+    // 患者を消すと、残した答えも、その記録も消える
     expect((await s.keep({ mode: 'record', text: '・K の補正は入院1日目から（架空）', refs: [] })).status).toBe(200);
     expect(s.w.db.raw.prepare('SELECT count(*) AS n FROM consult_notes').get()).toEqual({ n: 1 });
     expect((await s.w.call('DELETE', `/api/patients/${s.patientId}`, { cookie: s.cookie })).status).toBe(200);
     expect(s.w.db.raw.prepare('SELECT count(*) AS n FROM consult_notes').get()).toEqual({ n: 0 });
+    expect(s.w.db.raw.prepare('SELECT count(*) AS n FROM consult_note_history').get()).toEqual({ n: 0 });
   });
 
   test('選別が失敗したら、残さない', async () => {
@@ -276,5 +284,92 @@ describe('相談の窓口（段M）', () => {
     const r = await w.call('POST', `/api/patients/${created.patient.id}/consult-notes`, { cookie, body: { mode: 'consult', text: '・答え（架空）', refs: [] } });
     expect(r.status).toBe(502);
     expect(w.db.raw.prepare('SELECT count(*) AS n FROM consult_notes').get()).toEqual({ n: 0 });
+  });
+
+  test('残した答えを直す（CA-083）：打った字を選別に通して置き換え、「先生が直した」の印と記録を残す。前の字は残らない', async () => {
+    const s = await setup({ consult: CONSULT });
+    expect((await s.keep({ mode: 'consult', text: '・まず胸部画像を確かめる（架空・直す前）', refs: [] })).status).toBe(200);
+    const before = (await s.record()).consultNotes[0];
+    expect(before?.edited).toBe(false);
+    expect(before?.updatedAt).toBe(before?.enteredAt);
+    const id = before?.id ?? '';
+    const used = usage(s);
+    const patched = await s.w.call('PATCH', `/api/consult-notes/${id}`, { cookie: s.cookie, body: { text: `・${NAME}さんは、胸部CT を先に確かめる（架空・直した後）` } });
+    expect(patched.status).toBe(200);
+    expect(usage(s) - used).toBe(1);
+    const after = (await s.record()).consultNotes[0];
+    expect(after?.edited).toBe(true);
+    expect(after?.mode).toBe('consult');
+    expect(after?.text).toContain('胸部CT を先に確かめる');
+    // 選別を通した後の字（名前は置き換わる）。前の字は、どの表にも残らない
+    expect(after?.text).not.toContain(NAME);
+    expect(everything(s)).not.toContain('直す前');
+    const log = s.w.db.raw.prepare('SELECT action, mode FROM consult_note_history ORDER BY id').all();
+    expect(log).toEqual([{ action: 'add', mode: 'consult' }, { action: 'edit', mode: 'consult' }]);
+    expect(JSON.stringify(s.w.db.raw.prepare('SELECT * FROM consult_note_history').all())).not.toContain('胸部');
+
+    // 形の違う頼み・ない答え
+    expect((await s.w.call('PATCH', `/api/consult-notes/${id}`, { cookie: s.cookie, body: { text: '' } })).status).toBe(400);
+    expect((await s.w.call('PATCH', `/api/consult-notes/${id}`, { cookie: s.cookie, body: { text: '字', mode: 'record' } })).status).toBe(400);
+    expect((await s.w.call('PATCH', '/api/consult-notes/01HZZZZZZZZZZZZZZZZZZZZZZZ', { cookie: s.cookie, body: { text: '字' } })).status).toBe(404);
+  });
+
+  test('前の受診の記録も資料にする（CA-084）：選んだときだけ、前の受診の記載が AI に渡る。答えに、範囲の数が付く', async () => {
+    const s = await setup({ consult: CONSULT });
+    // いまの受診の前に、外来の受診と記載を足す
+    const older = (await (await s.w.call('POST', `/api/patients/${s.patientId}/encounters`, { cookie: s.cookie, body: { kind: 'outpatient', start: '2026-10-01T09:00' } })).json()) as { encounter: { id: string } };
+    const saved = await s.w.call('POST', `/api/encounters/${older.encounter.id}/sources`, { cookie: s.cookie, body: { kind: 'outpatient_first', authorRole: 'self', at: '2026-10-01T09:30', text: '健診で胸部異常影を指摘された（架空の前の受診）。' } });
+    expect(saved.status).toBe(200);
+
+    const now = ((await (await s.consult({ question: '方針は？', turns: [], web: false, past: false })).json()) as { answer: ConsultReply }).answer;
+    expect(now.scope).toEqual({ records: 1, encounters: 1, past: false });
+    expect(s.organizer.consulted[0]).not.toContain('胸部異常影');
+
+    const all = ((await (await s.consult({ question: '方針は？', turns: [], web: false, past: true })).json()) as { answer: ConsultReply }).answer;
+    expect(all.scope).toEqual({ records: 2, encounters: 2, past: true });
+    const sent = JSON.parse(s.organizer.consulted[1] ?? '{}') as { records: { text: string; encounter: string }[]; encounters: unknown[] };
+    expect(sent.records.map((r) => r.encounter)).toEqual(['外来 2026-10-01 09:00〜', expect.stringContaining('入院') as string]);
+    expect(sent.records[0]?.text).toContain('胸部異常影');
+    expect(sent.encounters).toHaveLength(2);
+  });
+
+  test('確かめた文から順に返す（CA-085）：いま何をしているか → 確かめた後の文 → 最後の答え。出さない文・確かめる前の字は流れない。保存しない', async () => {
+    const rag = ragFake();
+    const s = await setup({ consultTerms: () => ({ ok: true, answer: { terms: ['経口スイッチ'] } }), consult: CONSULT }, { books: rag.books });
+    const tablesBefore = everything(s);
+    const res = await s.consult({ question: QUESTION, turns: [], web: false, past: false, stream: true });
+    expect(res.status).toBe(200);
+    expect(res.headers.get('content-type')).toContain('application/x-ndjson');
+    expect(res.headers.get('cache-control')).toBe('no-store');
+    const raw = await res.text();
+    const events = raw.trim().split('\n').map((l) => JSON.parse(l) as ConsultEvent);
+    const stages = events.flatMap((e) => ('stage' in e ? [e.stage] : []));
+    expect(stages).toEqual(['terms', 'references', 'answer']);
+    const statements = events.flatMap((e) => ('statement' in e ? [e.statement] : []));
+    const done = events.at(-1);
+    if (done === undefined || !('done' in done)) throw new Error('最後の答えがない');
+    // 流れた文は、書かれた順の、確かめに通った文（用量のある出典なしの文は流れない）。最後の答えは、同じ文を見出しの順に並べたもの
+    expect(statements.map((x) => x.section)).toEqual(['treatment', 'summary', 'workup']);
+    expect(raw).not.toContain('セフトリアキソン');
+    expect(statements.find((x) => x.section === 'summary')?.text.endsWith('（推論）')).toBe(true);
+    expect(done.done.statements.map((x) => x.section)).toEqual(['summary', 'workup', 'treatment']);
+    expect(new Set(done.done.statements.map((x) => x.text))).toEqual(new Set(statements.map((x) => x.text)));
+    // ネットを頼んでいないので、W1 を指した文は、出典の記号が外れて（数える）、推論の文として流れる
+    expect(statements.find((x) => x.section === 'workup')?.inferred).toBe(true);
+    expect(done.done.rejected).toEqual({ dose: 1, unknown_ref: 2 });
+    expect(done.done.scope).toEqual({ records: 1, encounters: 1, past: false });
+    // 保存しない（変わるのは、日ごとの回数だけ）
+    expect(everything(s).replace(/"calls":\d+/gu, '')).toBe(tablesBefore.replace(/"calls":\d+/gu, ''));
+
+    // 誤りは、名前だけを1行で返す（記載がない・上限）
+    const empty = await setup({}, {}, { note: false });
+    const e = await empty.consult({ question: '方針は？', turns: [], web: false, past: false, stream: true });
+    expect((await e.text()).trim()).toBe(JSON.stringify({ error: 'consult_empty' }));
+    const limited = await setup({}, { dailyAiLimit: 50 });
+    limited.w.db.raw.exec('UPDATE usage_daily SET calls = 50');
+    const l = await limited.consult({ question: '方針は？', turns: [], web: false, past: false, stream: true });
+    expect((await l.text()).trim()).toBe(JSON.stringify({ error: 'ai_limit' }));
+    // 識別情報の形・形の違う頼みは、流す前に断る
+    expect((await s.consult({ question: `${['090', '1234', '5678'].join('-')} へ`, turns: [], web: false, past: false, stream: true })).status).toBe(422);
   });
 });

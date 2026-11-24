@@ -213,7 +213,8 @@ AI が返すのは、次の3つだけ（構造化した出力）。
 | `order_sheets` | 本人が指示簿に足す（先生が打った・テンプレから・AI の案を採用した・記録の文から写した項目。字は選別を通した後の字か、写した記載のその場所の字そのまま）・直す・中止／再開する・体重と段を選ぶ・消すとき・患者を消すとき（段K11。CA-074。受診ごとに1行） |
 | `order_edits` | 本人が指示簿を直したとき（段K11。どの項目に何をしたかと、誰が入れた項目か。**文は入らない**）・患者を消すとき |
 | `order_templates` | 本人がスケールのテンプレを作る・直す・外すとき（段K11。CA-075。**患者に付かない**。字は識別情報の形の検査を通す。外すときは行を消さず `removed_at`） |
-| `consult_notes` | 本人が相談の窓口の答えを「残す」・消すとき（段M。CA-081。文は選別を通した後の字。**問いの文・前のやりとり・AI の答えそのものは入らない**）・患者を消すとき |
+| `consult_notes` | 本人が相談の窓口の答えを「残す」・直す・消すとき（段M。CA-081・CA-083。文は選別を通した後の字。**問いの文・前のやりとり・AI の答えそのものは入らない**）・患者を消すとき |
+| `consult_note_history` | 本人が相談の窓口の答えを残した・直した・消したとき（段M2。CA-083。どの答えに何をしたかと、どちらの答えかだけ。**文は入らない**）・患者を消すとき |
 | `sources` の `send_key` | 本人の入力（段K9。CA-072。送るボタンを押したときに画面が作る ULID。同じ受診に同じ鍵の文があれば、保存し直さない） |
 | `devices` | 端末の登録・外すとき・その日はじめて使ったとき（1日に1回） |
 | `entrance_daily` | 合鍵を間違えたとき |
@@ -223,7 +224,7 @@ AI が返すのは、次の3つだけ（構造化した出力）。
 
 - 打った原文・AI へ送った文・AI の答えそのものは、どの表にも書かない。ログにも出さない。
 - 表を足すときは、先にこの一覧を直す。
-- いまある表（段0〜段5）は `devices`・`entrance_daily`・`patients`・`encounters`・`sources`・`observations`・`usage_daily`・`schema_migrations`・`segments`・`medications`・`events`・`problems`・`problem_threads`・`history`・`fact_edits`・`user_edits`・`ap_notes`・`ap_history`・`scale_links`・`documents`・`document_history`・`handoffs`・`course_items`・`problem_lists`・`problem_list_edits`・`clinical_support`・`pending_results`・`pending_result_edits`・`plan_checks`・`plan_check_edits`・`casebook_links`・`order_sheets`・`order_edits`・`order_templates`・`consult_notes`。記録への質問（段K6。CA-066）と、前の記載との違い（段K7。CA-068）と、水分の出入りの集計・受け持ちを横断する検索（段K8。CA-069・CA-070）は、どの表にも書かない。`apps/worker/test/writes.test.ts` が、migrations が作る表と、ソースの SQL が書く表を、この一覧と突き合わせる。
+- いまある表（段0〜段5）は `devices`・`entrance_daily`・`patients`・`encounters`・`sources`・`observations`・`usage_daily`・`schema_migrations`・`segments`・`medications`・`events`・`problems`・`problem_threads`・`history`・`fact_edits`・`user_edits`・`ap_notes`・`ap_history`・`scale_links`・`documents`・`document_history`・`handoffs`・`course_items`・`problem_lists`・`problem_list_edits`・`clinical_support`・`pending_results`・`pending_result_edits`・`plan_checks`・`plan_check_edits`・`casebook_links`・`order_sheets`・`order_edits`・`order_templates`・`consult_notes`・`consult_note_history`。記録への質問（段K6。CA-066）と、前の記載との違い（段K7。CA-068）と、水分の出入りの集計・受け持ちを横断する検索（段K8。CA-069・CA-070）は、どの表にも書かない。`apps/worker/test/writes.test.ts` が、migrations が作る表と、ソースの SQL が書く表を、この一覧と突き合わせる。
 
 ## 7. 段1 で作ったものと、案との違い
 
@@ -470,6 +471,18 @@ AI が返すのは、次の3つだけ（構造化した出力）。
 | `consult_notes` | id・patient_id・mode（どちらの答えか：consult〔書籍・ネットも踏まえた相談〕・record〔記録だけからの答え〕）・text（先生が「残す」を押した答えの字。**選別〔C-1〕を通した後の字**。見出し・「（推論）」・数の印「※」は字のまま入る）・refs（根拠の参照の JSON：記録の場所〔文の id と字の範囲〕・書籍の題と頁・ネットの題と URL。**本文は入らない**）・entered_at |
 
 - **残るのは、先生が「残す」を押した答えだけ**（CA-032 の改訂）。問いの文・前のやりとり・AI に送った資料・AI の答えそのもの・出典の抜き出し・外の検索に渡した語は、どの表にも書かず、ログにも出さない（画面のメモリだけ）。残さなかった答えは、読み込み直すと消える。
-- 残した答えは、直せない（消して、残し直す）。なので、直した記録の表は作らない。記録の参照（`k: record`）は、その患者の文を指すものだけを残す（ほかは、残すときに外す）。
+- 記録の参照（`k: record`）は、その患者の文を指すものだけを残す（ほかは、残すときに外す）。
 - 残した答えは、整理・プロブレムリスト・臨床支援・カルテ記載の資料に**入れない**（AI の文を、次の AI の根拠にしない）。出るのは、相談の窓口の「残した答え」の一覧だけ。
 - 患者を消すと消える（`PATIENT_TABLES`）。数えるのは `usage_daily` の回数だけ（検索の語を取り出す・ネットの出典を探す・答えるの、それぞれ1回。残すときの選別の1回）。
+
+### 段M2 で足したもの（CA-082〜CA-085。`apps/worker/migrations/0020_consult_edits.sql`）
+
+| 表 | 列 |
+|---|---|
+| `consult_notes` に足した列 | edited（残した後に、先生が直したか。0・1。直すと 1）・updated_at（直した日時。直していなければ NULL：読むときは entered_at として扱う） |
+| `consult_note_history` | id・patient_id・at・note_id・action（add・edit・delete）・mode（どちらの答えか）。**文は持たない**（カルテ記載の `document_history` と同じ考え） |
+
+- **残した答えを直す**（CA-083）：先生が打った字を、選別（C-1）を通してから、text を置き換える（前の字は残さない）。`edited = 1`。印は「AI の相談（先生が直した）」「AI が記録から答えた（先生が直した）」。参照（refs）は変えない。
+- **答えの文を、記載の下書きと指示簿へ入れる**（CA-082）：表は足していない。記載は、画面の下書き（メモリ）に足すだけで、残るのは、これまでどおり `documents`（先生が「保存する」を押したとき。選別を通す。AI の文を足した下書きは `ai_edited`）。指示簿は、これまでどおり `order_sheets`・`order_edits`（origin は `ai`。字は選別を通す。根拠の短い名前と、資料・出典に見つからない数の印を持つ）。
+- **前の受診の記録も資料にする**（CA-084）・**答えを確かめた文から順に出す**（CA-085）：どちらも、何も保存しない（表は変わらない）。
+- 患者を消すと、`consult_note_history` も消える（`PATIENT_TABLES`）。

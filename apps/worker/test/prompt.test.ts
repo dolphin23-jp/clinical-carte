@@ -430,6 +430,9 @@ describe('相談の窓口の指示（段M。CA-081）', () => {
     expect(CONSULT_SYSTEM).toContain('最終判断は医師がします');
     expect(CONSULT_SYSTEM).toContain('あなたは診断を決めません');
     expect(CONSULT_SYSTEM).toContain('まず、相談に答えます');
+    // 前の受診の記録も資料にするとき（CA-084）：前の受診の記載を、いまの状態と混ぜない
+    expect(CONSULT_SYSTEM).toContain('前の受診の記載は、その時点の事実として扱います');
+    expect(CONSULT_SYSTEM).toContain('いまの受診の状態と混ぜません');
     expect(CONSULT_SYSTEM).toContain('記録に書かれていない患者の事実（症状・所見・既往・検査の結果・行った治療・説明）を作りません');
     expect(CONSULT_SYSTEM).toContain('陰性・正常と決めません');
     expect(CONSULT_SYSTEM).toContain('資料と出典の引用にない用量・閾値・目標値を書きません');
@@ -461,7 +464,7 @@ describe('相談の窓口の指示（段M。CA-081）', () => {
 
   test('指示を変えたら、版を上げる', () => {
     const digest = (t: string): string => createHash('sha256').update(t).digest('hex').slice(0, 16);
-    expect({ consult: [CONSULT_PROMPT_VERSION, digest(CONSULT_SYSTEM)], terms: [CONSULT_TERMS_PROMPT_VERSION, digest(CONSULT_TERMS_SYSTEM)] }).toEqual({ consult: ['consult-1', '75f80ab1250f0fd7'], terms: ['consult-terms-1', 'ed72a135beb12197'] });
+    expect({ consult: [CONSULT_PROMPT_VERSION, digest(CONSULT_SYSTEM)], terms: [CONSULT_TERMS_PROMPT_VERSION, digest(CONSULT_TERMS_SYSTEM)] }).toEqual({ consult: ['consult-2', 'b10274e363c3de7e'], terms: ['consult-terms-1', 'ed72a135beb12197'] });
   });
 });
 

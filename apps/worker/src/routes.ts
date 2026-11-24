@@ -27,6 +27,7 @@ import {
   AskRequest,
   consultHasShapes,
   ConsultNoteNew,
+  ConsultNotePatch,
   ConsultRequest,
   findShapes,
   headline,
@@ -62,7 +63,7 @@ import type { z } from 'zod';
 import type { Db } from './db.ts';
 import { addApNotes, type ApOutcome, deleteApNote, patchApNote } from './ap.ts';
 import { askRecord } from './ask.ts';
-import { addConsultNote, consultPatient, deleteConsultNote } from './consult.ts';
+import { addConsultNote, type ConsultOutcome, consultPatient, deleteConsultNote, patchConsultNote } from './consult.ts';
 import { ensureCasebookLink, patchCasebookLink } from './casebook.ts';
 import { generateSupport } from './clinicalsupport.ts';
 import { addDocument, addHandoff, type CallGate, deleteDocument, deleteHandoff, documentMaterialFor, patchHandoff, gatherReferences, generateDocument, patchDocument, reviseDocument, type SaveOutcome, talkHasShapes } from './documents.ts';
@@ -125,6 +126,8 @@ export interface RecordDeps {
 export interface Reply {
   readonly status: number;
   readonly body: unknown;
+  /** 少しずつ返す答え（相談の窓口。CA-085）：1行に1つの JSON を、書けた順に返す。あれば、body の代わりに使う（handler.ts） */
+  readonly lines?: (write: (event: unknown) => void) => Promise<void>;
 }
 
 const reply = (status: number, body: unknown): Reply => ({ status, body });
@@ -645,14 +648,27 @@ export async function recordApi(request: Request, path: string, deps: RecordDeps
     if (body === null) return bad();
     if (deps.organizer === null) return reply(503, { error: 'no_ai' });
     if (consultHasShapes(body)) return reply(422, { error: 'shape' });
-    const r = await consultPatient(db, patientId, body, { organizer: deps.organizer, books: deps.books, gate, today });
-    if (!r.ok) {
+    const organizer = deps.organizer;
+    const failure = (r: Exclude<ConsultOutcome, { ok: true }>): Reply => {
       if (r.reason === 'not_found') return missing();
       if (r.reason === 'empty') return reply(422, { error: 'consult_empty' });
       if (r.reason === 'ai_limit') return reply(429, { error: 'ai_limit' });
       return aiFailed(r.failure);
+    };
+    // 少しずつ返す（CA-085）：いま何をしているか → 確かめた後の文 → 最後の答え（done）か、誤りの名前（error）。確かめる前の字は返さない
+    if (body.stream === true) {
+      return {
+        status: 200,
+        body: null,
+        lines: async (write) => {
+          const r = await consultPatient(db, patientId, body, { organizer, books: deps.books, gate, today, emit: write });
+          if (r.ok) write({ done: r.reply });
+          else write({ error: (failure(r).body as { error: string }).error });
+        },
+      };
     }
-    return reply(200, { answer: r.reply });
+    const r = await consultPatient(db, patientId, body, { organizer, books: deps.books, gate, today });
+    return r.ok ? reply(200, { answer: r.reply }) : failure(r);
   }
 
   // 相談の答えを残す・消す（CA-081。CA-032 の改訂）：先生が「残す」を押した答えだけ。文は選別（C-1）を通す。問いの文は受け取らない
@@ -672,10 +688,25 @@ export async function recordApi(request: Request, path: string, deps: RecordDeps
     return reply(422, { error: 'selection_failed' });
   }
   const oneConsultNote = /^\/api\/consult-notes\/([^/]+)$/.exec(path);
+  // 残した答えを直す（CA-083）：先生が打った字を、選別（C-1）に通してから置き換える。「先生が直した」の印が付く
+  if (oneConsultNote && method === 'PATCH') {
+    const id = oneConsultNote[1] ?? '';
+    if (!isUlid(id)) return bad();
+    const body = await readBody(request, ConsultNotePatch);
+    if (body === null) return bad();
+    if (deps.selector === null) return reply(503, { error: 'no_ai' });
+    if (!(await gate.take())) return reply(429, { error: 'ai_limit' });
+    const r = await patchConsultNote(db, id, body, deps.selector, runtime);
+    if (r.ok) return reply(200, { id: r.id });
+    if (r.error === 'not_found') return missing();
+    if (r.error === 'empty') return bad();
+    if (r.error === 'ai') return aiFailed(r.failure);
+    return reply(422, { error: 'selection_failed' });
+  }
   if (oneConsultNote && method === 'DELETE') {
     const id = oneConsultNote[1] ?? '';
     if (!isUlid(id)) return bad();
-    return (await deleteConsultNote(db, id)) ? reply(200, { removed: id }) : missing();
+    return (await deleteConsultNote(db, id, runtime)) ? reply(200, { removed: id }) : missing();
   }
 
   // 数の印の照らし合わせの表（段I）：AI を使わない（残した記載を開いたときの印に使う）。数だけを返す

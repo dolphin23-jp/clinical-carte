@@ -314,24 +314,45 @@ export function createAnthropicOrganizer(options: AnthropicOptions): Organizer {
       }
     },
     // 相談の窓口（段M。CA-081）。送るのは、記録から作った資料・出典の抜き出し・前のやりとり・先生の問い（core の consultMessage）。問いも答えも、保存もログもしない
-    async consult(message: string): Promise<ConsultResult> {
+    // onText があれば、少しずつ受け取る（CA-085）：書いている途中の JSON の字（先頭から）を渡す。確かめるのは、呼ぶ側（core の partialStatements・checkConsultStatement）。
+    // 最後の答えは、どちらの道でも、全体を読み直して確かめる
+    async consult(message: string, onText?: (snapshot: string) => void): Promise<ConsultResult> {
       try {
-        const response = await client.beta.messages.parse(
-          {
-            model: options.model,
-            max_tokens: 32000,
-            betas: ['server-side-fallback-2026-07-01'],
-            fallbacks: 'default',
-            cache_control: { type: 'ephemeral' },
-            system: CONSULT_SYSTEM,
-            output_config: { effort: 'high', format: zodOutputFormat(ConsultAnswer) },
-            messages: [{ role: 'user', content: message }],
-          },
-          { timeout: 300_000 },
-        );
+        const params = {
+          model: options.model,
+          max_tokens: 32000,
+          betas: ['server-side-fallback-2026-07-01' as const],
+          fallbacks: 'default' as const,
+          cache_control: { type: 'ephemeral' as const },
+          system: CONSULT_SYSTEM,
+          output_config: { effort: 'high' as const, format: zodOutputFormat(ConsultAnswer) },
+          messages: [{ role: 'user' as const, content: message }],
+        };
+        let response: { stop_reason: string | null; parsed_output?: unknown; content: readonly { type: string; text?: string }[] };
+        if (onText === undefined) response = await client.beta.messages.parse(params, { timeout: 300_000 });
+        else {
+          const stream = client.beta.messages.stream(params, { timeout: 300_000 });
+          stream.on('text', (_delta, snapshot) => {
+            try {
+              onText(snapshot);
+            } catch {
+              // 途中の知らせの失敗は、答えを止めない
+            }
+          });
+          response = await stream.finalMessage();
+        }
         if (response.stop_reason === 'refusal') return { ok: false, reason: 'refused' };
         if (response.stop_reason !== 'end_turn') return { ok: false, reason: 'bad_answer' };
-        const parsed = ConsultAnswer.safeParse(response.parsed_output);
+        let output: unknown = response.parsed_output;
+        if (output === undefined || output === null) {
+          // 少しずつ受け取る道で、読んだ形が付いてこないときは、字を JSON として読む
+          try {
+            output = JSON.parse(response.content.map((c) => (c.type === 'text' ? (c.text ?? '') : '')).join(''));
+          } catch {
+            return { ok: false, reason: 'bad_answer' };
+          }
+        }
+        const parsed = ConsultAnswer.safeParse(output);
         return parsed.success ? { ok: true, answer: parsed.data } : { ok: false, reason: 'bad_answer' };
       } catch (error) {
         if (error instanceof Anthropic.APIError) return { ok: false, reason: 'unavailable' };

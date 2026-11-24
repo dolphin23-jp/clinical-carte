@@ -93,7 +93,9 @@ export async function startDevServer(options: { dist: string; key: string | unde
       });
       const cookies = response.headers.getSetCookie();
       if (cookies.length > 0) res.setHeader('set-cookie', cookies);
-      res.end(Buffer.from(await response.arrayBuffer()));
+      // 少しずつ返す答え（相談の窓口）は、届いた順に流す（本番と同じ）
+      if (response.body !== null) for await (const chunk of response.body) res.write(chunk);
+      res.end();
     })().catch(() => {
       res.statusCode = 500;
       res.end();

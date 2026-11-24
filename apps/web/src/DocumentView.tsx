@@ -18,6 +18,7 @@ import {
   DOC_TYPE_NAMES,
   DOC_TYPES,
   DOC_TYPES_FOR,
+  type ConsultPick,
   type DocNotes,
   type DocType,
   HANDOFF_HEADINGS,
@@ -170,6 +171,8 @@ export function DocumentView({
   selectedDay,
   onChanged,
   onLeft,
+  picks = [],
+  onPickUsed,
 }: {
   record: PatientRecord;
   encounter: Encounter;
@@ -179,6 +182,10 @@ export function DocumentView({
   selectedDay: string | null;
   onChanged: () => void;
   onLeft: () => void;
+  /** 相談の窓口で「記載へ」を押した文（CA-082。画面のメモリだけ）。下書きの見出しに、先生が1つずつ足す */
+  picks?: readonly ConsultPick[];
+  /** 足した・外した候補を、候補から外す */
+  onPickUsed?: (key: string) => void;
 }) {
   const offered = DOC_TYPES_FOR[encounter.kind];
   const [type, setType] = useState<DocType>(offered[0] ?? 'progress');
@@ -275,6 +282,20 @@ export function DocumentView({
       const sections = r.value.document.sections.map((x, i) => ({ ...x, refs: x.refs.length > 0 ? x.refs : (work.sections[i]?.refs ?? []) }));
       setWork({ ...work, sections, dirty: true, backing: r.value.backing, notes: r.value.document.notes, refLabels: r.value.refs.length > 0 ? r.value.refs : work.refLabels, webFailed: false });
     });
+  };
+
+  // 相談の答えの文を、下書きの見出しに足す（CA-082）。足すだけで、残るのは「保存する」を押したとき（選別を通す）。
+  // AI の文が入るので、先生が書いた下書きでも、印は「AI が書いて先生が直した」になる
+  const insertPick = (index: number, pick: ConsultPick) => {
+    if (work === null) return;
+    const sections = work.sections.map((y, j) => {
+      if (j !== index) return y;
+      const seen = new Set(y.refs.map((r) => JSON.stringify(r)));
+      const added = pick.refs.filter((r) => !seen.has(JSON.stringify(r)));
+      return { ...y, text: (y.text.trim() === '' ? pick.text : `${y.text.trimEnd()}\n${pick.text}`).slice(0, DOC_SECTION_MAX), refs: [...y.refs, ...added].slice(0, 20) };
+    });
+    setWork({ ...work, sections, origin: 'ai', edited: true, dirty: true });
+    onPickUsed?.(pick.key);
   };
 
   const save = () => {
@@ -493,6 +514,32 @@ export function DocumentView({
         </p>
       )}
 
+      {picks.length > 0 && (
+        <div className="doc-pick-tray" data-testid="doc-pick-tray">
+          <p className="note">
+            相談の答えから足す候補が {String(picks.length)} 件あります。
+            {work === null ? '記載を「出す」か、見出しだけで書き始めると、見出しごとに足せます。' : '下の見出しごとの「相談の答えから足す」で、足す見出しを選びます。足しただけでは残りません（残るのは「保存する」を押したとき）。'}
+          </p>
+          <ul className="doc-pick-list">
+            {picks.map((pick) => (
+              <li key={pick.key}>
+                <span className="doc-pick-text">{pick.text}</span>
+                <button
+                  type="button"
+                  className="chip small"
+                  onClick={() => {
+                    onPickUsed?.(pick.key);
+                  }}
+                  data-testid="doc-pick-drop"
+                >
+                  候補から外す
+                </button>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
       {work !== null && (
         <section className="doc card-inner" data-testid="doc" aria-label="記載">
           <div className="doc-head">
@@ -570,6 +617,28 @@ export function DocumentView({
                 </p>
               )}
               {x.refs.length > 0 && <p className="doc-refs">根拠：{x.refs.map((r) => refText(r, record)).join('・')}</p>}
+              {picks.length > 0 && (
+                <details className="doc-picks" data-testid="doc-picks">
+                  <summary>相談の答えから足す（{String(picks.length)}）</summary>
+                  <ul className="doc-pick-list">
+                    {picks.map((pick) => (
+                      <li key={pick.key}>
+                        <span className="doc-pick-text">{pick.text}</span>
+                        <button
+                          type="button"
+                          className="chip small"
+                          onClick={() => {
+                            insertPick(i, pick);
+                          }}
+                          data-testid="doc-pick-insert"
+                        >
+                          【{x.heading}】に足す
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                </details>
+              )}
             </div>
           ))}
 

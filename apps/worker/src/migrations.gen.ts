@@ -196,5 +196,14 @@ export const MIGRATIONS: readonly Migration[] = [
       "CREATE TABLE IF NOT EXISTS consult_notes ( id TEXT PRIMARY KEY, patient_id TEXT NOT NULL REFERENCES patients (id) ON DELETE CASCADE, mode TEXT NOT NULL CHECK (mode IN ('consult', 'record')), text TEXT NOT NULL, refs TEXT NOT NULL, entered_at TEXT NOT NULL CHECK (length(entered_at) = 16) )",
       "CREATE INDEX IF NOT EXISTS consult_notes_by_patient ON consult_notes (patient_id, entered_at)"
     ]
+  },
+  {
+    "name": "0020_consult_edits",
+    "statements": [
+      "ALTER TABLE consult_notes ADD COLUMN edited INTEGER NOT NULL DEFAULT 0 CHECK (edited IN (0, 1))",
+      "ALTER TABLE consult_notes ADD COLUMN updated_at TEXT CHECK (updated_at IS NULL OR length(updated_at) = 16)",
+      "CREATE TABLE IF NOT EXISTS consult_note_history ( id TEXT PRIMARY KEY, patient_id TEXT NOT NULL REFERENCES patients (id) ON DELETE CASCADE, at TEXT NOT NULL CHECK (length(at) = 16), note_id TEXT NOT NULL, action TEXT NOT NULL CHECK (action IN ('add', 'edit', 'delete')), mode TEXT NOT NULL CHECK (mode IN ('consult', 'record')) )",
+      "CREATE INDEX IF NOT EXISTS consult_note_history_by_patient ON consult_note_history (patient_id, at)"
+    ]
   }
 ];
