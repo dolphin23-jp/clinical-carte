@@ -56,12 +56,18 @@ export interface References {
   readonly webFailed: boolean;
 }
 
-/** 参照元を集める：書籍（設定があるとき）とネット（頼まれたとき）。送るのは問題の名前だけ */
-export async function gatherReferences(names: readonly string[], options: { web: boolean; books: BookSearcher | null; organizer: Organizer; gate: CallGate }): Promise<References> {
-  const books = options.books === null || names.length === 0 ? [] : bookSources(await options.books.search(names));
-  if (!options.web || names.length === 0) return { books, web: [], webFailed: false };
+/** 参照元を集める：書籍（設定があるとき）とネット（頼まれたとき）。送るのは問題の名前だけ（相談の窓口〔CA-081〕では、加えて、確かめた一般的な語） */
+export async function gatherReferences(
+  names: readonly string[],
+  options: { web: boolean; books: BookSearcher | null; organizer: Organizer; gate: CallGate; /** 相談の窓口（CA-081）だけ：問いから取り出して確かめた、一般的な語（core の cleanTerms を通ったもの） */ topics?: readonly string[] },
+): Promise<References> {
+  const topics = options.topics ?? [];
+  // 書籍の検索は先頭の5語まで（references.ts）：問いの語を3つまで先に、続けて問題の名前、残りの語。語がなければ、これまでどおり問題の名前だけ
+  const queries = [...new Set([...topics.slice(0, 3), ...names, ...topics.slice(3)])];
+  const books = options.books === null || queries.length === 0 ? [] : bookSources(await options.books.search(queries));
+  if (!options.web || queries.length === 0) return { books, web: [], webFailed: false };
   if (!(await options.gate.take())) return { books, web: [], webFailed: true };
-  const researched = await options.organizer.research(JSON.stringify({ problems: names }));
+  const researched = await options.organizer.research(JSON.stringify(topics.length === 0 ? { problems: names } : { problems: names, topics }));
   if (!researched.ok) return { books, web: [], webFailed: true };
   return { books, web: webSources(researched.hits), webFailed: false };
 }

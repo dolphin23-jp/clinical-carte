@@ -85,6 +85,27 @@ describe('クリップボードの境界（段K10。CA-073）', () => {
   });
 });
 
+describe('相談の窓口の境界（段M。CA-081）', () => {
+  const panel = files.find((f) => f.rel === 'ConsultPanel.tsx');
+  const text = code(panel?.text ?? '');
+
+  test('残す要求に入れるのは、どちらの答えか・答えの字・参照だけ（問いの文を送らない）', () => {
+    const note = /const note = ([^;]+);/u.exec(text)?.[1] ?? '';
+    expect(note).toContain('consultNoteText(entry.reply)');
+    expect(note).toContain('askNoteText(entry.reply)');
+    expect(note).not.toContain('question');
+    expect(text.match(/addConsultNote\(([^)]*)\)/gu)).toEqual(['addConsultNote(patientId, note)']);
+  });
+
+  test('送る前に、問い・前のやりとりの識別情報の形を確かめる（サーバーと同じ関数）。「臨床支援の草案・最終判断は先生」をいつも出す', () => {
+    expect(text.indexOf('consultHasShapes({ question, turns })')).toBeGreaterThan(-1);
+    expect(text.indexOf('consultHasShapes({ question, turns })')).toBeLessThan(text.indexOf('consultPatient(patientId'));
+    expect(text).toContain('臨床支援の草案です。最終判断は先生です。');
+    // 外へのリンクを作らない（出典は字で出す）
+    expect(text).not.toMatch(/<a\b|href=/u);
+  });
+});
+
 describe('常時表示の帯', () => {
   test('帯は、画面の全体（App）に1つ置き、どの状態でも出す（状態の分岐の外にある）', () => {
     const app = files.find((f) => f.rel === 'App.tsx');

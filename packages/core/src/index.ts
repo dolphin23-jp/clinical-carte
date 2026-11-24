@@ -43,3 +43,4 @@ export * from './orders/orders.ts';
 export * from './orders/scale.ts';
 export * from './orders/ai.ts';
 export * from './orders/board.ts';
+export * from './consult/consult.ts';

@@ -122,7 +122,9 @@ const AP_LABELS: readonly SegmentLabel[] = ['problem_heading', 'assessment', 'pl
 const SHRINKABLE: readonly SourceKind[] = ['progress_note', 'nursing', 'memo', 'unsorted', 'outpatient_revisit'];
 const valueOf = (o: AskObservation): string => `${o.comparator ?? ''}${o.valueText}${o.unit === null ? '' : ` ${o.unit}`}`;
 
-export function askMaterial(input: AskInput): AskMaterial {
+/** max は、資料の長さの上限（相談〔段M〕では、ほかの資料と合わせるので小さくする。既定は ASK_MATERIAL_MAX） */
+export function askMaterial(input: AskInput, options: { readonly max?: number } = {}): AskMaterial {
+  const max = options.max ?? ASK_MATERIAL_MAX;
   const scope = recentEncounters(input.encounters);
   const ids = new Set(scope.map((e) => e.id));
   const current = scope.at(-1);
@@ -171,7 +173,7 @@ export function askMaterial(input: AskInput): AskMaterial {
   };
 
   let built = build();
-  const tooLong = (): boolean => JSON.stringify(built.payload).length > ASK_MATERIAL_MAX;
+  const tooLong = (): boolean => JSON.stringify(built.payload).length > max;
   // 古い値 → 古い経過の出来事 → 古い経過・看護・メモの記載を評価と方針の部分だけに → 古い記載（いちばん新しい記載は残す）
   while (tooLong()) {
     if (values.length > 0) {

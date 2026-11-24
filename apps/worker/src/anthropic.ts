@@ -2,10 +2,10 @@
 // 答えは、決めた形（構造化した出力）で受け、確かめるのは core の applySelection。ここでは、保存もログもしない。
 import Anthropic from '@anthropic-ai/sdk';
 import { zodOutputFormat } from '@anthropic-ai/sdk/helpers/zod';
-import { AskAnswer, DocumentAnswer, LinkAnswer, OrganizeAnswerWire, organizeFromWire, PendingAnswer, PlanAnswer, ProblemListAnswer, ProposeAnswer, ReviseAnswer, SelectionAnswer, SupportAnswer, TranscribeAnswer } from '@clinical-carte/core';
+import { AskAnswer, ConsultAnswer, ConsultTermsAnswer, DocumentAnswer, LinkAnswer, OrganizeAnswerWire, organizeFromWire, PendingAnswer, PlanAnswer, ProblemListAnswer, ProposeAnswer, ReviseAnswer, SelectionAnswer, SupportAnswer, TranscribeAnswer } from '@clinical-carte/core';
 
-import type { AskResult, DocumentResult, LinkerResult, Organizer, OrganizerResult, PendingResultAnswer, PlanResultAnswer, ProblemListResult, ProposeResult, ResearchResult, ReviseResult, SupportResult, TranscribeResult } from './organizer.ts';
-import { ASK_SYSTEM, DOC_REVISE_SYSTEM, DOC_SYSTEM, LINK_SYSTEM, ORDER_PROPOSE_SYSTEM, ORDER_TRANSCRIBE_SYSTEM, PENDING_SYSTEM, PLAN_SYSTEM, PLIST_SYSTEM, ORGANIZE_PROMPTS, type OrganizePromptChoice, RESEARCH_SYSTEM, SELECT_SYSTEM, SUPPORT_SYSTEM, WEB_DOMAINS } from './prompt.ts';
+import type { AskResult, ConsultResult, ConsultTermsResult, DocumentResult, LinkerResult, Organizer, OrganizerResult, PendingResultAnswer, PlanResultAnswer, ProblemListResult, ProposeResult, ResearchResult, ReviseResult, SupportResult, TranscribeResult } from './organizer.ts';
+import { ASK_SYSTEM, CONSULT_SYSTEM, CONSULT_TERMS_SYSTEM, DOC_REVISE_SYSTEM, DOC_SYSTEM, LINK_SYSTEM, ORDER_PROPOSE_SYSTEM, ORDER_TRANSCRIBE_SYSTEM, PENDING_SYSTEM, PLAN_SYSTEM, PLIST_SYSTEM, ORGANIZE_PROMPTS, type OrganizePromptChoice, RESEARCH_SYSTEM, SELECT_SYSTEM, SUPPORT_SYSTEM, WEB_DOMAINS } from './prompt.ts';
 import type { WebHit } from './references.ts';
 import type { Selector, SelectorResult } from './selector.ts';
 
@@ -282,6 +282,56 @@ export function createAnthropicOrganizer(options: AnthropicOptions): Organizer {
         if (response.stop_reason === 'refusal') return { ok: false, reason: 'refused' };
         if (response.stop_reason !== 'end_turn') return { ok: false, reason: 'bad_answer' };
         const parsed = PlanAnswer.safeParse(response.parsed_output);
+        return parsed.success ? { ok: true, answer: parsed.data } : { ok: false, reason: 'bad_answer' };
+      } catch (error) {
+        if (error instanceof Anthropic.APIError) return { ok: false, reason: 'unavailable' };
+        return { ok: false, reason: 'bad_answer' };
+      }
+    },
+    // 相談の窓口（段M。CA-081）の、外の検索の語。送るのは、先生の問いと問題の名前だけ（記録は送らない）。語を返すだけの軽い仕事なので、深さは low
+    async consultTerms(message: string): Promise<ConsultTermsResult> {
+      try {
+        const response = await client.beta.messages.parse(
+          {
+            model: options.model,
+            max_tokens: 4000,
+            betas: ['server-side-fallback-2026-07-01'],
+            fallbacks: 'default',
+            cache_control: { type: 'ephemeral' },
+            system: CONSULT_TERMS_SYSTEM,
+            output_config: { effort: 'low', format: zodOutputFormat(ConsultTermsAnswer) },
+            messages: [{ role: 'user', content: message }],
+          },
+          { timeout: 60_000 },
+        );
+        if (response.stop_reason === 'refusal') return { ok: false, reason: 'refused' };
+        if (response.stop_reason !== 'end_turn') return { ok: false, reason: 'bad_answer' };
+        const parsed = ConsultTermsAnswer.safeParse(response.parsed_output);
+        return parsed.success ? { ok: true, answer: parsed.data } : { ok: false, reason: 'bad_answer' };
+      } catch (error) {
+        if (error instanceof Anthropic.APIError) return { ok: false, reason: 'unavailable' };
+        return { ok: false, reason: 'bad_answer' };
+      }
+    },
+    // 相談の窓口（段M。CA-081）。送るのは、記録から作った資料・出典の抜き出し・前のやりとり・先生の問い（core の consultMessage）。問いも答えも、保存もログもしない
+    async consult(message: string): Promise<ConsultResult> {
+      try {
+        const response = await client.beta.messages.parse(
+          {
+            model: options.model,
+            max_tokens: 32000,
+            betas: ['server-side-fallback-2026-07-01'],
+            fallbacks: 'default',
+            cache_control: { type: 'ephemeral' },
+            system: CONSULT_SYSTEM,
+            output_config: { effort: 'high', format: zodOutputFormat(ConsultAnswer) },
+            messages: [{ role: 'user', content: message }],
+          },
+          { timeout: 300_000 },
+        );
+        if (response.stop_reason === 'refusal') return { ok: false, reason: 'refused' };
+        if (response.stop_reason !== 'end_turn') return { ok: false, reason: 'bad_answer' };
+        const parsed = ConsultAnswer.safeParse(response.parsed_output);
         return parsed.success ? { ok: true, answer: parsed.data } : { ok: false, reason: 'bad_answer' };
       } catch (error) {
         if (error instanceof Anthropic.APIError) return { ok: false, reason: 'unavailable' };

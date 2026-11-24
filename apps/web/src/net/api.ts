@@ -50,6 +50,10 @@ import type {
   SourceKind,
   SupportBody,
   AskReply,
+  ConsultNote,
+  ConsultNoteNew,
+  ConsultReply,
+  ConsultRequest,
   PendingBody,
   PendingMark,
   PlanBody,
@@ -95,6 +99,7 @@ export type ApiError =
   | 'list_empty'
   | 'support_empty'
   | 'ask_empty'
+  | 'consult_empty'
   | 'orders_empty'
   | 'shape'
   | 'bad_span'
@@ -123,6 +128,7 @@ const KNOWN: readonly ApiError[] = [
   'list_empty',
   'support_empty',
   'ask_empty',
+  'consult_empty',
   'orders_empty',
   'shape',
   'bad_span',
@@ -471,6 +477,8 @@ export interface PatientRecord {
   readonly orders: readonly OrderSheetView[];
   /** スケールのテンプレ（段K11。全患者に共通） */
   readonly orderTemplates: readonly ScaleTemplate[];
+  /** 相談の窓口で、先生が残した答え（段M。CA-081。新しい順） */
+  readonly consultNotes: readonly ConsultNote[];
   /** サーバーの、今日（日本の日） */
   readonly today: string;
 }
@@ -502,7 +510,7 @@ export async function createPatient(input: NewPatient): Promise<Result<Patient>>
 export async function getRecord(patientId: string): Promise<Result<PatientRecord>> {
   const result = await call('GET', `patients/${encodeURIComponent(patientId)}`);
   if (!result.ok) return result;
-  const { patient, encounters, sources, observations, segments, medications, events, problems, problemThreads, history, factEdits, userEdits, apNotes, scaleLinks, documents, handoffs, course, problemList, support, pending, plans, casebook, orders, orderTemplates, today } = result.value;
+  const { patient, encounters, sources, observations, segments, medications, events, problems, problemThreads, history, factEdits, userEdits, apNotes, scaleLinks, documents, handoffs, course, problemList, support, pending, plans, casebook, orders, orderTemplates, consultNotes, today } = result.value;
   const lists = [encounters, sources, observations, segments, medications, events, problems, problemThreads, history, factEdits, userEdits, apNotes, scaleLinks, documents, handoffs, course];
   if (!isRecord(patient) || lists.some((l) => !Array.isArray(l)) || typeof today !== 'string') return { ok: false, error: 'network' };
   return {
@@ -532,6 +540,7 @@ export async function getRecord(patientId: string): Promise<Result<PatientRecord
       casebook: Array.isArray(casebook) ? (casebook as CasebookLinkView[]) : [],
       orders: Array.isArray(orders) ? (orders as OrderSheetView[]) : [],
       orderTemplates: Array.isArray(orderTemplates) ? (orderTemplates as ScaleTemplate[]) : [],
+      consultNotes: Array.isArray(consultNotes) ? (consultNotes as ConsultNote[]) : [],
       today,
     },
   };
@@ -897,6 +906,25 @@ export async function markPlan(patientId: string, key: string, mark: PlanMark): 
 /** 記録に聞く（保存しない。問いも答えも、画面のメモリだけ） */
 export async function askRecord(patientId: string, question: string): Promise<Result<AskReply>> {
   return field<AskReply>(await call('POST', `patients/${encodeURIComponent(patientId)}/ask`, { question }), 'answer');
+}
+
+// --- 相談の窓口（段M。CA-081）
+
+/** 待つ時間の上限：検索の語・ネットの出典・答えの3回を待つ */
+export const CONSULT_TIMEOUT_MS = 420_000;
+
+/** 相談する（保存しない。問い・前のやりとり・答えは、画面のメモリだけ）。書籍・ネットの検索に渡るのは、問題の名前と、問いの一般的な語だけ */
+export async function consultPatient(patientId: string, request: ConsultRequest): Promise<Result<ConsultReply>> {
+  return field<ConsultReply>(await call('POST', `patients/${encodeURIComponent(patientId)}/consult`, request, CONSULT_TIMEOUT_MS), 'answer');
+}
+
+/** 答えを残す（先生が「残す」を押したものだけ。サーバーで選別を通す。問いの文は送らない） */
+export async function addConsultNote(patientId: string, note: ConsultNoteNew): Promise<Result<null>> {
+  return done(await call('POST', `patients/${encodeURIComponent(patientId)}/consult-notes`, note));
+}
+
+export async function deleteConsultNote(id: string): Promise<Result<null>> {
+  return done(await call('DELETE', `consult-notes/${encodeURIComponent(id)}`));
 }
 
 /** 受け持ちを横断する検索（段K8。CA-070）の答え。保存しない（画面のメモリだけ） */

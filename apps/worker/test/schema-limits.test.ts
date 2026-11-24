@@ -2,7 +2,7 @@
 // 超えると、API は 400 で断り、画面には「AI につながりませんでした」と出る（2026-11-22：organize-6 の形が 41 になり、整理がすべて断られた）。
 // 本物の呼び出しと同じ変換（SDK の zodOutputFormat）で作った形を数える。
 import { zodOutputFormat } from '@anthropic-ai/sdk/helpers/zod';
-import { AskAnswer, DocumentAnswer, LinkAnswer, OrganizeAnswerWire, PendingAnswer, PlanAnswer, ProblemListAnswer, ProposeAnswer, ReviseAnswer, SelectionAnswer, SupportAnswer, TranscribeAnswer } from '@clinical-carte/core';
+import { AskAnswer, ConsultAnswer, ConsultTermsAnswer, DocumentAnswer, LinkAnswer, OrganizeAnswerWire, PendingAnswer, PlanAnswer, ProblemListAnswer, ProposeAnswer, ReviseAnswer, SelectionAnswer, SupportAnswer, TranscribeAnswer } from '@clinical-carte/core';
 import { describe, expect, test } from 'vitest';
 
 /** API の決まり（https://platform.claude.com/docs/en/build-with-claude/structured-outputs の Schema complexity limits。2026-11-22 に確認） */
@@ -33,7 +33,7 @@ function count(schema: unknown): { unions: number; optional: number } {
 }
 
 describe('AI の答えの形は、構造化出力の上限の中', () => {
-  const schemas = { OrganizeAnswerWire, SelectionAnswer, LinkAnswer, ProblemListAnswer, DocumentAnswer, ReviseAnswer, SupportAnswer, PendingAnswer, AskAnswer, PlanAnswer, TranscribeAnswer, ProposeAnswer } as const;
+  const schemas = { OrganizeAnswerWire, SelectionAnswer, LinkAnswer, ProblemListAnswer, DocumentAnswer, ReviseAnswer, SupportAnswer, PendingAnswer, AskAnswer, PlanAnswer, TranscribeAnswer, ProposeAnswer, ConsultAnswer, ConsultTermsAnswer } as const;
   for (const [name, schema] of Object.entries(schemas)) {
     test(name, () => {
       const c = count(zodOutputFormat(schema).schema);
@@ -50,6 +50,11 @@ describe('AI の答えの形は、構造化出力の上限の中', () => {
   // 段K9 の形（予定と実施）も、null になりうる欄・必須でない欄を作らない（予定の日の手がかりは「なし」の形、記号がなければ []）
   test('予定と実施の形は 0', () => {
     expect(count(zodOutputFormat(PlanAnswer).schema)).toEqual({ unions: 0, optional: 0 });
+  });
+
+  // 段M の形（相談の答え・検索の語）も、null になりうる欄・必須でない欄を作らない（記号がなければ []・書くことがなければ ""）
+  test('相談の窓口の形は、どちらも 0', () => {
+    for (const schema of [ConsultAnswer, ConsultTermsAnswer]) expect(count(zodOutputFormat(schema).schema)).toEqual({ unions: 0, optional: 0 });
   });
 
   // 段K11 の形（指示簿を写す・案を出す）も、null になりうる欄・必須でない欄を作らない（書かれていない欄は ""・テンプレを使わなければ ""・記号がなければ []）

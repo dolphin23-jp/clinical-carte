@@ -36,6 +36,7 @@ const PATHS = {
   text: 'M5 6h14M5 11h14M5 16h9',
   drop: 'M12 3s6 6.5 6 11a6 6 0 0 1-12 0c0-4.5 6-11 6-11z',
   orders: 'M8 4h8v3H8zM8 5H6v16h12V5h-2M9 11h6M9 15h6',
+  consult: 'M4 5h16v11h-8l-5 4v-4H4zM8.5 9.5h7M8.5 12.5h4.5',
   search: 'M11 4a7 7 0 1 0 0 14 7 7 0 0 0 0-14zM21 21l-5-5',
   dot: 'M12 11a1 1 0 1 0 0 2 1 1 0 0 0 0-2z',
 } as const;

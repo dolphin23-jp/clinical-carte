@@ -412,7 +412,8 @@ const THRESHOLD_RE = new RegExp(`(?:[<>≦≧≤≥＜＞]=?\\s*(${NUM}))|(?:(${
 const POINTS_RE = new RegExp(`${NUM}\\s*点(?!滴)`, 'gu');
 
 const norm = (token: string): string => numbersOf(token)[0] ?? token;
-function pointsIn(text: string): string[] {
+/** 文の中の点数らしい字（「2点」。表の計算にない点数を、AI に書かせないための照らし合わせ） */
+export function pointsIn(text: string): string[] {
   return [...text.matchAll(POINTS_RE)].map((m) => `${norm(m[0])}点`);
 }
 
