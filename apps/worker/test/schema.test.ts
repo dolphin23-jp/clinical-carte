@@ -18,7 +18,7 @@ describe('migrations の写し', () => {
   });
 
   test('番号の順に並び、最初は、適用の控えの表', () => {
-    expect(MIGRATIONS.map((m) => m.name)).toEqual(['0000_schema', '0001_entrance', '0002_records', '0003_organize', '0004_threads', '0005_fact_edits', '0006_user_edits', '0007_ap_notes', '0008_next_day', '0009_scale_links', '0010_documents', '0011_ai_sort', '0012_clinical_support', '0013_pending_results', '0014_handoffs', '0015_plan_checks', '0016_send_key', '0017_casebook_links', '0018_orders', '0019_consult_notes', '0020_consult_edits']);
+    expect(MIGRATIONS.map((m) => m.name)).toEqual(['0000_schema', '0001_entrance', '0002_records', '0003_organize', '0004_threads', '0005_fact_edits', '0006_user_edits', '0007_ap_notes', '0008_next_day', '0009_scale_links', '0010_documents', '0011_ai_sort', '0012_clinical_support', '0013_pending_results', '0014_handoffs', '0015_plan_checks', '0016_send_key', '0017_casebook_links', '0018_orders', '0019_consult_notes', '0020_consult_edits', '0021_job_results']);
     for (const m of MIGRATIONS) expect(m.statements.length, m.name).toBeGreaterThan(0);
   });
 
@@ -33,7 +33,7 @@ describe('表の用意', () => {
     const db = openDb({ empty: true });
     expect(tables(db)).toEqual([]);
     expect(await ensureSchema(db)).toBe(MIGRATIONS.length);
-    expect(tables(db)).toEqual(['ap_history', 'ap_notes', 'casebook_links', 'clinical_support', 'consult_note_history', 'consult_notes', 'course_items', 'devices', 'document_history', 'documents', 'encounters', 'entrance_daily', 'events', 'fact_edits', 'handoffs', 'history', 'medications', 'observations', 'order_edits', 'order_sheets', 'order_templates', 'patients', 'pending_result_edits', 'pending_results', 'plan_check_edits', 'plan_checks', 'problem_list_edits', 'problem_lists', 'problem_threads', 'problems', 'scale_links', 'schema_migrations', 'segments', 'sources', 'usage_daily', 'user_edits']);
+    expect(tables(db)).toEqual(['ap_history', 'ap_notes', 'casebook_links', 'clinical_support', 'consult_note_history', 'consult_notes', 'course_items', 'devices', 'document_history', 'documents', 'encounters', 'entrance_daily', 'events', 'fact_edits', 'handoffs', 'history', 'job_results', 'medications', 'observations', 'order_edits', 'order_sheets', 'order_templates', 'patients', 'pending_result_edits', 'pending_results', 'plan_check_edits', 'plan_checks', 'problem_list_edits', 'problem_lists', 'problem_threads', 'problems', 'scale_links', 'schema_migrations', 'segments', 'sources', 'usage_daily', 'user_edits']);
     expect(db.raw.prepare('SELECT name FROM schema_migrations ORDER BY name').all()).toEqual(MIGRATIONS.map((m) => ({ name: m.name })));
   });
 

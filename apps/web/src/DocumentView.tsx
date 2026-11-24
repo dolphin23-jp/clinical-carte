@@ -37,10 +37,12 @@ import { Fragment, useEffect, useState } from 'react';
 import { showDateTime } from './format.ts';
 import { useKept } from './kept.ts';
 import { resendAfterReturn } from './lifecycle.ts';
+import { claimJobs } from './pickup.ts';
 import { errorMessage } from './messages.ts';
 import {
   type ApiError,
   deleteApNote,
+  documentJob,
   deleteDocument,
   deleteHandoff,
   documentBacking,
@@ -239,6 +241,39 @@ export function DocumentView({
     if (error === 'unregistered') onLeft();
     else setMessage(say(error));
   };
+
+  // 読み込み直したあと（CA-088）：この受診で、読み込み直す前に頼んだ記載（出す・AI に頼む）の答えを拾って開く。
+  // いま開いている下書きがあれば、置き換えずに「AI が直す前に戻す」で戻せるようにする（黙って捨てない）
+  useEffect(() => {
+    void claimJobs(encounter.patientId, ['document', 'revise'], encounter.id).then((list) => {
+      for (const job of list) {
+        void documentJob(job.id).then((r) => {
+          if (!r.ok) return;
+          const reply = r.value;
+          setWork((current) => {
+            if (current !== null) setUndo((u) => [...u, current].slice(-10));
+            return {
+              type: reply.type ?? current?.type ?? type,
+              day: reply.day ?? current?.day ?? day,
+              severity: null,
+              sections: reply.document.sections,
+              origin: 'ai',
+              edited: job.kind === 'revise',
+              savedId: null,
+              dirty: true,
+              backing: reply.backing,
+              refLabels: reply.refs,
+              notes: reply.document.notes,
+              material: reply.material,
+              webFailed: reply.webFailed,
+            };
+          });
+          setMessage('読み込み直す前に頼んだ記載を、受け取って開きました（まだ保存していません）。');
+        });
+      }
+    });
+    // 受診ごとに1回（拾う部品が、同じ仕事を二重に受け取らない）
+  }, [encounter.id]);
 
   const generate = () => {
     setBusy('generate');

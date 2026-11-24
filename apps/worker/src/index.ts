@@ -2,8 +2,10 @@
 import { createAnthropicOrganizer, createAnthropicSelector, DEFAULT_MODEL } from './anthropic.ts';
 import type { Db } from './db.ts';
 import { handle } from './handler.ts';
+import { durableRunner, type JobNamespace } from './jobs.ts';
 import { type BookSearcher, createRagSearcher } from './references.ts';
 import { webRuntime } from './runtime.ts';
+import type { RecordDeps } from './routes.ts';
 import { schemaGate } from './schema.ts';
 import { DEFAULT_DAILY_AI_LIMIT } from './usage.ts';
 
@@ -26,6 +28,8 @@ export interface Env {
   readonly RAG?: { fetch(request: Request): Promise<Response> };
   /** clinical-RAG の書籍の検索だけを開ける carte 専用の鍵（Cloudflare の画面の Secret。RAG の CARTE_SEARCH_TOKEN と同じ値。docs/05 の作業 7b）。なければ、書籍を参照元にしない */
   readonly RAG_TOKEN?: string;
+  /** AI の仕事を、通信から切り離して動かす係（段N2。CA-087。wrangler.jsonc の durable_objects。entry.ts の CarteJobs）。なければ、要求の中で動かす */
+  readonly JOBS?: JobNamespace;
 }
 
 /** 書籍の検索を作る。バインディングかトークンがないときは null（鍵なしで外へ出さない）。宛先の URL は、バインディングの中だけの名前 */
@@ -53,6 +57,21 @@ export function dailyLimitOf(value: string | undefined): number {
   if (value === undefined || value.trim() === '') return DEFAULT_DAILY_AI_LIMIT;
   const n = Number(value);
   return Number.isInteger(n) && n >= 0 ? n : DEFAULT_DAILY_AI_LIMIT;
+}
+
+/** 記録の道の依存（Worker と、仕事の係〔Durable Objects〕が同じものを作る） */
+export function recordDepsOf(env: Env): RecordDeps {
+  const apiKey = anthropicKeyOf(env);
+  const model = env.MODEL?.trim() || DEFAULT_MODEL;
+  return {
+    db: env.DB,
+    runtime: webRuntime,
+    selector: apiKey === '' ? null : createAnthropicSelector({ apiKey, model }),
+    dailyAiLimit: dailyLimitOf(env.DAILY_AI_LIMIT),
+    model,
+    organizer: apiKey === '' ? null : createAnthropicOrganizer({ apiKey, model }),
+    books: ragSearcherOf(env),
+  };
 }
 
 // 表の用意は、同じ起動の中で1回だけ（保存先は、起動のあいだ変わらない）
@@ -87,6 +106,8 @@ export default {
       keepAlive: (work) => {
         ctx.waitUntil(work);
       },
+      // AI の仕事を、通信から切り離す（段N2。CA-087）。設定がなければ、これまでどおり要求の中で動かす
+      jobs: env.JOBS === undefined ? null : durableRunner(env.JOBS),
       books: ragSearcherOf(env),
     });
   },

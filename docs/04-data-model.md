@@ -215,6 +215,7 @@ AI が返すのは、次の3つだけ（構造化した出力）。
 | `order_templates` | 本人がスケールのテンプレを作る・直す・外すとき（段K11。CA-075。**患者に付かない**。字は識別情報の形の検査を通す。外すときは行を消さず `removed_at`） |
 | `consult_notes` | 本人が相談の窓口の答えを「残す」・直す・消すとき（段M。CA-081・CA-083。文は選別を通した後の字。**問いの文・前のやりとり・AI の答えそのものは入らない**）・患者を消すとき |
 | `consult_note_history` | 本人が相談の窓口の答えを残した・直した・消したとき（段M2。CA-083。どの答えに何をしたかと、どちらの答えかだけ。**文は入らない**）・患者を消すとき |
+| `job_results` | 通信から切り離した AI の仕事（CA-087）が終わったとき（受け取るまでの預かり。CA-088）・画面が答えを受け取ったとき・預かる時間を過ぎたとき（消す）・患者を消すとき。**問い・頼みの字は入らない**。答えの中身は、保存しない答えの種類（相談・記録に聞く・記載を出す・AI に頼む・指示簿の写しと案）の、確かめた後の答えだけ |
 | `sources` の `send_key` | 本人の入力（段K9。CA-072。送るボタンを押したときに画面が作る ULID。同じ受診に同じ鍵の文があれば、保存し直さない） |
 | `devices` | 端末の登録・外すとき・その日はじめて使ったとき（1日に1回） |
 | `entrance_daily` | 合鍵を間違えたとき |
@@ -224,7 +225,7 @@ AI が返すのは、次の3つだけ（構造化した出力）。
 
 - 打った原文・AI へ送った文・AI の答えそのものは、どの表にも書かない。ログにも出さない。
 - 表を足すときは、先にこの一覧を直す。
-- いまある表（段0〜段5）は `devices`・`entrance_daily`・`patients`・`encounters`・`sources`・`observations`・`usage_daily`・`schema_migrations`・`segments`・`medications`・`events`・`problems`・`problem_threads`・`history`・`fact_edits`・`user_edits`・`ap_notes`・`ap_history`・`scale_links`・`documents`・`document_history`・`handoffs`・`course_items`・`problem_lists`・`problem_list_edits`・`clinical_support`・`pending_results`・`pending_result_edits`・`plan_checks`・`plan_check_edits`・`casebook_links`・`order_sheets`・`order_edits`・`order_templates`・`consult_notes`・`consult_note_history`。記録への質問（段K6。CA-066）と、前の記載との違い（段K7。CA-068）と、水分の出入りの集計・受け持ちを横断する検索（段K8。CA-069・CA-070）は、どの表にも書かない。`apps/worker/test/writes.test.ts` が、migrations が作る表と、ソースの SQL が書く表を、この一覧と突き合わせる。
+- いまある表（段0〜段5）は `devices`・`entrance_daily`・`patients`・`encounters`・`sources`・`observations`・`usage_daily`・`schema_migrations`・`segments`・`medications`・`events`・`problems`・`problem_threads`・`history`・`fact_edits`・`user_edits`・`ap_notes`・`ap_history`・`scale_links`・`documents`・`document_history`・`handoffs`・`course_items`・`problem_lists`・`problem_list_edits`・`clinical_support`・`pending_results`・`pending_result_edits`・`plan_checks`・`plan_check_edits`・`casebook_links`・`order_sheets`・`order_edits`・`order_templates`・`consult_notes`・`consult_note_history`・`job_results`。記録への質問（段K6。CA-066）と、前の記載との違い（段K7。CA-068）と、水分の出入りの集計・受け持ちを横断する検索（段K8。CA-069・CA-070）は、どの表にも書かない。`apps/worker/test/writes.test.ts` が、migrations が作る表と、ソースの SQL が書く表を、この一覧と突き合わせる。
 
 ## 7. 段1 で作ったものと、案との違い
 
@@ -486,3 +487,16 @@ AI が返すのは、次の3つだけ（構造化した出力）。
 - **答えの文を、記載の下書きと指示簿へ入れる**（CA-082）：表は足していない。記載は、画面の下書き（メモリ）に足すだけで、残るのは、これまでどおり `documents`（先生が「保存する」を押したとき。選別を通す。AI の文を足した下書きは `ai_edited`）。指示簿は、これまでどおり `order_sheets`・`order_edits`（origin は `ai`。字は選別を通す。根拠の短い名前と、資料・出典に見つからない数の印を持つ）。
 - **前の受診の記録も資料にする**（CA-084）・**答えを確かめた文から順に出す**（CA-085）：どちらも、何も保存しない（表は変わらない）。
 - 患者を消すと、`consult_note_history` も消える（`PATIENT_TABLES`）。
+
+## 25. 仕事を通信から切り離す・答えを受け取るまで預かる（段N2。CA-087・CA-088）
+
+作った表は、`apps/worker/migrations/0021_job_results.sql`。
+
+| 表 | 列 |
+|---|---|
+| `job_results` | id（仕事の番号。ULID）・patient_id・kind（仕事の種類：core の `JOB_KINDS`）・target（何についての仕事か：文・受診・患者の id）・status（答えの HTTP の数）・body（答えの JSON。**保存しない答えの種類だけ、確かめた後の答え**〔相談の答え・記録に聞くの答え・出した記載・AI が直した記載・指示簿の写しと案〕。保存する種類〔整理・プロブレムリスト・臨床支援・結果待ち・予定と実施〕は `{}`。誤りは、名前だけ）・made_at |
+
+- **入らないもの**：問いの字・頼みの字（相談の問いと前のやりとり、記録に聞くの問い、AI に頼む字）。頼みは、サーバーの中のメモリ（Durable Objects）にだけ渡し、ディスクに書かない。動いている仕事の様子（相談の段階と、確かめた後の文）も、メモリだけ。
+- **消すとき**：画面が答えを受け取ったとき（`DELETE /api/jobs/:id`）・預かる時間（`JOB_HOLD_HOURS`＝24 時間【仮の値】）を過ぎたとき（仕事を始めるとき・一覧を読むときに消す）・患者を消すとき（`PATIENT_TABLES`）。
+- 預かった答えは、記録ではない：記録の見方・ほかの AI の資料・検索・Casebook に入れない。読むのは、その仕事を頼んだ画面（または、読み込み直したあとの、その患者の画面）だけ。
+- Durable Objects の保存先（ディスク）は使わない（メモリだけ）。

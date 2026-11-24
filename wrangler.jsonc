@@ -2,7 +2,8 @@
 // 画面（ビルドした apps/web/dist。_headers の CSP なども、そこに入っている）と、API（apps/worker）を、1つのオリジンで配る。
 {
   "name": "clinical-carte",
-  "main": "./apps/worker/src/index.ts",
+  // 配る入口：Worker と、AI の仕事を通信から切り離して動かす係（Durable Objects の CarteJobs。段N2。CA-087）を出す（apps/worker/src/entry.ts）
+  "main": "./apps/worker/src/entry.ts",
   "compatibility_date": "2026-09-01",
   "assets": {
     "directory": "./apps/web/dist",
@@ -28,6 +29,10 @@
   // 本人の clinical-RAG（Worker の名前 medbook-rag）を、書籍の参照元として呼ぶ（段5。CA-035。clinical-modules と同じサービスバインディング）。
   // 送るのは問題の名前だけ。鍵は、ここに書かない（RAG の書籍の検索だけを開ける carte 専用の鍵。Cloudflare の画面の Secret `RAG_TOKEN` と、RAG の `CARTE_SEARCH_TOKEN` に同じ値。ないときは、書籍を参照元にしない）
   "services": [{ "binding": "RAG", "service": "medbook-rag" }],
+  // AI の仕事を、通信から切り離して動かす係（段N2。CA-087）。画面を離れて通信が切れても、仕事を続け、答えを受け取るまで預かる（job_results。CA-088）。
+  // 頼みの本文はメモリにだけ持ち、Durable Objects の保存先は使わない。無料プランは SQLite の種類だけ（new_sqlite_classes）。配る（wrangler deploy）ときに自動で作られる
+  "durable_objects": { "bindings": [{ "name": "JOBS", "class_name": "CarteJobs" }] },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["CarteJobs"] }],
   // Anthropic の API の鍵は、ここに書かない（Cloudflare の画面の Secret `ANTHROPIC_API_KEY`。`CARTE_api_key` の名前でも読む。docs/05-deploy.md の作業 7）。ないときは、文を入れられない
   // 合鍵は、ここに書かない（Cloudflare の画面の Secret `CARTE_KEY`。docs/05-deploy.md の作業 5）。ない・短いときは、すべての API を断る
   // 要求の記録（ログ）を残さない

@@ -19,7 +19,7 @@ function changed(): void {
 }
 
 /** 整理を頼む（auto は、切れた整理を、画面が自動で続けるとき：回数を数える） */
-export async function runOrganize(sourceId: string, options: { readonly auto?: boolean } = {}): Promise<Result<Source>> {
+export async function runOrganize(sourceId: string, options: { readonly auto?: boolean } = {}): Promise<Result<Source | null>> {
   const auto = options.auto === true;
   if (auto) attempts.set(sourceId, (attempts.get(sourceId) ?? 0) + 1);
   jobs.set(sourceId, { state: 'running', since: Date.now(), auto });
@@ -54,10 +54,13 @@ export interface ResumeView {
  */
 export function useResumeOrganize(sources: readonly { readonly id: string; readonly organized: string | null }[], reload: () => void): ResumeView {
   const v = useSyncExternalStore(subscribe, () => version);
+  // 記録を読んだ時刻：読み直すたびに sources が変わる（読み直しが届く前の古い記録で、頼み直さない）
+  const loaded = useRef<{ sources: unknown; at: number }>({ sources, at: Date.now() });
+  if (loaded.current.sources !== sources) loaded.current = { sources, at: Date.now() };
   useReturn(reload);
   const reloadRef = useRef(reload);
   reloadRef.current = reload;
-  const plan = resumeOrganize({ sources, jobs, attempts, now: Date.now() });
+  const plan = resumeOrganize({ sources, jobs, attempts, now: Date.now(), loadedAt: loaded.current.at });
   const runKey = plan.run.join(',');
   const recheckAt = plan.recheckAt;
   const sourcesRef = useRef(sources);
@@ -65,7 +68,7 @@ export function useResumeOrganize(sources: readonly { readonly id: string; reado
   useEffect(() => {
     if (runKey === '' || (typeof document !== 'undefined' && document.visibilityState === 'hidden')) return;
     // 頼む直前に、もう一度決める（同じ文を、二重に頼まない）
-    for (const id of resumeOrganize({ sources: sourcesRef.current, jobs, attempts, now: Date.now() }).run) {
+    for (const id of resumeOrganize({ sources: sourcesRef.current, jobs, attempts, now: Date.now(), loadedAt: loaded.current.at }).run) {
       void runOrganize(id, { auto: true }).then(() => {
         reloadRef.current();
       });

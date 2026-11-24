@@ -193,7 +193,7 @@ export function Composer({
       // 続けて整理する（段2）。整理に失敗しても、文は保存されている
       setOrganizing('整理しています…（30 秒ほどかかることがあります）');
       void runOrganize(source.id).then((organized) => {
-        if (organized.ok) setOrganizing(organizeSummary(organized.value));
+        if (organized.ok) setOrganizing(organized.value === null ? '整理しました（画面を離れていたあいだに済んでいたので、記録を読み直しました）。' : organizeSummary(organized.value));
         else if (organized.error === 'unregistered') onLeft();
         else setOrganizing(`整理できませんでした（${errorMessage(organized.error).replace('文は保存していません。', '')}）。文は保存してあります。あとで、記録の「整理する」を押せます。`);
         onSaved();

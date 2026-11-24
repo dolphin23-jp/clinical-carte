@@ -340,10 +340,12 @@ describe('単位の「同じ目盛り」（CA-051）', () => {
     await page.getByTestId('tab-values').click();
     const trends = page.getByTestId('trend');
     await expect.poll(() => trends.count()).toBe(2);
-    expect(await page.getByTestId('scale-candidate').textContent()).toContain('WBC：単位の記載なし と /μL');
+    // 2つの書き方（並びは、同じ時刻に入れた記録の番号の順なので、決まりではない）
+    const candidate = (await page.getByTestId('scale-candidate').textContent()) ?? '';
+    expect(candidate).toMatch(/WBC：(単位の記載なし と \/μL|\/μL と 単位の記載なし)/u);
     await page.getByTestId('scale-join').click();
     await expect.poll(() => trends.count()).toBe(1);
-    expect(await page.getByTestId('trend-joined').textContent()).toContain('単位の記載なし・/μL：先生が同じ目盛りと決めた');
+    expect(await page.getByTestId('trend-joined').textContent()).toMatch(/(単位の記載なし・\/μL|\/μL・単位の記載なし)：先生が同じ目盛りと決めた/u);
     await page.getByTestId('scale-split').click();
     await expect.poll(() => trends.count()).toBe(2);
     expect(problems).toEqual([]);
