@@ -301,4 +301,5 @@ npx wrangler dev                                                 # http://localh
 - 表は、最初の要求で、自動でできる（`.wrangler/` の中の、手元の保存先）。
 - 文を入れる試運転には、`.dev.vars` に `ANTHROPIC_API_KEY=…` を足す。**架空の文だけ**を入れる。
 - 選別の評価（手元で）：`cd apps/worker && node eval/run-select-eval.ts --dry-run`（通信しない）／`--oracle`（道具の確かめ）／`ANTHROPIC_API_KEY=… node eval/run-select-eval.ts --local --seeds 3`（本物の API）。本人は、これを使わず、carte の画面から動かす（作業 8）。
+- **AI の仕事の係（Durable Objects。段N2。CA-087）**：`wrangler.jsonc` の `durable_objects`・`migrations` で、配る（`npx wrangler deploy`）ときに自動で作られる。**本人の手作業はない**。無料プランで使えるのは SQLite の種類だけ（資料の値。2026-11 確認。`new_sqlite_classes` にしてある）。配ったあと、Cloudflare の **Workers & Pages** → `clinical-carte` → **Settings** → **Bindings** に `JOBS`（Durable Object）が出ていれば済み。もし配る（ビルド）が Durable Objects の誤りで赤くなったら、その赤い行をこの会話に貼る（Durable Objects がなくても、carte はこれまでどおり動く作りだが、配る設定から外すのは、エージェントが直す）。
 - 手元から配る（Cloudflare の自動の配信を使わないとき）：`npx wrangler login` → `npx wrangler deploy`。鍵は `npx wrangler secret put CARTE_KEY`・`ANTHROPIC_API_KEY`。

@@ -1,12 +1,13 @@
 // API の入口。/api/ の下だけを受け、ほかは画面の静的ファイルへ渡す。
 // 順序：合鍵の設定の確かめ（なければ、すべてを断る）→ health → 書き込みの出どころの確かめ → 端末の登録 → 印の照合 → それぞれの API（端末は、ここ。記録は routes.ts）。
 // 記録の中身・合鍵・印を、ログにも、誤りの答えにも出さない（AGENTS.md の 1）。
-import { type DeviceKind, isDeviceKind, isUlid, keyProblem, MAX_KEY_LENGTH } from '@clinical-carte/core';
+import { type DeviceKind, isDeviceKind, isUlid, jobTargetOf, type JobTarget, keyProblem, MAX_KEY_LENGTH, ulid, ULID_RANDOM_BYTES } from '@clinical-carte/core';
 import { z } from 'zod';
 
 import type { Db } from './db.ts';
 import { clearCookie, type Device, enter, type EntranceDeps, listDevices, register, removeDevice } from './entrance.ts';
-import { recordApi } from './routes.ts';
+import type { JobRunner } from './jobs.ts';
+import { BODY_LIMIT, recordApi, type RecordDeps } from './routes.ts';
 import type { Runtime } from './runtime.ts';
 import type { Organizer } from './organizer.ts';
 import type { BookSearcher } from './references.ts';
@@ -38,6 +39,11 @@ export interface HandlerDeps {
    * 渡すのは、読むだけの要求（GET）でないものだけ。試験は渡さなくてよい（Node は、切れても仕事を止めない）
    */
   readonly keepAlive?: (work: Promise<unknown>) => void;
+  /**
+   * AI の仕事を、通信から切り離して動かす係（段N2。CA-087。本番は Durable Objects。jobs.ts）。なければ、これまでどおり要求の中で動かす。
+   * 画面が「仕事として」頼んだ（x-carte-job: 1）ときだけ使う
+   */
+  readonly jobs?: JobRunner | null;
 }
 
 /** 登録の要求の本文の上限（文字）。合鍵と端末の種類だけなので、小さくてよい */
@@ -168,13 +174,65 @@ async function api(request: Request, url: URL, deps: HandlerDeps): Promise<Respo
     return json(200, { removed: id }, id === me.id ? clearCookie(deps.secureCookies) : entered.renew);
   }
 
-  const record = await recordApi(request, path, { db: deps.db, runtime: deps.runtime, selector: deps.selector, dailyAiLimit: deps.dailyAiLimit, model: deps.model, organizer: deps.organizer, books: deps.books ?? null });
+  const recordDeps: RecordDeps = { db: deps.db, runtime: deps.runtime, selector: deps.selector, dailyAiLimit: deps.dailyAiLimit, model: deps.model, organizer: deps.organizer, books: deps.books ?? null };
+
+  // AI の仕事を、通信から切り離す（段N2。CA-087）：画面が「仕事として」頼んだら、番号をすぐ返し、仕事は係（本番は Durable Objects）が続ける。
+  // 頼みの本文は、係のメモリにだけ渡す（ディスクに書かない）。答えは、終わったら job_results に預ける（CA-088）
+  const jobs = deps.jobs ?? null;
+  if (jobs !== null) {
+    const target = request.headers.get('x-carte-job') === '1' ? jobTargetOf(method, path) : null;
+    if (target !== null) {
+      const body = await request.text();
+      if (body.length > BODY_LIMIT) return json(400, { error: 'bad_request' }, entered.renew);
+      const patientId = await jobPatient(deps.db, target);
+      if (patientId === null) return json(404, { error: 'not_found' }, entered.renew);
+      const started = await jobs.start({ id: ulid(deps.runtime.now(), deps.runtime.randomBytes(ULID_RANDOM_BYTES)), path, body, patientId, kind: target.kind, target: target.target });
+      return json(202, { job: started.id }, entered.renew);
+    }
+    const oneJob = /^\/api\/jobs\/([^/]+)$/.exec(path);
+    if (oneJob !== null) {
+      const id = oneJob[1] ?? '';
+      if (!isUlid(id)) return json(400, { error: 'bad_request' }, entered.renew);
+      // 様子と答え（長く待つ聞き方：新しい出来事か終わりまで、20 秒まで待つ）
+      if (method === 'GET') {
+        const after = Number(url.searchParams.get('after') ?? '0');
+        const wait = url.searchParams.get('wait') === '1' ? JOB_WAIT_MS : 0;
+        return json(200, await jobs.progress(id, Number.isInteger(after) && after >= 0 ? after : 0, wait), entered.renew);
+      }
+      // 受け取った（預かった答えを消す）
+      if (method === 'DELETE') {
+        await jobs.remove(id);
+        return json(200, { removed: id }, entered.renew);
+      }
+    }
+    const patientJobs = /^\/api\/patients\/([^/]+)\/jobs$/.exec(path);
+    if (patientJobs !== null && method === 'GET') {
+      const patientId = patientJobs[1] ?? '';
+      if (!isUlid(patientId)) return json(400, { error: 'bad_request' }, entered.renew);
+      return json(200, { jobs: await jobs.list(patientId) }, entered.renew);
+    }
+  }
+
+  const record = await recordApi(request, path, recordDeps);
   if (record !== null) return record.lines === undefined ? json(record.status, record.body, entered.renew) : ndjson(record.lines, entered.renew, deps.keepAlive);
 
   return json(404, { error: 'not_found' }, entered.renew);
 }
 
 const noop = (): void => undefined;
+
+/** 仕事の様子を聞くとき、新しい出来事か終わりを待つ時間（ミリ秒） */
+export const JOB_WAIT_MS = 20_000;
+
+/** 仕事の相手から、患者を決める（文・受診は保存先から。患者は、いるかを確かめる）。いなければ null */
+async function jobPatient(db: Db, target: JobTarget): Promise<string | null> {
+  if (!isUlid(target.target)) return null;
+  const table = target.targetType === 'source' ? 'sources' : target.targetType === 'encounter' ? 'encounters' : 'patients';
+  const column = target.targetType === 'patient' ? 'id' : 'patient_id';
+  const row = await db.prepare(`SELECT ${column} AS patient FROM ${table} WHERE id = ?`).bind(target.target).first();
+  const patient = row?.['patient'];
+  return typeof patient === 'string' ? patient : null;
+}
 
 export async function handle(request: Request, deps: HandlerDeps): Promise<Response> {
   const url = new URL(request.url);

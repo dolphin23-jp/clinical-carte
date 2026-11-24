@@ -461,11 +461,12 @@ export async function recordApi(request: Request, path: string, deps: RecordDeps
     if (talk !== null) {
       const r = await reviseDocument(material, talk, refs, deps.organizer, gate);
       if (!r.ok) return r.reason === 'ai_limit' ? reply(429, { error: 'ai_limit' }) : aiFailed(r.failure);
-      return reply(200, { reply: r.reply, document: r.document, backing: r.backing, refs: r.refs, material: r.material, webFailed: r.webFailed });
+      // 種類と日も返す（読み込み直したあと、預かった答えを、どの記載の下書きかに戻すため。CA-088）
+      return reply(200, { reply: r.reply, document: r.document, backing: r.backing, refs: r.refs, material: r.material, webFailed: r.webFailed, type: body.type, day: body.day });
     }
     const r = await generateDocument(material, refs, deps.organizer, gate);
     if (!r.ok) return r.reason === 'ai_limit' ? reply(429, { error: 'ai_limit' }) : aiFailed(r.failure);
-    return reply(200, { document: r.document, backing: r.backing, refs: r.refs, material: r.material, webFailed: r.webFailed });
+    return reply(200, { document: r.document, backing: r.backing, refs: r.refs, material: r.material, webFailed: r.webFailed, type: body.type, day: body.day });
   }
 
   // AI のプロブレムリスト（CA-057）：組む（AI の 1 回。記録が空なら呼ばない）・先生が直す（名前は選別 C-1 を通す）

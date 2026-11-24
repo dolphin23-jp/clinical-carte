@@ -85,6 +85,7 @@ import { StateView } from './StateView.tsx';
 import { SupportPanel, useSupport } from './SupportView.tsx';
 import { ConsultPanel, useConsult } from './ConsultPanel.tsx';
 import { useKept } from './kept.ts';
+import { dropLeftovers } from './pickup.ts';
 import { PendingPanel, usePending } from './PendingView.tsx';
 import { PlansPanel, usePlans } from './PlansView.tsx';
 import { useOutbox } from './outbox.ts';
@@ -216,7 +217,14 @@ export function PatientPage({ patientId, focus = null, onBack, onLeft }: { patie
   // 予定と実施（段K9）：記録が増えたら、自動で組み直す（いまのタブ）
   const planBuilder = usePlans(patientId, record, load, onLeft);
   // 相談の窓口（段M）：問い・前のやりとり・答えは、ここのメモリだけ（残すのは、先生が「残す」を押した答えだけ）
-  const consult = useConsult(patientId, load, onLeft);
+  const consult = useConsult(patientId, load, onLeft, () => {
+    // 読み込み直す前に送った問いの答えを拾ったら、相談の窓口を開いて見せる（CA-088）
+    setConsultOpen(true);
+  });
+  // 読み込み直したあと（CA-088）：保存する種類（整理など）の、受け取られずに残った成否を消す（結果は、もう記録にある）
+  useEffect(() => {
+    void dropLeftovers(patientId);
+  }, [patientId]);
   // 相談の答えから、カルテ記載の下書きに足す候補（CA-082。画面のメモリだけ：残るのは、記載の「保存する」を押したとき）
   const [picks, setPicks] = useKept<readonly ConsultPick[]>(`picks:${patientId}`, []);
   const dropPick = useCallback(
@@ -1127,7 +1135,7 @@ function SourceCard({
     void runOrganize(source.id).then((result) => {
       setOrganizing(false);
       if (result.ok) {
-        setMessage(organizeSummary(result.value));
+        setMessage(result.value === null ? '整理しました（記録を読み直しました）。' : organizeSummary(result.value));
         onChanged();
       } else if (result.error === 'unregistered') onLeft();
       else {

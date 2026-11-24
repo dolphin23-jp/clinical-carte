@@ -57,6 +57,7 @@ import type {
   ConsultRequest,
   ConsultStage,
   ConsultStatement,
+  JobSummary,
   PendingBody,
   PendingMark,
   PlanBody,
@@ -163,12 +164,123 @@ async function call(method: 'GET' | 'POST' | 'PATCH' | 'PUT' | 'DELETE', path: s
   } finally {
     if (timer !== null) clearTimeout(timer);
   }
+  return resultOf(response.ok, data);
+}
+
+/** 答えの本文を、Result にする（ok は、うまくいった答えか） */
+function resultOf(ok: boolean, data: unknown): Result<Record<string, unknown>> {
   if (!isRecord(data)) return { ok: false, error: 'network' };
-  if (response.ok) return { ok: true, value: data };
+  if (ok) return { ok: true, value: data };
   const name = data['error'];
   const error = KNOWN.find((k) => k === name) ?? 'server';
   const left = data['left'];
   return typeof left === 'number' ? { ok: false, error, left } : { ok: false, error };
+}
+
+// --- AI の仕事を、通信から切り離す（段N2。CA-087）と、答えを受け取るまで預かる（CA-088）
+// AI を呼ぶ頼みは「仕事として」頼む（x-carte-job: 1）：サーバーは番号をすぐ返し、仕事は通信と切り離して続ける。
+// 画面は、番号で様子を聞き（長く待つ聞き方）、答えを受け取ったら、受け取った印を送る（預かった答えを消す）。
+// 画面を離れて通信が切れても、仕事は続く：戻ってから聞き直せば、答えを受け取れる。サーバーに仕事の係がないときは、これまでどおり要求の中で動く
+
+/** 様子を聞き続ける上限（これを過ぎて答えがなければ、つながらないのと同じ扱い） */
+const JOB_GIVE_UP_MS = 30 * 60_000;
+/** この画面が頼んだ仕事の番号（読み込み直したあとに拾うとき、二重に受け取らないため。画面のメモリだけ） */
+const knownJobs = new Set<string>();
+
+/** この画面が、すでに受け取りを待っている・受け取った仕事か */
+export function isKnownJob(id: string): boolean {
+  return knownJobs.has(id);
+}
+
+const sleep = (ms: number): Promise<void> =>
+  new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
+
+/**
+ * 仕事の答えを待つ：様子を長く待つ聞き方で聞き、出来事（相談の段階と確かめた後の文）を onEvent に渡す。
+ * 答えを受け取ったら、受け取った印を送る。仕事が消えていたら（番号を知らない）、つながらないのと同じ扱い
+ */
+export async function awaitJob(id: string, onEvent?: (event: unknown) => void): Promise<Result<Record<string, unknown>>> {
+  knownJobs.add(id);
+  const started = Date.now();
+  let after = 0;
+  let failures = 0;
+  for (;;) {
+    const r = await call('GET', `jobs/${encodeURIComponent(id)}?after=${String(after)}&wait=1`, undefined, 30_000);
+    if (!r.ok) {
+      if (r.error !== 'network') return r;
+      // つながらない（画面を離れていた・電波）：少し待って聞き直す。仕事は、サーバーで続いている
+      failures += 1;
+      if (Date.now() - started > JOB_GIVE_UP_MS) return { ok: false, error: 'network' };
+      await sleep(Math.min(10_000, 1_000 * failures));
+      continue;
+    }
+    failures = 0;
+    const state = r.value['state'];
+    if (state === 'running') {
+      const events = r.value['events'];
+      if (Array.isArray(events)) for (const event of events) onEvent?.(event);
+      const next = r.value['next'];
+      if (typeof next === 'number') after = next;
+      continue;
+    }
+    if (state === 'done') {
+      const outcome = r.value['outcome'];
+      // 受け取った印（預かった答えを消す）。届かなくても、預かる時間で消える
+      void call('DELETE', `jobs/${encodeURIComponent(id)}`);
+      if (!isRecord(outcome) || typeof outcome['status'] !== 'number') return { ok: false, error: 'network' };
+      return resultOf(outcome['status'] >= 200 && outcome['status'] < 300, outcome['body']);
+    }
+    return { ok: false, error: 'network' };
+  }
+}
+
+/**
+ * AI を呼ぶ頼みを、仕事として頼む。サーバーに仕事の係がなければ（番号が返らない）、いつもの答えとして読む。
+ * raw は、仕事にならなかったときに、答えをそのまま読む（少しずつ返す相談の答え）
+ */
+async function callAsJob(
+  path: string,
+  body: unknown,
+  options: { readonly onEvent?: (event: unknown) => void; readonly raw?: (response: Response) => Promise<Result<Record<string, unknown>>> } = {},
+): Promise<Result<Record<string, unknown>>> {
+  let response: Response;
+  try {
+    response = await fetch(`/api/${path}`, {
+      method: 'POST',
+      credentials: 'same-origin',
+      cache: 'no-store',
+      redirect: 'error',
+      headers: { 'content-type': 'application/json', 'x-carte-job': '1' },
+      body: JSON.stringify(body),
+    });
+  } catch {
+    return { ok: false, error: 'network' };
+  }
+  if (response.status !== 202 && options.raw !== undefined && response.ok) return options.raw(response);
+  let data: unknown;
+  try {
+    data = await response.json();
+  } catch {
+    return { ok: false, error: 'network' };
+  }
+  if (response.status === 202 && isRecord(data) && typeof data['job'] === 'string') return awaitJob(data['job'], options.onEvent);
+  return resultOf(response.ok, data);
+}
+
+/** 患者の、動いている仕事と、受け取っていない答えの一覧（読み込み直したあとに拾う。中身は含めない） */
+export async function listJobs(patientId: string): Promise<Result<readonly JobSummary[]>> {
+  const result = await call('GET', `patients/${encodeURIComponent(patientId)}/jobs`);
+  if (!result.ok) return result;
+  const jobs = result.value['jobs'];
+  return Array.isArray(jobs) ? { ok: true, value: jobs as JobSummary[] } : { ok: false, error: 'network' };
+}
+
+/** 受け取らずに、預かった答えを消す（保存する種類の、残った成否など） */
+export async function dropJob(id: string): Promise<Result<null>> {
+  knownJobs.add(id);
+  return done(await call('DELETE', `jobs/${encodeURIComponent(id)}`));
 }
 
 function toDevice(value: unknown): DeviceView | null {
@@ -583,9 +695,16 @@ export async function addSource(encounterId: string, input: NewSource): Promise<
   return isRecord(source) && Array.isArray(observations) ? { ok: true, value: { source: source as unknown as Source, observations: observations as Observation[] } } : { ok: false, error: 'network' };
 }
 
-/** 文を整理する（段2）。保存した文を AI が整理し、確かめた行だけが入る。整理し直すときも、これ */
-export async function organizeSource(sourceId: string): Promise<Result<Source>> {
-  return field<Source>(await call('POST', `sources/${encodeURIComponent(sourceId)}/organize`, {}), 'source');
+/**
+ * 文を整理する（段2）。保存した文を AI が整理し、確かめた行だけが入る。整理し直すときも、これ。
+ * 仕事として頼む（CA-087）。整理した文の中身は、サーバーのメモリからだけ受け取る：しばらくして受け取ったとき（画面を離れていた）は、
+ * 中身がない（null）。整理は済んでいるので、記録を読み直して見る
+ */
+export async function organizeSource(sourceId: string): Promise<Result<Source | null>> {
+  const result = await callAsJob(`sources/${encodeURIComponent(sourceId)}/organize`, {});
+  if (!result.ok) return result;
+  const source = result.value['source'];
+  return { ok: true, value: isRecord(source) ? (source as unknown as Source) : null };
 }
 
 export async function deleteSource(sourceId: string): Promise<Result<null>> {
@@ -778,18 +897,48 @@ export interface DocumentReply {
   readonly refs: readonly RefLabel[];
   readonly material: { readonly records: number; readonly shortened: number; readonly dropped: number };
   readonly webFailed: boolean;
+  /** 記載の種類と日（サーバーが返したもの。前の版のサーバーは返さないので null） */
+  readonly type: DocType | null;
+  readonly day: string | null;
 }
 
 function documentReply(value: Record<string, unknown>): DocumentReply | null {
-  const { document, backing, refs, material, webFailed } = value;
+  const { document, backing, refs, material, webFailed, type, day } = value;
   return isRecord(document) && isRecord(backing) && Array.isArray(refs) && isRecord(material) && typeof webFailed === 'boolean'
-    ? { document: document as unknown as CheckedDocument, backing: backing as unknown as Backing, refs: refs as RefLabel[], material: material as unknown as DocumentReply['material'], webFailed }
+    ? {
+        document: document as unknown as CheckedDocument,
+        backing: backing as unknown as Backing,
+        refs: refs as RefLabel[],
+        material: material as unknown as DocumentReply['material'],
+        webFailed,
+        type: typeof type === 'string' ? (type as DocType) : null,
+        day: typeof day === 'string' ? day : null,
+      }
     : null;
+}
+
+/** 預かっていた記載の答え（読み込み直したあとに拾う。CA-088）：出した記載と、AI が直した記載 */
+export async function documentJob(id: string): Promise<Result<DocumentReply & { reply: string | null }>> {
+  const result = await awaitJob(id);
+  if (!result.ok) return result;
+  const reply = documentReply(result.value);
+  const text = result.value['reply'];
+  return reply === null ? { ok: false, error: 'network' } : { ok: true, value: { ...reply, reply: typeof text === 'string' ? text : null } };
+}
+
+/** 預かっていた相談・記録に聞くの答え（読み込み直したあとに拾う） */
+export async function answerJob<T>(id: string): Promise<Result<T>> {
+  return field<T>(await awaitJob(id), 'answer');
+}
+
+/** 預かっていた指示簿の写し・案（読み込み直したあとに拾う） */
+export async function proposalsJob(id: string): Promise<Result<OrderProposals>> {
+  return proposalsOf(await awaitJob(id));
 }
 
 /** カルテ記載を出す（保存しない） */
 export async function generateDocument(encounterId: string, body: { type: DocType; day: string; web: boolean }): Promise<Result<DocumentReply>> {
-  const result = await call('POST', `encounters/${encodeURIComponent(encounterId)}/documents/generate`, body);
+  const result = await callAsJob(`encounters/${encodeURIComponent(encounterId)}/documents/generate`, body);
   if (!result.ok) return result;
   const reply = documentReply(result.value);
   return reply === null ? { ok: false, error: 'network' } : { ok: true, value: reply };
@@ -800,7 +949,7 @@ export async function reviseDocument(
   encounterId: string,
   body: { type: DocType; day: string; web: boolean; sections: readonly { key: string; text: string }[]; instruction: string; history: readonly { role: 'doctor' | 'ai'; text: string }[] },
 ): Promise<Result<DocumentReply & { reply: string }>> {
-  const result = await call('POST', `encounters/${encodeURIComponent(encounterId)}/documents/revise`, body);
+  const result = await callAsJob(`encounters/${encodeURIComponent(encounterId)}/documents/revise`, body);
   if (!result.ok) return result;
   const reply = documentReply(result.value);
   const text = result.value['reply'];
@@ -862,7 +1011,7 @@ export async function getReferences(): Promise<Result<BookStatus>> {
 
 /** 記録全体から、AI がリストを組み直す（先生の直しは引き継ぐ） */
 export async function generateProblemList(patientId: string): Promise<Result<{ rejected: Record<string, number> }>> {
-  const result = await call('POST', `patients/${encodeURIComponent(patientId)}/problem-list`, {});
+  const result = await callAsJob(`patients/${encodeURIComponent(patientId)}/problem-list`, {});
   if (!result.ok) return result;
   const rejected = result.value['rejected'];
   return { ok: true, value: { rejected: isRecord(rejected) ? (rejected as Record<string, number>) : {} } };
@@ -877,14 +1026,14 @@ export async function patchProblemList(patientId: string, patch: ListPatch): Pro
 
 /** 記録から、AI が臨床支援を組み直す（ネットの出典も探すかを選ぶ。書籍は設定があるとき、いつも） */
 export async function generateSupport(patientId: string, web: boolean): Promise<Result<null>> {
-  return done(await call('POST', `patients/${encodeURIComponent(patientId)}/support`, { web }));
+  return done(await callAsJob(`patients/${encodeURIComponent(patientId)}/support`, { web }));
 }
 
 // --- 結果待ち（段K6。CA-065）
 
 /** 記録から、結果待ちの一覧を組み直す（AI の 1 回。提出の候補がなければ、AI を呼ばずに空の一覧） */
 export async function generatePending(patientId: string): Promise<Result<null>> {
-  return done(await call('POST', `patients/${encodeURIComponent(patientId)}/pending`, {}));
+  return done(await callAsJob(`patients/${encodeURIComponent(patientId)}/pending`, {}));
 }
 
 /** 先生の印（結果を確かめた・外す・戻す）。ボタンだけ */
@@ -896,7 +1045,7 @@ export async function markPending(patientId: string, key: string, mark: PendingM
 
 /** 記録から、予定と実施の一覧を組み直す（AI の 1 回。予定の行がなければ、AI を呼ばずに空の一覧） */
 export async function generatePlans(patientId: string): Promise<Result<null>> {
-  return done(await call('POST', `patients/${encodeURIComponent(patientId)}/plans`, {}));
+  return done(await callAsJob(`patients/${encodeURIComponent(patientId)}/plans`, {}));
 }
 
 /** 先生の印（実施を確かめた・中止・不要・外す・戻す）。ボタンだけ */
@@ -908,56 +1057,46 @@ export async function markPlan(patientId: string, key: string, mark: PlanMark): 
 
 /** 記録に聞く（保存しない。問いも答えも、画面のメモリだけ） */
 export async function askRecord(patientId: string, question: string): Promise<Result<AskReply>> {
-  return field<AskReply>(await call('POST', `patients/${encodeURIComponent(patientId)}/ask`, { question }), 'answer');
+  return field<AskReply>(await callAsJob(`patients/${encodeURIComponent(patientId)}/ask`, { question }), 'answer');
 }
 
 // --- 相談の窓口（段M。CA-081）
 
-/** 待つ時間の上限：検索の語・ネットの出典・答えの3回を待つ */
-export const CONSULT_TIMEOUT_MS = 420_000;
-
 /**
- * 相談する（保存しない。問い・前のやりとり・答えは、画面のメモリだけ）。書籍・ネットの検索に渡るのは、問題の名前と、問いの一般的な語だけ。
- * 答えは、少しずつ受け取る（CA-085）：いま何をしているか（onStage）と、サーバーが確かめた後の文（onStatement。書かれた順）。
- * 最後の答え（見出しの順に並べ直したもの）が、戻り値。確かめる前の字は、サーバーから届かない
+ * 相談する（問い・前のやりとりは、保存しない。答えは、受け取るまでサーバーに預かる：CA-088）。書籍・ネットの検索に渡るのは、問題の名前と、問いの一般的な語だけ。
+ * 仕事として頼み（CA-087）、いま何をしているか（onStage）と、サーバーが確かめた後の文（onStatement。書かれた順）を受け取る。
+ * 最後の答え（見出しの順に並べ直したもの）が、戻り値。確かめる前の字は、サーバーから届かない。画面を離れても、仕事は続く
  */
 export async function consultPatient(
   patientId: string,
   request: Omit<ConsultRequest, 'stream'>,
   on: { readonly onStage: (stage: ConsultStage) => void; readonly onStatement: (statement: ConsultStatement) => void },
 ): Promise<Result<ConsultReply>> {
-  const controller = new AbortController();
-  const timer = setTimeout(() => {
-    controller.abort();
-  }, CONSULT_TIMEOUT_MS);
+  const onEvent = (event: unknown): void => {
+    if (!isRecord(event)) return;
+    if ('stage' in event) on.onStage(event['stage'] as ConsultStage);
+    else if ('statement' in event) on.onStatement(event['statement'] as ConsultStatement);
+  };
+  const result = await callAsJob(`patients/${encodeURIComponent(patientId)}/consult`, { ...request, stream: true }, { onEvent, raw: (response) => readConsultLines(response, onEvent) });
+  return field<ConsultReply>(result, 'answer');
+}
+
+/** 仕事にならなかったとき（サーバーに仕事の係がない）：少しずつ返す答えを、1行に1つの JSON として、届いた順に読む */
+async function readConsultLines(response: Response, onEvent: (event: unknown) => void): Promise<Result<Record<string, unknown>>> {
+  if (response.body === null) return { ok: false, error: 'network' };
+  const known = (name: unknown): ApiError => KNOWN.find((k) => k === name) ?? 'server';
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let rest = '';
+  const got: { result: Result<Record<string, unknown>> | null } = { result: null };
+  const take = (line: string): void => {
+    if (line.trim() === '') return;
+    const event = JSON.parse(line) as ConsultEvent;
+    if ('done' in event) got.result = { ok: true, value: { answer: event.done } };
+    else if ('error' in event) got.result = { ok: false, error: known(event.error) };
+    else onEvent(event);
+  };
   try {
-    const response = await fetch(`/api/patients/${encodeURIComponent(patientId)}/consult`, {
-      method: 'POST',
-      credentials: 'same-origin',
-      cache: 'no-store',
-      redirect: 'error',
-      signal: controller.signal,
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ ...request, stream: true }),
-    });
-    const known = (name: unknown): ApiError => KNOWN.find((k) => k === name) ?? 'server';
-    if (!response.ok || response.body === null) {
-      const data: unknown = await response.json().catch(() => null);
-      return { ok: false, error: isRecord(data) ? known(data['error']) : 'server' };
-    }
-    // 1行に1つの JSON（届いた順に読む。行の途中で切れた分は、次の分とつなぐ）
-    const reader = response.body.getReader();
-    const decoder = new TextDecoder();
-    let rest = '';
-    const got: { result: Result<ConsultReply> | null } = { result: null };
-    const take = (line: string): void => {
-      if (line.trim() === '') return;
-      const event = JSON.parse(line) as ConsultEvent;
-      if ('stage' in event) on.onStage(event.stage);
-      else if ('statement' in event) on.onStatement(event.statement);
-      else if ('done' in event) got.result = { ok: true, value: event.done };
-      else got.result = { ok: false, error: known(event.error) };
-    };
     for (;;) {
       const { done, value } = await reader.read();
       rest += decoder.decode(value ?? new Uint8Array(), { stream: !done });
@@ -967,12 +1106,10 @@ export async function consultPatient(
       if (done) break;
     }
     take(rest);
-    return got.result ?? { ok: false, error: 'network' };
   } catch {
     return { ok: false, error: 'network' };
-  } finally {
-    clearTimeout(timer);
   }
+  return got.result ?? { ok: false, error: 'network' };
 }
 
 /** 答えを残す（先生が「残す」を押したものだけ。サーバーで選別を通す。問いの文は送らない） */
@@ -1030,12 +1167,12 @@ function proposalsOf(result: Result<Record<string, unknown>>): Result<OrderPropo
 
 /** 記録の文から写す（AI の 1 回。保存しない） */
 export async function transcribeOrders(encounterId: string, sourceId: string): Promise<Result<OrderProposals>> {
-  return proposalsOf(await call('POST', `encounters/${encodeURIComponent(encounterId)}/orders/transcribe`, { sourceId }));
+  return proposalsOf(await callAsJob(`encounters/${encodeURIComponent(encounterId)}/orders/transcribe`, { sourceId }));
 }
 
 /** AI の案を出す（AI の 1 回。保存しない）。categories が空なら、すべての欄 */
 export async function proposeOrders(encounterId: string, categories: readonly OrderCategory[]): Promise<Result<OrderProposals>> {
-  return proposalsOf(await call('POST', `encounters/${encodeURIComponent(encounterId)}/orders/propose`, { categories }));
+  return proposalsOf(await callAsJob(`encounters/${encodeURIComponent(encounterId)}/orders/propose`, { categories }));
 }
 
 /** 指示簿に足す（先生が打った字・AI の案の字は、サーバーで選別を通す） */

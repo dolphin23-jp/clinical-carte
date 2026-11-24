@@ -26,6 +26,8 @@ export interface ResumeInput {
   /** 自動で続けた回数（文ごと） */
   readonly attempts: ReadonlyMap<string, number>;
   readonly now: number;
+  /** 記録（sources）を読んだ時刻。切れた整理は、猶予が明けたあとに読んだ記録でも整理されていないときだけ、頼み直す */
+  readonly loadedAt: number;
 }
 
 export interface ResumePlan {
@@ -43,7 +45,8 @@ export interface ResumePlan {
  * まだ整理されていない文ごとに、待つか・自動で続けるかを決める。
  * - 頼んで答えを待っている → 何もしない（自動で続けたものは resuming）
  * - 答えを受け取った → 何もしない（記録の読み直しが追いつくのを待つ。整理できなかったものは、先生が「整理する」を押す）
- * - 切れた → 猶予のあいだは待つ（recheckAt に読み直す）。猶予を過ぎたら、回数の上限まで続ける
+ * - 切れた → 猶予のあいだは待つ（recheckAt に読み直す）。猶予を過ぎても、記録が猶予より前に読んだものなら、読み直してから決める
+ *   （読み直しが届く前の古い記録で、頼み直さない）。猶予のあとに読んだ記録でも整理されていなければ、回数の上限まで続ける
  * - 画面が知らない（読み込み直した・送り待ちから送った）→ 回数の上限まで続ける（切れた整理か、まだ頼んでいない整理）
  */
 export function resumeOrganize(input: ResumeInput): ResumePlan {
@@ -60,9 +63,9 @@ export function resumeOrganize(input: ResumeInput): ResumePlan {
       continue;
     }
     if (job?.state === 'finished') continue;
-    if (job?.state === 'lost' && input.now < job.at + RESUME_GRACE_MS) {
+    if (job?.state === 'lost' && (input.now < job.at + RESUME_GRACE_MS || input.loadedAt < job.at + RESUME_GRACE_MS)) {
       waiting.push(source.id);
-      recheckAt = Math.min(recheckAt ?? Number.POSITIVE_INFINITY, job.at + RESUME_GRACE_MS);
+      recheckAt = Math.min(recheckAt ?? Number.POSITIVE_INFINITY, Math.max(job.at + RESUME_GRACE_MS, input.now));
       continue;
     }
     if (tried < RESUME_ATTEMPTS) run.push(source.id);

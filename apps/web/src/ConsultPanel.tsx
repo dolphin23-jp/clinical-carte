@@ -56,9 +56,10 @@ import { AskAnswerView } from './AskView.tsx';
 import { showDateTime } from './format.ts';
 import { Icon } from './Icon.tsx';
 import { errorMessage } from './messages.ts';
-import { addConsultNote, addOrders, type ApiError, askRecord, consultPatient, deleteConsultNote, patchConsultNote, type PatientRecord } from './net/api.ts';
+import { addConsultNote, addOrders, answerJob, type ApiError, askRecord, consultPatient, deleteConsultNote, patchConsultNote, type PatientRecord } from './net/api.ts';
 import { useKept } from './kept.ts';
 import { resendAfterReturn } from './lifecycle.ts';
+import { claimJobs } from './pickup.ts';
 import { Marked } from './SupportView.tsx';
 
 /** やりとりの1つ（画面のメモリだけ） */
@@ -107,7 +108,11 @@ function turnsOf(entries: readonly ConsultEntry[]): ConsultTurn[] {
 }
 
 /** 相談の窓口の係（患者の画面に1つ）。やりとりは、ここのメモリだけ */
-export function useConsult(patientId: string, onChanged: () => void, onLeft: () => void): ConsultState {
+/** 読み込み直したあとに拾った答えの、問いの欄（問いの字は預かっていない：CA-088） */
+export const PICKED_QUESTION = '（読み込み直す前に送った問い。問いの字は残していません）';
+let pickedSerial = 0;
+
+export function useConsult(patientId: string, onChanged: () => void, onLeft: () => void, onPicked?: () => void): ConsultState {
   // やりとりは、患者ごとのメモリ（CA-086）：患者の一覧へ戻る・ほかの患者を開いても消えず、待っている答えが届けば、ここに入る。端末には置かない
   const k = (name: string): string => `consult:${patientId}:${name}`;
   const [mode, setMode] = useKept<ConsultNoteMode>(k('mode'), 'consult');
@@ -124,6 +129,30 @@ export function useConsult(patientId: string, onChanged: () => void, onLeft: () 
   const away = () => {
     setMessage('画面を離れているあいだに、つながりが切れました。画面に戻ったので、同じ問いをもう一度送っています。');
   };
+  // 読み込み直したあと（CA-088）：この患者で、読み込み直す前に送った相談・記録に聞くの答えを拾う（問いの字は預かっていないので、出さない）
+  useEffect(() => {
+    void claimJobs(patientId, ['consult', 'ask'], patientId).then((list) => {
+      for (const job of list) {
+        pickedSerial -= 1;
+        const id = pickedSerial;
+        const got = (entry: ConsultEntry): void => {
+          setEntries((all) => [entry, ...all]);
+          setMessage('読み込み直す前に送った問いの答えを、受け取りました（問いの字は残していないので、出していません）。');
+          onPicked?.();
+        };
+        if (job.kind === 'ask') {
+          void answerJob<AskReply>(job.id).then((r) => {
+            if (r.ok) got({ id, mode: 'record', question: PICKED_QUESTION, kept: false, reply: r.value });
+          });
+        } else {
+          void answerJob<ConsultReply>(job.id).then((r) => {
+            if (r.ok) got({ id, mode: 'consult', question: PICKED_QUESTION, kept: false, reply: r.value });
+          });
+        }
+      }
+    });
+    // 患者ごとに1回（拾う部品が、同じ仕事を二重に受け取らない）
+  }, [patientId]);
 
   const failed = (error: ApiError) => {
     if (error === 'unregistered') onLeft();

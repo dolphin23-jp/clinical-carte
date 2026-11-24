@@ -35,14 +35,15 @@ import {
   SOURCE_KIND_LABELS,
   unseenMarks,
 } from '@clinical-carte/core';
-import { type SyntheticEvent, useState } from 'react';
+import { type SyntheticEvent, useEffect, useState } from 'react';
 
 import { joinDateTime, showDateTime } from './format.ts';
 import { Icon } from './Icon.tsx';
 import { errorMessage } from './messages.ts';
 import { useKept } from './kept.ts';
 import { resendAfterReturn } from './lifecycle.ts';
-import { addOrders, type ApiError, deleteOrder, type Encounter, type OrderProposals, type PatientRecord, patchOrder, proposeOrders, transcribeOrders } from './net/api.ts';
+import { claimJobs } from './pickup.ts';
+import { addOrders, type ApiError, deleteOrder, type Encounter, type OrderProposals, type PatientRecord, patchOrder, proposalsJob, proposeOrders, transcribeOrders } from './net/api.ts';
 import { OrderTemplates, ScaleTable } from './OrderTemplates.tsx';
 import { ResultLinks } from './PendingView.tsx';
 import { Marked } from './SupportView.tsx';
@@ -617,6 +618,20 @@ export function OrdersView({ record, encounter, onChanged, onLeft }: { record: P
     setMode(mode === m ? 'none' : m);
     setMessage(null);
   };
+  // 読み込み直したあと（CA-088）：この受診で、読み込み直す前に頼んだ写し・案の答えを拾って出す（入れるまでは保存しない。これまでどおり）
+  useEffect(() => {
+    void claimJobs(encounter.patientId, ['order_transcribe', 'order_propose'], encounter.id).then((list) => {
+      for (const job of list) {
+        void proposalsJob(job.id).then((r) => {
+          if (!r.ok) return;
+          setProposals({ list: r.value.proposals, counts: r.value.counts, kind: job.kind === 'order_propose' ? 'propose' : 'transcribe' });
+          setMessage('読み込み直す前に頼んだ指示簿の写し・案を、受け取りました（まだ入れていません）。');
+        });
+      }
+    });
+    // 受診ごとに1回
+  }, [encounter.id]);
+
   const transcribe = () => {
     const id = sourceId === '' ? (sources[0]?.id ?? '') : sourceId;
     if (id === '') return;

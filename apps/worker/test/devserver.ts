@@ -6,6 +6,7 @@ import type { AddressInfo } from 'node:net';
 import { extname, join, normalize } from 'node:path';
 
 import { handle } from '../src/handler.ts';
+import { createJobHost } from '../src/jobs.ts';
 import type { Organizer } from '../src/organizer.ts';
 import type { BookSearcher } from '../src/references.ts';
 import type { Selector } from '../src/selector.ts';
@@ -49,12 +50,14 @@ export interface DevServer {
   close(): Promise<void>;
 }
 
-export async function startDevServer(options: { dist: string; key: string | undefined; selector?: Selector | null; organizer?: Organizer | null; dailyAiLimit?: number; books?: BookSearcher | null }): Promise<DevServer> {
+export async function startDevServer(options: { dist: string; key: string | undefined; selector?: Selector | null; organizer?: Organizer | null; dailyAiLimit?: number; books?: BookSearcher | null; jobs?: false }): Promise<DevServer> {
   const organizer = options.organizer === undefined ? fakeOrganizer() : options.organizer;
   const selector = options.selector === undefined ? fakeSelector() : options.selector;
   const db = openDb();
   const clock: Clock = { ms: Date.UTC(2026, 10, 20, 3, 0) };
   const runtime = testRuntime(clock);
+  // AI の仕事を、通信から切り離して動かす係（段N2。CA-087）：本番は Durable Objects。手元は、同じ係をこのプロセスのメモリで動かす
+  const jobs = options.jobs === false ? null : createJobHost(() => ({ db, runtime, selector, dailyAiLimit: options.dailyAiLimit ?? 0, model: 'test-model', organizer, books: options.books ?? null }));
   const headerRules = headersFor(await readFile(join(options.dist, '_headers'), 'utf8').catch(() => ''));
 
   const assets = async (request: Request): Promise<Response> => {
@@ -86,7 +89,7 @@ export async function startDevServer(options: { dist: string; key: string | unde
       if (method !== 'GET' && method !== 'HEAD') init.body = new Uint8Array(Buffer.concat(chunks));
       const request = new Request(`http://${req.headers.host ?? '127.0.0.1'}${req.url ?? '/'}`, init);
       // 手元は http なので、印に Secure と __Host- を付けない
-      const response = await handle(request, { db, key: options.key, runtime, secureCookies: false, assets, selector, dailyAiLimit: options.dailyAiLimit ?? 0, model: 'test-model', organizer, books: options.books ?? null });
+      const response = await handle(request, { db, key: options.key, runtime, secureCookies: false, assets, selector, dailyAiLimit: options.dailyAiLimit ?? 0, model: 'test-model', organizer, books: options.books ?? null, jobs });
       res.statusCode = response.status;
       response.headers.forEach((value, name) => {
         if (name !== 'set-cookie') res.setHeader(name, value);
