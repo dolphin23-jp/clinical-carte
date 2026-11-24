@@ -3,9 +3,10 @@
 // - 名前は AI が整えたもの。結びつけた「記録に書かれた問題」の名前と、経過の出来事を並べて出す。「AI の整理」の印
 // - 先生は直せる：名前（選別を通す）・確からしさ・状態・並べ替え・外す（外したものは下で戻せる）
 // - 判定しない：色を付けない。確からしさ・状態は、書かれたこと（と AI の整理）を語で出すだけ
-import { COURSE_CATEGORY_NAMES, LIST_ACTIVITIES, LIST_ACTIVITY_NAMES, LIST_CERTAINTIES, LIST_CERTAINTY_NAMES, LIST_NAME_MAX, type ListItem, listBasis, type ListPatch, numberedList, threadViews } from '@clinical-carte/core';
+import { COURSE_CATEGORY_NAMES, LIST_ACTIVITIES, LIST_ACTIVITY_NAMES, LIST_CERTAINTIES, LIST_CERTAINTY_NAMES, LIST_NAME_MAX, type ListItem, listBasis, type ListPatch, numberedList, threadViews, RESUME_GRACE_MS } from '@clinical-carte/core';
 import { useEffect, useRef, useState } from 'react';
 
+import { afterReturn } from './lifecycle.ts';
 import { showDateTime } from './format.ts';
 import { Icon } from './Icon.tsx';
 import { errorMessage } from './messages.ts';
@@ -34,6 +35,15 @@ export function useProblemList(patientId: string, record: PatientRecord | null, 
       setBusy(false);
       if (r.ok) onChanged();
       else if (r.error === 'unregistered') onLeft();
+      else if (r.error === 'network') {
+        // つながりが切れた（画面を離れたなど。CA-086）：サーバーが仕上げる猶予を待ってから読み直し、まだ古ければ、自動でもう一度組む
+        setMessage('つながりが切れました。画面に戻ったら、続きを自動で組み直します。');
+        afterReturn(() => {
+          tried.current = null;
+          setMessage(null);
+          onChanged();
+        }, RESUME_GRACE_MS);
+      }
       else if (r.error !== 'list_empty') setMessage(`プロブレムリストを組み直せませんでした（${say(r.error)}）`);
     });
   };

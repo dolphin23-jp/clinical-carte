@@ -62,8 +62,13 @@ const ready = schemaGate(() => {
   return database;
 });
 
+/** Cloudflare の実行の文脈（使うのは waitUntil だけ） */
+export interface Context {
+  waitUntil(work: Promise<unknown>): void;
+}
+
 export default {
-  fetch(request: Request, env: Env): Promise<Response> {
+  fetch(request: Request, env: Env, ctx: Context): Promise<Response> {
     database = env.DB;
     const apiKey = anthropicKeyOf(env);
     const model = env.MODEL?.trim() || DEFAULT_MODEL;
@@ -78,6 +83,10 @@ export default {
       model,
       organizer: apiKey === '' ? null : createAnthropicOrganizer({ apiKey, model }),
       dailyAiLimit: dailyLimitOf(env.DAILY_AI_LIMIT),
+      // 画面とのつながりが切れても、書き込む要求の仕事を続ける（CA-086。切れたあと 30 秒まで）
+      keepAlive: (work) => {
+        ctx.waitUntil(work);
+      },
       books: ragSearcherOf(env),
     });
   },

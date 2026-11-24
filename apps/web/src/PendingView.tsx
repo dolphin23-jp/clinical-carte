@@ -16,9 +16,11 @@ import {
   type PendingMark,
   type PendingResult,
   SOURCE_KIND_LABELS,
+  RESUME_GRACE_MS,
 } from '@clinical-carte/core';
 import { useEffect, useRef, useState } from 'react';
 
+import { afterReturn } from './lifecycle.ts';
 import { showDateTime } from './format.ts';
 import { Icon } from './Icon.tsx';
 import { errorMessage } from './messages.ts';
@@ -53,6 +55,15 @@ export function usePending(patientId: string, record: PatientRecord | null, onCh
       setBusy(false);
       if (r.ok) onChanged();
       else if (r.error === 'unregistered') onLeft();
+      else if (r.error === 'network') {
+        // つながりが切れた（画面を離れたなど。CA-086）：サーバーが仕上げる猶予を待ってから読み直し、まだ古ければ、自動でもう一度組む
+        setMessage('つながりが切れました。画面に戻ったら、続きを自動で組み直します。');
+        afterReturn(() => {
+          tried.current = null;
+          setMessage(null);
+          onChanged();
+        }, RESUME_GRACE_MS);
+      }
       else setMessage(`結果待ちを組み直せませんでした（${say(r.error)}）`);
     });
   };

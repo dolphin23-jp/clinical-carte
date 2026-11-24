@@ -35,6 +35,8 @@ import {
 import { Fragment, useEffect, useState } from 'react';
 
 import { showDateTime } from './format.ts';
+import { useKept } from './kept.ts';
+import { resendAfterReturn } from './lifecycle.ts';
 import { errorMessage } from './messages.ts';
 import {
   type ApiError,
@@ -188,20 +190,27 @@ export function DocumentView({
   onPickUsed?: (key: string) => void;
 }) {
   const offered = DOC_TYPES_FOR[encounter.kind];
-  const [type, setType] = useState<DocType>(offered[0] ?? 'progress');
-  const [chosenDay, setChosenDay] = useState<string | null>(null);
-  const [web, setWeb] = useState(false);
-  const [busy, setBusy] = useState<'generate' | 'revise' | 'save' | null>(null);
-  const [work, setWork] = useState<Work | null>(null);
-  const [undo, setUndo] = useState<readonly Work[]>([]);
-  const [editing, setEditing] = useState(false);
-  const [talk, setTalk] = useState<readonly { role: 'doctor' | 'ai'; text: string }[]>([]);
-  const [ask, setAsk] = useState('');
-  const [message, setMessage] = useState<string | null>(null);
+  // 下書き・相談のやりとり・待っている様子は、受診ごとのメモリ（CA-086）：ほかのタブ・患者の一覧へ移っても消えず、
+  // 待っている AI の答え（出す・AI に頼む）が届けば、ここに入る。保存はしない（残るのは「保存する」を押したときだけ）。端末には置かない
+  const k = (name: string): string => `doc:${encounter.id}:${name}`;
+  const [type, setType] = useKept<DocType>(k('type'), offered[0] ?? 'progress');
+  const [chosenDay, setChosenDay] = useKept<string | null>(k('day'), null);
+  const [web, setWeb] = useKept(k('web'), false);
+  const [busy, setBusy] = useKept<'generate' | 'revise' | 'save' | null>(k('busy'), null);
+  const [work, setWork] = useKept<Work | null>(k('work'), null);
+  const [undo, setUndo] = useKept<readonly Work[]>(k('undo'), []);
+  const [editing, setEditing] = useKept(k('editing'), false);
+  const [talk, setTalk] = useKept<readonly { role: 'doctor' | 'ai'; text: string }[]>(k('talk'), []);
+  const [ask, setAsk] = useKept(k('ask'), '');
+  const [message, setMessage] = useKept<string | null>(k('message'), null);
   const [askRegenerate, setAskRegenerate] = useState(false);
   const [deleting, setDeleting] = useState<string | null>(null);
   // 申し送りの受け手の確認（残さない。画面のメモリだけ）
-  const [received, setReceived] = useState(false);
+  const [received, setReceived] = useKept(k('received'), false);
+  // 画面を離れているあいだに切れたら、戻ってから同じ頼みを1回だけ送り直す（出した記載・やりとりは、サーバーにも残さない決まり）
+  const away = () => {
+    setMessage('画面を離れているあいだに、つながりが切れました。画面に戻ったので、もう一度頼んでいます。');
+  };
 
   const lastDay = days.at(-1) ?? null;
   const day = chosenDay ?? defaultDocDay(type, encounter, lastDay, selectedDay);
@@ -235,12 +244,13 @@ export function DocumentView({
     setBusy('generate');
     setMessage(null);
     setAskRegenerate(false);
-    void generateDocument(encounter.id, { type, day, web }).then((r) => {
+    void resendAfterReturn(() => generateDocument(encounter.id, { type, day, web }), away).then((r) => {
       setBusy(null);
       if (!r.ok) {
         fail(r.error);
         return;
       }
+      setMessage(null);
       setUndo([]);
       setTalk([]);
       setEditing(false);
@@ -269,12 +279,16 @@ export function DocumentView({
     const instruction = ask.trim();
     setBusy('revise');
     setMessage(null);
-    void reviseDocument(encounter.id, { type: work.type, day: work.day, web: false, sections: work.sections.map((x) => ({ key: x.key, text: x.text })), instruction, history: talk }).then((r) => {
+    void resendAfterReturn(
+      () => reviseDocument(encounter.id, { type: work.type, day: work.day, web: false, sections: work.sections.map((x) => ({ key: x.key, text: x.text })), instruction, history: talk }),
+      away,
+    ).then((r) => {
       setBusy(null);
       if (!r.ok) {
         fail(r.error);
         return;
       }
+      setMessage(null);
       setUndo([...undo, work].slice(-10));
       setTalk([...talk, { role: 'doctor' as const, text: instruction }, { role: 'ai' as const, text: r.value.reply === '' ? '（答えの文はありませんでした）' : r.value.reply }].slice(-20));
       setAsk('');

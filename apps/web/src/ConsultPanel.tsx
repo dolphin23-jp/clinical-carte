@@ -57,6 +57,8 @@ import { showDateTime } from './format.ts';
 import { Icon } from './Icon.tsx';
 import { errorMessage } from './messages.ts';
 import { addConsultNote, addOrders, type ApiError, askRecord, consultPatient, deleteConsultNote, patchConsultNote, type PatientRecord } from './net/api.ts';
+import { useKept } from './kept.ts';
+import { resendAfterReturn } from './lifecycle.ts';
 import { Marked } from './SupportView.tsx';
 
 /** やりとりの1つ（画面のメモリだけ） */
@@ -106,16 +108,22 @@ function turnsOf(entries: readonly ConsultEntry[]): ConsultTurn[] {
 
 /** 相談の窓口の係（患者の画面に1つ）。やりとりは、ここのメモリだけ */
 export function useConsult(patientId: string, onChanged: () => void, onLeft: () => void): ConsultState {
-  const [mode, setMode] = useState<ConsultNoteMode>('consult');
-  const [draft, setDraft] = useState('');
-  const [web, setWeb] = useState(true);
-  const [past, setPast] = useState(true);
-  const [progress, setProgress] = useState<ConsultState['progress']>(null);
-  const [entries, setEntries] = useState<readonly ConsultEntry[]>([]);
-  const [busy, setBusy] = useState(false);
-  const [message, setMessage] = useState<string | null>(null);
-  const [keeping, setKeeping] = useState<number | null>(null);
-  const [serial, setSerial] = useState(1);
+  // やりとりは、患者ごとのメモリ（CA-086）：患者の一覧へ戻る・ほかの患者を開いても消えず、待っている答えが届けば、ここに入る。端末には置かない
+  const k = (name: string): string => `consult:${patientId}:${name}`;
+  const [mode, setMode] = useKept<ConsultNoteMode>(k('mode'), 'consult');
+  const [draft, setDraft] = useKept(k('draft'), '');
+  const [web, setWeb] = useKept(k('web'), true);
+  const [past, setPast] = useKept(k('past'), true);
+  const [progress, setProgress] = useKept<ConsultState['progress']>(k('progress'), null);
+  const [entries, setEntries] = useKept<readonly ConsultEntry[]>(k('entries'), []);
+  const [busy, setBusy] = useKept(k('busy'), false);
+  const [message, setMessage] = useKept<string | null>(k('message'), null);
+  const [keeping, setKeeping] = useKept<number | null>(k('keeping'), null);
+  const [serial, setSerial] = useKept(k('serial'), 1);
+  // 画面を離れているあいだに切れたら、戻ってから同じ問いを1回だけ送り直す（答えはサーバーにも残さない決まりなので、受け取り直すしかない）
+  const away = () => {
+    setMessage('画面を離れているあいだに、つながりが切れました。画面に戻ったので、同じ問いをもう一度送っています。');
+  };
 
   const failed = (error: ApiError) => {
     if (error === 'unregistered') onLeft();
@@ -139,29 +147,36 @@ export function useConsult(patientId: string, onChanged: () => void, onLeft: () 
       setDraft('');
     };
     if (mode === 'consult') {
-      setProgress({ stage: null, statements: [] });
-      void consultPatient(
-        patientId,
-        { question, turns, web, past },
-        {
-          onStage: (stage) => {
-            setProgress((p) => ({ stage, statements: p?.statements ?? [] }));
+      void resendAfterReturn(() => {
+        // 送り直すときは、途中まで出した文を消して、はじめから
+        setProgress({ stage: null, statements: [] });
+        return consultPatient(
+          patientId,
+          { question, turns, web, past },
+          {
+            onStage: (stage) => {
+              setProgress((p) => ({ stage, statements: p?.statements ?? [] }));
+            },
+            onStatement: (statement) => {
+              setProgress((p) => ({ stage: p?.stage ?? 'answer', statements: [...(p?.statements ?? []), statement] }));
+            },
           },
-          onStatement: (statement) => {
-            setProgress((p) => ({ stage: p?.stage ?? 'answer', statements: [...(p?.statements ?? []), statement] }));
-          },
-        },
-      ).then((r) => {
+        );
+      }, away).then((r) => {
         setBusy(false);
         setProgress(null);
-        if (r.ok) add({ id, mode: 'consult', question, kept: false, reply: r.value });
-        else failed(r.error);
+        if (r.ok) {
+          setMessage(null);
+          add({ id, mode: 'consult', question, kept: false, reply: r.value });
+        } else failed(r.error);
       });
     } else {
-      void askRecord(patientId, question.slice(0, ASK_QUESTION_MAX)).then((r) => {
+      void resendAfterReturn(() => askRecord(patientId, question.slice(0, ASK_QUESTION_MAX)), away).then((r) => {
         setBusy(false);
-        if (r.ok) add({ id, mode: 'record', question, kept: false, reply: r.value });
-        else failed(r.error);
+        if (r.ok) {
+          setMessage(null);
+          add({ id, mode: 'record', question, kept: false, reply: r.value });
+        } else failed(r.error);
       });
     }
   };
