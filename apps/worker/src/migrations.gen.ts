@@ -189,5 +189,12 @@ export const MIGRATIONS: readonly Migration[] = [
       "CREATE INDEX IF NOT EXISTS order_edits_by_patient ON order_edits (patient_id, at)",
       "CREATE TABLE IF NOT EXISTS order_templates ( id TEXT PRIMARY KEY, body TEXT NOT NULL, created_at TEXT NOT NULL CHECK (length(created_at) = 16), updated_at TEXT NOT NULL CHECK (length(updated_at) = 16), removed_at TEXT CHECK (removed_at IS NULL OR length(removed_at) = 16) )"
     ]
+  },
+  {
+    "name": "0019_consult_notes",
+    "statements": [
+      "CREATE TABLE IF NOT EXISTS consult_notes ( id TEXT PRIMARY KEY, patient_id TEXT NOT NULL REFERENCES patients (id) ON DELETE CASCADE, mode TEXT NOT NULL CHECK (mode IN ('consult', 'record')), text TEXT NOT NULL, refs TEXT NOT NULL, entered_at TEXT NOT NULL CHECK (length(entered_at) = 16) )",
+      "CREATE INDEX IF NOT EXISTS consult_notes_by_patient ON consult_notes (patient_id, entered_at)"
+    ]
   }
 ];

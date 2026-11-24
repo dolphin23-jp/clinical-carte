@@ -10,7 +10,7 @@ import type { Db, Statement } from '../src/db.ts';
 import { handle, type HandlerDeps } from '../src/handler.ts';
 import { MIGRATIONS as MIGRATION_LIST } from '../src/migrations.gen.ts';
 import { type Runtime, webRuntime } from '../src/runtime.ts';
-import type { AskResult, DocumentResult, LinkerResult, Organizer, OrganizerResult, PendingResultAnswer, PlanResultAnswer, ProblemListResult, ProposeResult, ResearchResult, ReviseResult, SupportResult, TranscribeResult } from '../src/organizer.ts';
+import type { AskResult, ConsultResult, ConsultTermsResult, DocumentResult, LinkerResult, Organizer, OrganizerResult, PendingResultAnswer, PlanResultAnswer, ProblemListResult, ProposeResult, ResearchResult, ReviseResult, SupportResult, TranscribeResult } from '../src/organizer.ts';
 import type { OrganizePromptChoice } from '../src/prompt.ts';
 import type { Selector, SelectorResult } from '../src/selector.ts';
 
@@ -179,6 +179,9 @@ export interface FakeOrganizer extends Organizer {
   /** 結果待ち・記録への質問に渡された資料（JSON） */
   readonly pended: string[];
   readonly asked: string[];
+  /** 相談の窓口（段M）：答える係に渡された資料（JSON）と、検索の語を取り出す係に渡された文（JSON） */
+  readonly consulted: string[];
+  readonly termed: string[];
   /** 予定と実施に渡された資料（JSON） */
   readonly planned: string[];
   /** 指示簿を写す・案を出すに渡された資料（JSON。段K11） */
@@ -195,6 +198,8 @@ export interface FakeDocAnswers {
   readonly pending?: (message: string) => PendingResultAnswer;
   readonly plans?: (message: string) => PlanResultAnswer;
   readonly ask?: (message: string) => AskResult;
+  readonly consult?: (message: string) => ConsultResult;
+  readonly consultTerms?: (message: string) => ConsultTermsResult;
   readonly orderTranscribe?: (message: string) => TranscribeResult;
   readonly orderPropose?: (message: string) => ProposeResult;
 }
@@ -212,6 +217,8 @@ export function fakeOrganizer(
   const supported: string[] = [];
   const pended: string[] = [];
   const asked: string[] = [];
+  const consulted: string[] = [];
+  const termed: string[] = [];
   const planned: string[] = [];
   const transcribed: string[] = [];
   const proposed: string[] = [];
@@ -229,6 +236,8 @@ export function fakeOrganizer(
     supported,
     pended,
     asked,
+    consulted,
+    termed,
     planned,
     transcribed,
     proposed,
@@ -247,6 +256,14 @@ export function fakeOrganizer(
     pending: (message) => {
       pended.push(message);
       return Promise.resolve(docs.pending?.(message) ?? { ok: true, answer: { items: [] } });
+    },
+    consultTerms: (message) => {
+      termed.push(message);
+      return Promise.resolve(docs.consultTerms?.(message) ?? { ok: true, answer: { terms: [] } });
+    },
+    consult: (message) => {
+      consulted.push(message);
+      return Promise.resolve(docs.consult?.(message) ?? { ok: true, answer: { statements: [], unknown: '' } });
     },
     ask: (message) => {
       asked.push(message);

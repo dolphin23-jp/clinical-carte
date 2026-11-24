@@ -1,6 +1,6 @@
 // 記録の読み書き（段1：患者・受診・取り込んだ文・測定値）。書く表は、docs/04 の 6 の一覧のとおり。
 // ここは、形を確かめた後の値だけを受け取る（形の確かめは handler.ts、文の選別は intake.ts）。
-import { COURSE_CATEGORIES, type CourseCategory, type SearchInput, DOC_ORIGINS, DOC_TYPES, type DocOrigin, type DocType, isDocOrigin, isHandoffSeverity, latestHandoff, type HandoffSeverity, type SavedHandoff, type ListItem, ListItemShape, roundSummary, type RoundSummary, type SavedDocument, PendingBody, PlanBody, SavedSection, SupportBody, type OrderItem, OrderItems, type ScaleTemplate, ScaleTemplateBody } from '@clinical-carte/core';
+import { COURSE_CATEGORIES, type CourseCategory, type SearchInput, DOC_ORIGINS, DOC_TYPES, type DocOrigin, type DocType, isDocOrigin, isHandoffSeverity, latestHandoff, type HandoffSeverity, type SavedHandoff, type ListItem, ListItemShape, roundSummary, type RoundSummary, type SavedDocument, PendingBody, PlanBody, SavedSection, SupportBody, type OrderItem, OrderItems, type ScaleTemplate, ScaleTemplateBody, CONSULT_NOTE_MODES, type ConsultNote } from '@clinical-carte/core';
 import { z } from 'zod';
 import { ApRef, type ApOrigin, type ApPart, type FactField, type FactKind, type PlanKind, USER_EDIT_FIELDS, USER_EDIT_TARGETS, type UserEditField, type UserEditTarget } from '@clinical-carte/core';
 import type { AuthorRole, Comparator, EncounterKind, EventKind, HistoryAction, LabRow, MedicationAction, OrganizeReport, ProblemActivity, ProblemStatus, SegmentLabel, Sex, SourceKind } from '@clinical-carte/core';
@@ -510,6 +510,27 @@ function toThread(row: Row): ProblemThread | null {
 /** 問題の筋の列（読み出し） */
 export const THREAD_COLUMNS = 'id, display_name, merged_into, status_override, activity_override, ord, excluded, typed_name';
 
+/** 参照の欄（JSON）を読む。読めない参照は、ないものとして扱う */
+function refsOf(row: Row): ApRef[] {
+  try {
+    const parsed: unknown = JSON.parse(text(row, 'refs') ?? '[]');
+    if (Array.isArray(parsed)) return parsed.map((r) => ApRef.safeParse(r)).flatMap((r) => (r.success ? [r.data] : []));
+  } catch {
+    // 読めない参照は、ないものとして扱う
+  }
+  return [];
+}
+
+/** 相談の窓口で残した答え（段M。CA-081） */
+function toConsultNote(row: Row): ConsultNote | null {
+  const id = text(row, 'id');
+  const mode = CONSULT_NOTE_MODES.find((m) => m === text(row, 'mode'));
+  const body = text(row, 'text');
+  const enteredAt = text(row, 'entered_at');
+  if (id === null || mode === undefined || body === null || enteredAt === null) return null;
+  return { id, mode, text: body, refs: refsOf(row), enteredAt };
+}
+
 function toApNote(row: Row): ApNote | null {
   const id = text(row, 'id');
   const encounterId = text(row, 'encounter_id');
@@ -523,13 +544,7 @@ function toApNote(row: Row): ApNote | null {
   if (id === null || encounterId === null || threadId === null || day === null || body === null || enteredAt === null || updatedAt === null) return null;
   if ((part !== 'assessment' && part !== 'plan') || (origin !== 'self' && origin !== 'ai' && origin !== 'ai_edited')) return null;
   const kind = text(row, 'plan_kind');
-  let refs: ApRef[] = [];
-  try {
-    const parsed: unknown = JSON.parse(text(row, 'refs') ?? '[]');
-    if (Array.isArray(parsed)) refs = parsed.map((r) => ApRef.safeParse(r)).flatMap((r) => (r.success ? [r.data] : []));
-  } catch {
-    // 読めない参照は、ないものとして扱う
-  }
+  const refs = refsOf(row);
   return { id, encounterId, threadId, day, part, planKind: kind === 'dx' || kind === 'tx' || kind === 'ex' || kind === 'other' ? kind : null, text: body, origin, refs, enteredAt, updatedAt };
 }
 
@@ -822,6 +837,8 @@ export interface PatientRecord {
   readonly orders: OrderSheetRow[];
   /** スケールのテンプレ（段K11。CA-075。全患者に共通。外したものは入れない） */
   readonly orderTemplates: ScaleTemplate[];
+  /** 相談の窓口で、先生が残した答え（段M。CA-081。新しい順） */
+  readonly consultNotes: ConsultNote[];
 }
 
 export interface OrderSheetRow {
@@ -892,7 +909,7 @@ export const PROBLEM_COLUMNS = 'id, source_id, encounter_id, name, status, activ
 export async function getRecord(db: Db, id: string): Promise<PatientRecord | null> {
   const patient = await getPatient(db, id);
   if (patient === null) return null;
-  const [encounters, sources, observations, segments, medications, events, problems, threads, history, factEdits, userEdits, apNotes, scaleLinks, documents, course, problemList, support, pending, handoffs, plans, casebook, orders, orderTemplates] = await Promise.all([
+  const [encounters, sources, observations, segments, medications, events, problems, threads, history, factEdits, userEdits, apNotes, scaleLinks, documents, course, problemList, support, pending, handoffs, plans, casebook, orders, orderTemplates, consultNotes] = await Promise.all([
     db.prepare('SELECT id, patient_id, kind, started, ended FROM encounters WHERE patient_id = ? ORDER BY started, id').bind(id).all(),
     db.prepare('SELECT id, patient_id, encounter_id, kind, author_role, at, entered_at, text, replaced, organized, organized_version, organize_report, next_day_from FROM sources WHERE patient_id = ? ORDER BY id').bind(id).all(),
     db
@@ -919,6 +936,7 @@ export async function getRecord(db: Db, id: string): Promise<PatientRecord | nul
     casebookLinks(db, id),
     db.prepare('SELECT encounter_id, items, updated_at FROM order_sheets WHERE patient_id = ? ORDER BY encounter_id').bind(id).all(),
     listOrderTemplates(db),
+    db.prepare('SELECT id, mode, text, refs, entered_at FROM consult_notes WHERE patient_id = ? ORDER BY entered_at DESC, id DESC LIMIT 100').bind(id).all(),
   ]);
   return {
     patient,
@@ -945,6 +963,7 @@ export async function getRecord(db: Db, id: string): Promise<PatientRecord | nul
     casebook,
     orders: orders.results.map(orderSheetOf).filter(present),
     orderTemplates,
+    consultNotes: consultNotes.results.map(toConsultNote).filter(present),
   };
 }
 
@@ -990,7 +1009,7 @@ export async function setEncounterEnd(db: Db, id: string, end: string | null): P
 export const FACT_TABLES = ['observations', 'segments', 'medications', 'events', 'problems', 'course_items'] as const;
 
 /** 患者に付く、文からではない行の表（患者を消すと、一緒に消える。文を消しても残る：筋は、記載がなくなると見えなくなるだけ） */
-export const PATIENT_TABLES = ['problem_threads', 'history', 'fact_edits', 'user_edits', 'ap_notes', 'ap_history', 'documents', 'document_history', 'handoffs', 'problem_lists', 'problem_list_edits', 'clinical_support', 'pending_results', 'pending_result_edits', 'plan_checks', 'plan_check_edits', 'casebook_links', 'order_sheets', 'order_edits'] as const;
+export const PATIENT_TABLES = ['problem_threads', 'history', 'fact_edits', 'user_edits', 'ap_notes', 'ap_history', 'documents', 'document_history', 'handoffs', 'problem_lists', 'problem_list_edits', 'clinical_support', 'pending_results', 'pending_result_edits', 'plan_checks', 'plan_check_edits', 'casebook_links', 'order_sheets', 'order_edits', 'consult_notes'] as const;
 
 /** 問題の行を、表から読む */
 export function problemOf(row: Record<string, unknown>): Problem | null {

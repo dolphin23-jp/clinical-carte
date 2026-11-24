@@ -1241,7 +1241,7 @@ select.input {
 }
 
 /* 見方のタブ（いま・経過・問題・記録）。電話では、親指の届く画面の下に貼りつける。広い画面では、帯の下に貼りつける。
-   電話では、真ん中を「入れる」の場所として空ける（中身の上に浮かべない：グラフ・ボタンを隠さないように） */
+   電話では、真ん中を「すること」（入れる・相談。段M）の場所として空ける（中身の上に浮かべない：グラフ・ボタンを隠さないように） */
 .tabbar {
   position: fixed;
   left: 0;
@@ -1249,7 +1249,7 @@ select.input {
   bottom: 0;
   z-index: 30;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 76px minmax(0, 1fr) minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 132px minmax(0, 1fr) minmax(0, 1fr);
   gap: 2px;
   padding: 4px calc(6px + env(safe-area-inset-right)) calc(4px + env(safe-area-inset-bottom)) calc(6px + env(safe-area-inset-left));
   background: var(--surface);
@@ -1313,19 +1313,24 @@ select.input {
   text-align: center;
 }
 
-/* 「入れる」：電話では、下のタブの真ん中の丸いボタン */
-.fab {
+/* 「すること」のボタン（入れる・相談）：電話では、下のタブの真ん中に並べる丸いボタン */
+.fabs {
   position: fixed;
   left: 50%;
   bottom: calc(6px + env(safe-area-inset-bottom));
   z-index: 31;
+  display: flex;
+  gap: 6px;
+  transform: translateX(-50%);
+}
+
+.fab {
   display: grid;
   place-items: center;
   align-content: center;
   gap: 0;
-  width: 64px;
-  height: 64px;
-  margin-left: -32px;
+  width: 60px;
+  height: 60px;
   padding: 0;
   border: 3px solid var(--surface);
   border-radius: 50%;
@@ -1345,9 +1350,27 @@ select.input {
   stroke-width: 2.4;
 }
 
+/* 相談（段M）：入れる（記録を足す）と見分けるため、地の色を変える。開いているあいだは、輪で示す */
+.fab.fab-consult {
+  background: var(--ink);
+  color: var(--surface);
+}
+
+.fab.fab-consult .icon {
+  stroke-width: 2;
+}
+
+.fab.fab-consult.on {
+  box-shadow: 0 0 0 3px var(--accent), 0 4px 14px rgb(0 0 0 / 22%);
+}
+
 .fab:focus-visible {
   outline: 3px solid var(--ink);
   outline-offset: 2px;
+}
+
+.fab.fab-consult:focus-visible {
+  outline-color: var(--accent);
 }
 
 /* 患者の画面は、下のタブと「入れる」のぶん、下を空ける */
@@ -1409,18 +1432,22 @@ select.input {
   }
 
   /* 広い画面では、上の帯のすぐ下・右の端（中身に重ならない場所）に置く */
-  .fab {
+  .fabs {
     top: calc(var(--top-h) + env(safe-area-inset-top) + 8px);
     right: max(20px, env(safe-area-inset-right));
     bottom: auto;
     left: auto;
+    gap: 8px;
+    transform: none;
+  }
+
+  .fab {
     display: inline-flex;
     align-items: center;
     gap: 6px;
     width: auto;
     height: auto;
     min-height: 42px;
-    margin-left: 0;
     padding: 6px 18px 6px 14px;
     border: 0;
     border-radius: 999px;
@@ -4216,4 +4243,316 @@ td.ref-low { color: var(--ref-low); background: var(--ref-low-bg); font-weight: 
   padding: 0;
   list-style: none;
   overflow-wrap: anywhere;
+}
+
+/* ===== 段M：相談の窓口（CA-081）。臨床支援の草案（最終判断は先生）。出典つきの文と、推論の文を、線の形と字で分ける（色だけに頼らない） ===== */
+:root {
+  --dock-w: 440px;
+}
+
+.consult-anchor {
+  min-width: 0;
+  scroll-margin-top: calc(var(--sticky-top) + 12px);
+}
+
+.consult {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 10px;
+  min-width: 0;
+}
+
+.consult-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.consult-head h2 {
+  margin: 0;
+}
+
+.consult-modes {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.consult-modes .chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  border-radius: 12px;
+}
+
+.consult-modes .chip .icon {
+  flex: none;
+  width: 16px;
+  height: 16px;
+}
+
+.consult-mode-text {
+  display: grid;
+  min-width: 0;
+  line-height: 1.35;
+}
+
+.consult-mode-sub {
+  font-size: 11.5px;
+  font-weight: 400;
+  color: var(--muted);
+}
+
+.consult .chip {
+  max-width: 100%;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  text-align: left;
+}
+
+.consult textarea {
+  width: 100%;
+  box-sizing: border-box;
+  font: inherit;
+}
+
+.consult .tl-quote {
+  margin-left: 0;
+}
+
+.consult-privacy {
+  margin: 0;
+}
+
+.consult-entry {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 8px;
+  min-width: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+}
+
+.consult-entry.newest {
+  border-color: var(--accent);
+  scroll-margin-top: calc(var(--sticky-top) + 12px);
+}
+
+details.consult-entry > summary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+  cursor: pointer;
+}
+
+details.consult-entry[open] > summary {
+  margin-bottom: 8px;
+}
+
+.consult-asked {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px;
+  margin: 0;
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+
+.consult-answer {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 8px;
+  min-width: 0;
+}
+
+.consult-section {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 4px;
+  min-width: 0;
+}
+
+.consult-section-title {
+  margin: 4px 0 0;
+  color: var(--accent);
+  font-size: 13.5px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+/* 出典の引用に基づく文は実線、記録からの推論は破線（字でも「（推論）」と出る） */
+.consult .support-list > li.consult-statement {
+  padding: 0 0 0 10px;
+  border-top: 0;
+  border-left: 3px solid var(--accent);
+}
+
+.consult .support-list > li.consult-statement.inferred {
+  border-left: 3px dashed var(--line-strong);
+}
+
+.consult-refs {
+  margin-top: 2px;
+}
+
+.consult-refs .chip .icon {
+  width: 13px;
+  height: 13px;
+  margin-right: 4px;
+  vertical-align: -2px;
+}
+
+.consult-cite {
+  display: flex;
+  align-items: baseline;
+  gap: 5px;
+  margin: 2px 0 0;
+  overflow-wrap: anywhere;
+}
+
+.consult-cite .icon {
+  flex: none;
+  width: 13px;
+  height: 13px;
+  transform: translateY(2px);
+}
+
+.consult-unknown {
+  margin: 0;
+  padding: 6px 10px;
+  border: 1px dashed var(--line-strong);
+  border-radius: var(--radius-s);
+}
+
+.consult-foot {
+  display: grid;
+  gap: 2px;
+}
+
+.consult-foot .note {
+  margin: 0;
+}
+
+.consult-keep {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.consult-keep .note {
+  margin: 0;
+}
+
+.consult-keep .icon {
+  width: 14px;
+  height: 14px;
+  margin-right: 4px;
+  vertical-align: -2px;
+}
+
+.consult-older,
+.consult-notes {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+  padding-top: 10px;
+  border-top: 1px solid var(--line);
+}
+
+.consult-kept {
+  min-width: 0;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+}
+
+.consult-kept > summary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px;
+  cursor: pointer;
+}
+
+.consult-kept-when {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.consult-kept-head {
+  flex: 1 1 10em;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 13.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.consult-kept[open] .consult-kept-head {
+  display: none;
+}
+
+.consult-kept-text {
+  margin: 8px 0 4px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* いまのタブの入口 */
+.consult-entry-card {
+  display: grid;
+  gap: 6px;
+}
+
+.consult-entry-card .note {
+  margin: 0;
+}
+
+/* 広い画面：相談の窓口を右に並べる（記録を見ながら相談する）。中身は、そのぶん左に寄せる */
+@media (min-width: 1100px) {
+  .page.docked {
+    max-width: none;
+    margin: 0;
+    padding-right: calc(var(--dock-w) + 28px + env(safe-area-inset-right));
+  }
+
+  .consult-dock {
+    position: fixed;
+    top: calc(var(--sticky-top) + 10px);
+    right: max(12px, env(safe-area-inset-right));
+    bottom: 12px;
+    z-index: 25;
+    width: var(--dock-w);
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    align-content: start;
+    border-color: var(--accent);
+  }
+
+  .page.docked .fabs {
+    right: calc(var(--dock-w) + 36px + env(safe-area-inset-right));
+  }
+}
+
+/* 中身の幅が足りないあいだは、いまのタブを1列にする */
+@media (min-width: 1100px) and (max-width: 1539px) {
+  .page.docked .state-top,
+  .page.docked .state-cols {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (min-width: 1540px) {
+  :root {
+    --dock-w: 500px;
+  }
 }

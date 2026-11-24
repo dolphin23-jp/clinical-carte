@@ -82,7 +82,7 @@ import { SourceFacts } from './SourceFacts.tsx';
 import { SourceText } from './SourceText.tsx';
 import { StateView } from './StateView.tsx';
 import { SupportPanel, useSupport } from './SupportView.tsx';
-import { AskPanel } from './AskView.tsx';
+import { ConsultPanel, useConsult } from './ConsultPanel.tsx';
 import { PendingPanel, usePending } from './PendingView.tsx';
 import { PlansPanel, usePlans } from './PlansView.tsx';
 import { useOutbox } from './outbox.ts';
@@ -115,20 +115,21 @@ const COURSE_VIEWS: readonly (readonly [CourseView, string, IconName])[] = [
 /** 記載の種類の絵の印（種類を見分けるためだけ。色も種類ごとで、中身では変えない） */
 const SOURCE_ICONS: Readonly<Partial<Record<SourceKind, IconName>>> = { vital: 'vital', lab: 'lab', nursing: 'user', memo: 'edit', report: 'finding', orders: 'med', referral: 'visit', er_note: 'event' };
 
-/** 広い画面（PC・横向きの iPad）か。2列にするときだけ使う（端末に保存しない。画面の幅を見るだけ） */
-function useWide(): boolean {
-  const query = '(min-width: 1100px)';
+/** 画面の幅が、決めた幅以上か（端末に保存しない。画面の幅を見るだけ） */
+function useMinWidth(px: number): boolean {
+  const query = `(min-width: ${String(px)}px)`;
   const [wide, setWide] = useState(() => typeof window !== 'undefined' && window.matchMedia(query).matches);
   useEffect(() => {
     const m = window.matchMedia(query);
     const on = () => {
       setWide(m.matches);
     };
+    on();
     m.addEventListener('change', on);
     return () => {
       m.removeEventListener('change', on);
     };
-  }, []);
+  }, [query]);
   return wide;
 }
 
@@ -158,7 +159,15 @@ export function PatientPage({ patientId, focus = null, onBack, onLeft }: { patie
   const [range, setRange] = useState<TimelineRange>(DEFAULT_TIMELINE_RANGE);
   // 入れる欄は、開いたときだけ出す（記録のない受診では、はじめから開く）
   const [composing, setComposing] = useState<boolean | null>(null);
-  const wide = useWide();
+  // 広い画面（PC・横向きの iPad）：2列にする
+  const screenWide = useMinWidth(1100);
+  // 相談の窓口（段M。CA-081）：広い画面では右に並べ（記録を見ながら相談する）、狭い画面では、見方の1つとして開く。やりとりは、この画面のメモリだけ
+  const roomy = useMinWidth(1540);
+  const [consultOpen, setConsultOpen] = useState(false);
+  const consultRef = useRef<HTMLDivElement>(null);
+  const docked = consultOpen && screenWide;
+  // 相談を右に並べているあいだ、中身の幅が足りなければ、中身は1列にする
+  const wide = screenWide && (!docked || roomy);
   const [kindFilter, setKindFilter] = useState<SourceKind | 'all'>('all');
   // 記録のタブ：開いた記載（段I。既定は、いちばん新しいものだけ開く）。画面のメモリだけ
   // まとめて整理し直す（段J。CA-056）：この受診の記載を、古い順に1件ずつ（AI の回数は記載の数）
@@ -203,6 +212,8 @@ export function PatientPage({ patientId, focus = null, onBack, onLeft }: { patie
   const pendingBuilder = usePending(patientId, record, load, onLeft);
   // 予定と実施（段K9）：記録が増えたら、自動で組み直す（いまのタブ）
   const planBuilder = usePlans(patientId, record, load, onLeft);
+  // 相談の窓口（段M）：問い・前のやりとり・答えは、ここのメモリだけ（残すのは、先生が「残す」を押した答えだけ）
+  const consult = useConsult(patientId, load, onLeft);
 
   if (record === null) {
     return (
@@ -320,8 +331,44 @@ export function PatientPage({ patientId, focus = null, onBack, onLeft }: { patie
   const noteView = (key: string) =>
     current === null ? null : <DocumentView key={key} record={record} encounter={current} days={strip.map((d) => d.day)} selectedDay={day} onChanged={load} onLeft={onLeft} />;
 
+  // 狭い画面では、相談の窓口は見方の1つ（タブの中身の代わりに出す）。広い画面では、右に並べる
+  const shown: Tab | 'consult' = consultOpen && !docked ? 'consult' : tab;
+  const openConsult = () => {
+    setConsultOpen(true);
+    requestAnimationFrame(() => {
+      consultRef.current?.scrollIntoView({ block: 'start' });
+    });
+  };
+  const consultPanel = (
+    <div ref={consultRef} className="consult-anchor">
+      <ConsultPanel
+        consult={consult}
+        record={record}
+        onClose={() => {
+          setConsultOpen(false);
+        }}
+        onOpenSource={(sourceId) => {
+          // 根拠の記載を、記録のタブで開く（その受診へ移り、種類・日の絞り込みを外す）
+          const source = record.sources.find((x) => x.id === sourceId);
+          if (source === undefined) return;
+          setEncounterId(source.encounterId);
+          setKindFilter('all');
+          setDay(null);
+          setOpened(new Map(opened).set(sourceId, true));
+          setTab('notes');
+          if (!docked) setConsultOpen(false);
+          requestAnimationFrame(() => {
+            document.getElementById(`source-${sourceId}`)?.scrollIntoView({ block: 'start' });
+          });
+        }}
+        onChanged={load}
+        onLeft={onLeft}
+      />
+    </div>
+  );
+
   return (
-    <main className={wide ? 'page wide' : 'page'} data-testid="patient-page">
+    <main className={`page${screenWide ? ' wide' : ''}${docked ? ' docked' : ''}`} data-testid="patient-page">
       <button className="button link with-icon" type="button" onClick={onBack} data-testid="back">
         <Icon name="back" />
         患者の一覧
@@ -518,10 +565,11 @@ export function PatientPage({ patientId, focus = null, onBack, onLeft }: { patie
               key={id}
               type="button"
               role="tab"
-              aria-selected={tab === id}
-              className={tab === id ? 'tab on' : 'tab'}
+              aria-selected={shown === id}
+              className={shown === id ? 'tab on' : 'tab'}
               onClick={() => {
                 setTab(id);
+                if (!docked) setConsultOpen(false);
               }}
               data-testid={`tab-${id}`}
             >
@@ -531,7 +579,7 @@ export function PatientPage({ patientId, focus = null, onBack, onLeft }: { patie
             </button>
           ))}
         </div>
-        {found !== null && ((tab === 'notes' && found.kind === 'source') || (tab === 'problems' && found.kind === 'problems')) && (
+        {found !== null && ((shown === 'notes' && found.kind === 'source') || (shown === 'problems' && found.kind === 'problems')) && (
           <div className="search-found" data-testid="search-found">
             <span className="note">受け持ちから探した字の場所（{found.kind === 'source' ? 'この記載を開いています' : 'AI のプロブレムリストの項目です'}）：</span>
             <Snippet hit={found.hit} />
@@ -546,7 +594,7 @@ export function PatientPage({ patientId, focus = null, onBack, onLeft }: { patie
             </button>
           </div>
         )}
-        {tab === 'state' && current !== null && state !== null && (
+        {shown === 'state' && current !== null && state !== null && (
           <StateView
               vitals={
                 <>
@@ -579,7 +627,49 @@ export function PatientPage({ patientId, focus = null, onBack, onLeft }: { patie
                   }}
                 />
               }
-              ask={<AskPanel patientId={patientId} record={record} onLeft={onLeft} />}
+              ask={
+                <section className="state-section consult-entry-card" data-testid="consult-entrance" aria-labelledby="consult-entrance-title">
+                  <h3 id="consult-entrance-title" className="sub-title with-icon">
+                    <Icon name="consult" />
+                    相談する <span className="tag ai-tag">AI</span>
+                  </h3>
+                  <p className="note">
+                    この患者の記録と、書籍・ガイドラインから、方針・アセスメント・検査・治療の相談に答えます。記録だけから答える「記録に聞く」も、ここからです。
+                    {record.consultNotes.length > 0 && `（残した答え ${String(record.consultNotes.length)} 件）`}
+                  </p>
+                  <div className="chips">
+                    {(['全体の方針をまとめて', '次に確かめる検査は？'] as const).map((q) => (
+                      <button
+                        key={q}
+                        type="button"
+                        className="chip small"
+                        onClick={() => {
+                          consult.setMode('consult');
+                          consult.setDraft(q);
+                          openConsult();
+                        }}
+                        data-testid="consult-entrance-quick"
+                      >
+                        {q}
+                      </button>
+                    ))}
+                    <button
+                      type="button"
+                      className="chip small"
+                      onClick={() => {
+                        consult.setMode('record');
+                        openConsult();
+                      }}
+                      data-testid="open-ask"
+                    >
+                      記録だけから答える
+                    </button>
+                    <button type="button" className="button small primary" onClick={openConsult} data-testid="open-consult">
+                      相談の窓口を開く
+                    </button>
+                  </div>
+                </section>
+              }
               onProblems={() => {
                 setTab('problems');
               }}
@@ -597,7 +687,7 @@ export function PatientPage({ patientId, focus = null, onBack, onLeft }: { patie
               }
             />
         )}
-        {tab === 'course' && current !== null && (
+        {shown === 'course' && current !== null && (
           <div className="course" data-testid="course">
             <DayStrip days={strip} selected={day} onSelect={selectDay} />
             <div className="subbar" role="tablist" aria-label="経過の見方">
@@ -689,7 +779,7 @@ export function PatientPage({ patientId, focus = null, onBack, onLeft }: { patie
             </div>
           </div>
         )}
-        {tab === 'problems' && (
+        {shown === 'problems' && (
           <>
             {lanes.some((l) => l.marks.length > 0) && (
               <section className="lanes-section" aria-labelledby="lanes-title">
@@ -727,7 +817,7 @@ export function PatientPage({ patientId, focus = null, onBack, onLeft }: { patie
             />
           </>
         )}
-        {tab === 'notes' && kindsHere.length > 1 && (
+        {shown === 'notes' && kindsHere.length > 1 && (
           <div className="chips row kind-filter" data-testid="kind-filter" aria-label="記載の種類で絞る">
             {(['all', ...kindsHere] as const).map((k) => (
               <button
@@ -745,7 +835,7 @@ export function PatientPage({ patientId, focus = null, onBack, onLeft }: { patie
             ))}
           </div>
         )}
-        {tab !== 'notes' ? null : sources.length === 0 ? (
+        {shown !== 'notes' ? null : sources.length === 0 ? (
           <div className="empty-state" data-testid="notes-empty">
             <span className="empty-art" aria-hidden="true">
               <Icon name="notes" />
@@ -844,6 +934,7 @@ export function PatientPage({ patientId, focus = null, onBack, onLeft }: { patie
           </ul>
           </>
         )}
+        {shown === 'consult' && consultPanel}
       </section>
 
       {current !== null && composerOpen && (
@@ -883,11 +974,33 @@ export function PatientPage({ patientId, focus = null, onBack, onLeft }: { patie
         </section>
       )}
 
+      {/* することのボタン（入れる・相談）。電話では下のタブの真ん中、広い画面では右上 */}
       {current !== null && (
-        <button type="button" className="fab" onClick={toComposer} data-testid="fab-compose">
-          <Icon name="plus" />
-          入れる
-        </button>
+        <div className="fabs">
+          <button type="button" className="fab" onClick={toComposer} data-testid="fab-compose">
+            <Icon name="plus" />
+            入れる
+          </button>
+          <button
+            type="button"
+            className={consultOpen ? 'fab fab-consult on' : 'fab fab-consult'}
+            aria-pressed={consultOpen}
+            onClick={() => {
+              if (consultOpen) setConsultOpen(false);
+              else openConsult();
+            }}
+            data-testid="fab-consult"
+          >
+            <Icon name="consult" />
+            相談
+          </button>
+        </div>
+      )}
+
+      {docked && (
+        <aside className="consult-dock card" aria-label="相談の窓口" data-testid="consult-dock">
+          {consultPanel}
+        </aside>
       )}
 
     </main>

@@ -1,7 +1,7 @@
 // 結果待ち・記録に聞くの E2E（段K6。CA-065・CA-066）。
 // - 結果待ち：記録を入れて整理すると、いまのタブに、提出の記載があり結果の記載がまだない検査が、自動で1回並ぶ（AI の整理の印・病日・提出から何日目）。
 //   押すと元の字。「結果を確かめた」で畳む（組み直しても引き継ぐ）。結果の記載があるものは畳んで、結果の字へつなぐ
-// - 記録に聞く：問いを打つと、根拠の札つきの答え（押すと元の字）・※の印・出さなかった数・見つからなかったこと。問いも答えも保存しない。
+// - 記録に聞く（相談の窓口の「記録だけから答える」。段M）：問いを打つと、根拠の札つきの答え（押すと元の字）・※の印・出さなかった数・見つからなかったこと。問いも答えも保存しない。
 //   問いに電話番号の形があれば、送らない。電話の幅で横にはみ出さない。AI は試験の代役。文はすべて架空（synthetic）
 import type { OrganizeAnswer } from '@clinical-carte/core';
 import type { Browser, BrowserContext, Page } from 'playwright-core';
@@ -160,11 +160,13 @@ describe('結果待ち（段K6）', () => {
 describe('記録に聞く（段K6）', () => {
   test('根拠の札つきの答え（押すと元の字）・※・出さなかった数・見つからなかったこと。問いも答えも保存しない', async () => {
     const page = await openWithNote();
+    // 記録に聞くは、相談の窓口（段M。CA-081）の「記録だけから答える」にまとめた。いまのタブの入口から開く
     await page.getByTestId('tab-state').click();
-    const panel = page.getByTestId('ask');
+    await page.getByTestId('open-ask').click();
+    const panel = page.getByTestId('consult');
     expect(await panel.getByTestId('ask-caution').textContent()).toBe('記録だけから答えます。書かれていないことは答えません。');
-    await panel.getByTestId('ask-question').fill(QUESTION);
-    await panel.getByTestId('ask-send').click();
+    await panel.getByTestId('consult-question').fill(QUESTION);
+    await panel.getByTestId('consult-send').click();
     await expect.poll(() => panel.getByTestId('ask-statement').count(), { timeout: 10_000 }).toBe(2);
     const statements = panel.getByTestId('ask-statement');
     expect(await statements.first().textContent()).toContain('KCl 20mEq の点滴で補正を始めた');
@@ -189,8 +191,8 @@ describe('記録に聞く（段K6）', () => {
     expect(dump).not.toContain('60mEq');
 
     // 問いに電話番号の形があれば、送らない
-    await panel.getByTestId('ask-question').fill(`${['090', '1234', '5678'].join('-')} に連絡したのは？`);
-    await panel.getByTestId('ask-send').click();
+    await panel.getByTestId('consult-question').fill(`${['090', '1234', '5678'].join('-')} に連絡したのは？`);
+    await panel.getByTestId('consult-send').click();
     expect(await panel.getByRole('alert').textContent()).toContain('電話番号');
     expect(organizer.asked).toHaveLength(1);
     expect(problems).toEqual([]);

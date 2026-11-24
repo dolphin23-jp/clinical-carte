@@ -25,6 +25,9 @@ import {
   SourceTextPut,
   SupportRequest,
   AskRequest,
+  consultHasShapes,
+  ConsultNoteNew,
+  ConsultRequest,
   findShapes,
   headline,
   SearchRequest,
@@ -59,6 +62,7 @@ import type { z } from 'zod';
 import type { Db } from './db.ts';
 import { addApNotes, type ApOutcome, deleteApNote, patchApNote } from './ap.ts';
 import { askRecord } from './ask.ts';
+import { addConsultNote, consultPatient, deleteConsultNote } from './consult.ts';
 import { ensureCasebookLink, patchCasebookLink } from './casebook.ts';
 import { generateSupport } from './clinicalsupport.ts';
 import { addDocument, addHandoff, type CallGate, deleteDocument, deleteHandoff, documentMaterialFor, patchHandoff, gatherReferences, generateDocument, patchDocument, reviseDocument, type SaveOutcome, talkHasShapes } from './documents.ts';
@@ -629,6 +633,49 @@ export async function recordApi(request: Request, path: string, deps: RecordDeps
       return aiFailed(r.failure);
     }
     return reply(200, { answer: r.reply });
+  }
+
+  // 相談の窓口（段M。CA-081）：保存しない（問い・前のやりとり・答えとも）。問い・前のやりとりに識別情報の形があれば送らない。
+  // AI は、検索の語を取り出す 1 回（外を探すときだけ）・ネットの出典の 1 回（頼まれたときだけ）・答える 1 回。書籍・ネットに渡すのは、問題の名前と確かめた語だけ
+  const consult = /^\/api\/patients\/([^/]+)\/consult$/.exec(path);
+  if (consult && method === 'POST') {
+    const patientId = consult[1] ?? '';
+    if (!isUlid(patientId)) return bad();
+    const body = await readBody(request, ConsultRequest);
+    if (body === null) return bad();
+    if (deps.organizer === null) return reply(503, { error: 'no_ai' });
+    if (consultHasShapes(body)) return reply(422, { error: 'shape' });
+    const r = await consultPatient(db, patientId, body, { organizer: deps.organizer, books: deps.books, gate, today });
+    if (!r.ok) {
+      if (r.reason === 'not_found') return missing();
+      if (r.reason === 'empty') return reply(422, { error: 'consult_empty' });
+      if (r.reason === 'ai_limit') return reply(429, { error: 'ai_limit' });
+      return aiFailed(r.failure);
+    }
+    return reply(200, { answer: r.reply });
+  }
+
+  // 相談の答えを残す・消す（CA-081。CA-032 の改訂）：先生が「残す」を押した答えだけ。文は選別（C-1）を通す。問いの文は受け取らない
+  const consultNotes = /^\/api\/patients\/([^/]+)\/consult-notes$/.exec(path);
+  if (consultNotes && method === 'POST') {
+    const patientId = consultNotes[1] ?? '';
+    if (!isUlid(patientId)) return bad();
+    const body = await readBody(request, ConsultNoteNew);
+    if (body === null) return bad();
+    if (deps.selector === null) return reply(503, { error: 'no_ai' });
+    if (!(await gate.take())) return reply(429, { error: 'ai_limit' });
+    const r = await addConsultNote(db, patientId, body, deps.selector, runtime);
+    if (r.ok) return reply(200, { id: r.id });
+    if (r.error === 'not_found') return missing();
+    if (r.error === 'empty') return bad();
+    if (r.error === 'ai') return aiFailed(r.failure);
+    return reply(422, { error: 'selection_failed' });
+  }
+  const oneConsultNote = /^\/api\/consult-notes\/([^/]+)$/.exec(path);
+  if (oneConsultNote && method === 'DELETE') {
+    const id = oneConsultNote[1] ?? '';
+    if (!isUlid(id)) return bad();
+    return (await deleteConsultNote(db, id)) ? reply(200, { removed: id }) : missing();
   }
 
   // 数の印の照らし合わせの表（段I）：AI を使わない（残した記載を開いたときの印に使う）。数だけを返す
